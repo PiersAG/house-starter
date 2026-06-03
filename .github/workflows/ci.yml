@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fail fast: lint runs first, blocks type-check and tests if it fails.
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run type-check
+
+      # Global threshold: 80% lines. Enforced here for all source files.
+      - name: Unit tests (coverage ≥80%)
+        run: npm run test:coverage
+
+      # Per-path 100% gate: compliance and auth code must be fully tested.
+      # Passes trivially until those directories contain source files.
+      - name: Coverage gate — compliance and auth (100%)
+        run: |
+          FILES=$(find . \( -path "*/compliance/*.ts" -o -path "*/compliance/*.tsx" \
+                          -o -path "*/auth/*.ts" -o -path "*/auth/*.tsx" \) \
+                      ! -path "*/node_modules/*" ! -name "*.test.*" ! -name "*.spec.*" 2>/dev/null)
+          if [ -n "$FILES" ]; then
+            npx vitest run --coverage \
+              --coverage.include="**/compliance/**" \
+              --coverage.include="**/auth/**" \
+              --coverage.thresholds.lines=100
+          else
+            echo "No compliance/auth source files found — 100% gate passes (no files to check)"
+          fi
+
+      - name: Playwright smoke test
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+
+      # Fail on high-severity vulnerabilities in production dependencies.
+      - name: Security audit
+        run: npm audit --audit-level high --omit=dev
