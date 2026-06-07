@@ -21,6 +21,7 @@ const config: Config = {
         border: "var(--border)",
         accent: "var(--accent)",
         destructive: "var(--destructive)",
+        link: "var(--link)",
       },
     },
   },
