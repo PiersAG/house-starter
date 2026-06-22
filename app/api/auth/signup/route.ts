@@ -20,7 +20,11 @@ const signupSchema = z.object({
 
 // Auth endpoints are rate-limited (quality baseline items 4 and 11). The store
 // is the shared-store adapter by default; see lib/rate-limit.ts.
-const SIGNUP_RATE_LIMIT = { limit: 50, windowSeconds: 60 };
+// Default signup rate limit. The VALUE is the lever each app tunes — the EXISTENCE of
+// rate-limiting is required by the quality baseline. 5/60s defeats trivial automation
+// while remaining permissive for legitimate retries; apps with genuine high-volume signup
+// (e.g. enterprise bulk-onboarding) raise this value in their build.
+const SIGNUP_RATE_LIMIT = { limit: 5, windowSeconds: 60 };
 
 export async function POST(request: Request): Promise<Response> {
   const rate = await getRateLimiter().hit(
