@@ -8,11 +8,18 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 import { authConfig } from "@/auth.config";
+import { db } from "@/lib/db";
+import { getUserByEmail } from "@/lib/users";
+import { verifyPassword } from "@/lib/password";
 
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
-  rememberMe: z.enum(["on"]).optional(),
+  // Auth.js serialises every credential to a string before it reaches
+  // authorize(), so an omitted/unchecked "remember me" arrives as the string
+  // "undefined" or "null" rather than a real boolean. Accept any string and
+  // treat only the literal "on" as opt-in — never reject the login over it.
+  rememberMe: z.string().optional(),
 });
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
@@ -23,17 +30,21 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
 
-        // EXTENSION POINT: replace with real DB lookup and bcrypt comparison.
-        // Example:
-        //   const user = await db.query.users.findFirst({
-        //     where: eq(users.email, parsed.data.email),
-        //   });
-        //   if (!user) return null;
-        //   const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
-        //   if (!valid) return null;
-        //   return { id: user.id, email: user.email, name: user.name ?? undefined,
-        //            rememberMe: parsed.data.rememberMe === "on" };
-        return null; // replace this stub
+        const user = getUserByEmail(db, parsed.data.email);
+        if (!user) return null;
+
+        const valid = await verifyPassword(
+          parsed.data.password,
+          user.passwordHash,
+        );
+        if (!valid) return null;
+
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name ?? undefined,
+          rememberMe: parsed.data.rememberMe === "on",
+        };
       },
     }),
   ],
