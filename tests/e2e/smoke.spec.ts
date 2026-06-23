@@ -6,7 +6,7 @@ test("home page loads and has no accessibility violations", async ({ page }) => 
   await expect(page.locator("body")).toBeVisible();
 
   const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
     .analyze();
   expect(results.violations).toEqual([]);
 });
@@ -16,7 +16,7 @@ test("login page loads and has no accessibility violations", async ({ page }) =>
   await expect(page.locator("body")).toBeVisible();
 
   const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
     .analyze();
   expect(results.violations).toEqual([]);
 });
