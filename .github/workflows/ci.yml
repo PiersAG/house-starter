@@ -21,6 +21,31 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+      # DB-DRIVER LOCK: this template's database driver is better-sqlite3, by design.
+      # The build agent must not swap it (e.g. to libsql) — not in deps, not via a
+      # vitest alias. A swap that passes other gates is still a contract violation.
+      - name: Database driver lock (better-sqlite3 only)
+        run: |
+          set -e
+          # 1. No libsql in package.json dependencies.
+          if grep -qiE '"@?libsql' package.json; then
+            echo "::error::DB-driver lock: libsql found in package.json. This template uses better-sqlite3 only."
+            exit 1
+          fi
+          # 2. No libsql imported anywhere in source.
+          if grep -rniE "from ['\"]@?libsql|require\(['\"]@?libsql" \
+                --include="*.ts" --include="*.tsx" \
+                . 2>/dev/null | grep -v node_modules; then
+            echo "::error::DB-driver lock: libsql imported in source. This template uses better-sqlite3 only."
+            exit 1
+          fi
+          # 3. No vitest alias redirecting better-sqlite3 to another driver.
+          if grep -rniE "better-sqlite3.*:.*libsql|alias.*better-sqlite3" \
+                vitest.config.ts vitest.*.config.ts 2>/dev/null; then
+            echo "::error::DB-driver lock: vitest aliases better-sqlite3 to another driver. Not permitted."
+            exit 1
+          fi
+          echo "DB-driver lock OK: better-sqlite3 is the sole database driver."
 
       # Fail fast: lint runs first, blocks type-check and tests if it fails.
       - name: Lint
