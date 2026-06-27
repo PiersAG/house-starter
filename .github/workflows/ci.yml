@@ -21,45 +21,33 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-      # DB-DRIVER LOCK: this template's database driver is better-sqlite3, by design.
-      # The build agent must not swap it (e.g. to libsql) — not in deps, not via a
-      # vitest alias. A swap that passes other gates is still a contract violation.
-      - name: Database driver lock (better-sqlite3 only)
+      # DB-DRIVER LOCK: this template's database driver is libSQL (@libsql/client +
+      # drizzle-orm/libsql), by design — same driver across dev/test/staging/prod,
+      # differing only by DATABASE_URL, and deployable to serverless. The build
+      # agent must not swap it back to better-sqlite3 (file-on-local-disk; cannot
+      # run on serverless). A swap that passes other gates is still a contract
+      # violation.
+      - name: Database driver lock (libSQL only)
         run: |
           set -e
-          # 1. No libsql in package.json dependencies.
-          if grep -qiE '"@?libsql' package.json; then
-            echo "::error::DB-driver lock: libsql found in package.json. This template uses better-sqlite3 only."
+          # 1. @libsql/client MUST be a declared dependency.
+          if ! grep -qE '"@libsql/client"' package.json; then
+            echo "::error::DB-driver lock: @libsql/client missing from package.json. This template uses libSQL for dev/prod parity and serverless deployability."
             exit 1
           fi
-          # 2. No libsql imported anywhere in source.
-          if grep -rniE "from ['\"]@?libsql|require\(['\"]@?libsql" \
+          # 2. better-sqlite3 MUST NOT reappear (file-on-local-disk; cannot run on serverless).
+          if grep -qiE '"better-sqlite3"|"@types/better-sqlite3"' package.json; then
+            echo "::error::DB-driver lock: better-sqlite3 found in package.json. It cannot run on serverless (no persistent local disk). Use libSQL."
+            exit 1
+          fi
+          # 3. No better-sqlite3 imported anywhere in source.
+          if grep -rniE "from ['\"]better-sqlite3|require\(['\"]better-sqlite3|drizzle-orm/better-sqlite3" \
                 --include="*.ts" --include="*.tsx" \
                 . 2>/dev/null | grep -v node_modules; then
-            echo "::error::DB-driver lock: libsql imported in source. This template uses better-sqlite3 only."
+            echo "::error::DB-driver lock: better-sqlite3 imported in source. Use libSQL (@libsql/client + drizzle-orm/libsql)."
             exit 1
           fi
-          # 3. No vitest alias redirecting better-sqlite3 to another driver.
-          if grep -rniE "better-sqlite3.*:.*libsql|alias.*better-sqlite3" \
-                vitest.config.ts vitest.*.config.ts 2>/dev/null; then
-            echo "::error::DB-driver lock: vitest aliases better-sqlite3 to another driver. Not permitted."
-            exit 1
-          fi
-          echo "DB-driver lock OK: better-sqlite3 is the sole database driver."
-      # POOL LOCK: the native better-sqlite3 addon does not load reliably under
-      # Vitest's default parallel file execution. Test files MUST run serially —
-      # expressed as either `singleFork: true` (with pool: forks) or
-      # `fileParallelism: false`. Frozen template contract; either valid form is
-      # accepted, absence of both fails the build.
-      - name: Test pool lock (serial file execution)
-        run: |
-          set -e
-          if grep -qE "singleFork:\s*true|fileParallelism:\s*false" vitest.config.ts; then
-            echo "Pool lock OK: vitest.config.ts enforces serial test file execution."
-          else
-            echo "::error::Pool lock: vitest.config.ts must enforce serial test file execution (singleFork: true or fileParallelism: false). The native better-sqlite3 addon fails to load under parallel workers."
-            exit 1
-          fi
+          echo "DB-driver lock OK: libSQL is the sole database driver."
 
       # Fail fast: lint runs first, blocks type-check and tests if it fails.
       - name: Lint
