@@ -46,6 +46,20 @@ jobs:
             exit 1
           fi
           echo "DB-driver lock OK: better-sqlite3 is the sole database driver."
+      # POOL LOCK: the native better-sqlite3 addon does not load reliably under
+      # Vitest's default parallel file execution. Test files MUST run serially —
+      # expressed as either `singleFork: true` (with pool: forks) or
+      # `fileParallelism: false`. Frozen template contract; either valid form is
+      # accepted, absence of both fails the build.
+      - name: Test pool lock (serial file execution)
+        run: |
+          set -e
+          if grep -qE "singleFork:\s*true|fileParallelism:\s*false" vitest.config.ts; then
+            echo "Pool lock OK: vitest.config.ts enforces serial test file execution."
+          else
+            echo "::error::Pool lock: vitest.config.ts must enforce serial test file execution (singleFork: true or fileParallelism: false). The native better-sqlite3 addon fails to load under parallel workers."
+            exit 1
+          fi
 
       # Fail fast: lint runs first, blocks type-check and tests if it fails.
       - name: Lint
