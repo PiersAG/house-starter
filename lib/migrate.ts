@@ -4,10 +4,13 @@
 // load time — `runMigrations` / `migrate` must be called explicitly. The
 // standalone CLI entry point (scripts/migrate.ts) is a thin, logic-free wrapper
 // that simply imports and calls `migrate()`.
+//
+// Driver: libSQL (@libsql/client). Same SQLite SQL dialect as before; the
+// client is async and works identically against a local file (file:local.db)
+// or a remote libSQL/Turso URL — the only difference between dev and prod is
+// the DATABASE_URL value.
 
-import Database from "better-sqlite3";
-
-type SqliteDatabase = Database.Database;
+import { createClient, type Client } from "@libsql/client";
 
 /**
  * Idempotent DDL that brings an empty SQLite database up to the current schema.
@@ -21,25 +24,36 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
-
 `;
 
 /**
- * Open a better-sqlite3 database. Defaults to an in-memory database when no URL
- * is supplied, which keeps the CLI runnable in any environment.
+ * Resolve a libSQL connection URL. Defaults to an in-memory database when no
+ * URL is supplied, which keeps the CLI runnable in any environment. A bare
+ * filesystem path is normalised to a `file:` URL (libSQL requires the scheme).
  */
-export function createMigrationDatabase(url?: string): SqliteDatabase {
-  const target = url && url.length > 0 ? url : ":memory:";
-  const db = new Database(target);
-  db.pragma("foreign_keys = ON");
-  return db;
+function resolveUrl(url?: string): string {
+  const value = url && url.length > 0 ? url : ":memory:";
+  if (value === ":memory:") return value;
+  // Already a scheme (file:, libsql:, http:, https:, ws:, wss:) — pass through.
+  if (/^[a-z]+:/i.test(value)) return value;
+  return `file:${value}`;
 }
 
 /**
- * Apply every migration to the given database. Safe to run repeatedly.
+ * Open a libSQL client. Defaults to in-memory when no URL is supplied.
  */
-export function runMigrations(db: SqliteDatabase): void {
-  db.exec(MIGRATION_SQL);
+export function createMigrationDatabase(url?: string): Client {
+  const client = createClient({ url: resolveUrl(url) });
+  return client;
+}
+
+/**
+ * Apply every migration to the given client. Safe to run repeatedly.
+ * Uses executeMultiple so the whole DDL script runs as one batch.
+ */
+export async function runMigrations(client: Client): Promise<void> {
+  await client.execute("PRAGMA foreign_keys = ON;");
+  await client.executeMultiple(MIGRATION_SQL);
 }
 
 /**
@@ -47,11 +61,13 @@ export function runMigrations(db: SqliteDatabase): void {
  * run the migrations, and close it. This is the single entry point the
  * standalone CLI wrapper calls.
  */
-export function migrate(url: string | undefined = process.env.DATABASE_URL): void {
-  const db = createMigrationDatabase(url);
+export async function migrate(
+  url: string | undefined = process.env.DATABASE_URL,
+): Promise<void> {
+  const client = createMigrationDatabase(url);
   try {
-    runMigrations(db);
+    await runMigrations(client);
   } finally {
-    db.close();
+    client.close();
   }
 }

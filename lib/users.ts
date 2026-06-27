@@ -6,12 +6,12 @@
 // coverage and is exercised directly by tests/unit/users.test.ts.
 
 import { eq } from "drizzle-orm";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { users, type User } from "@/lib/schema";
 import { hashPassword, validatePasswordStrength } from "@/lib/password";
 
-/** The Drizzle database type used throughout the app (better-sqlite3 driver). */
-export type AppDatabase = BetterSQLite3Database<Record<string, never>>;
+/** The Drizzle database type used throughout the app (libSQL driver). */
+export type AppDatabase = LibSQLDatabase<Record<string, never>>;
 
 /** Normalise an email for storage and lookup: trimmed and lower-cased. */
 export function normalizeEmail(email: string): string {
@@ -19,11 +19,11 @@ export function normalizeEmail(email: string): string {
 }
 
 /** Look up a single user by (normalised) email. Returns undefined when absent. */
-export function getUserByEmail(
+export async function getUserByEmail(
   db: AppDatabase,
   email: string,
-): User | undefined {
-  const rows = db
+): Promise<User | undefined> {
+  const rows = await db
     .select()
     .from(users)
     .where(eq(users.email, normalizeEmail(email)))
@@ -33,8 +33,16 @@ export function getUserByEmail(
 }
 
 /** Look up a single user by id. Returns undefined when absent. */
-export function getUserById(db: AppDatabase, id: string): User | undefined {
-  const rows = db.select().from(users).where(eq(users.id, id)).limit(1).all();
+export async function getUserById(
+  db: AppDatabase,
+  id: string,
+): Promise<User | undefined> {
+  const rows = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1)
+    .all();
   return rows[0];
 }
 
@@ -45,9 +53,12 @@ export interface CreateUserInput {
 }
 
 /** Insert a user row and return the persisted record (id generated here). */
-export function createUser(db: AppDatabase, input: CreateUserInput): User {
+export async function createUser(
+  db: AppDatabase,
+  input: CreateUserInput,
+): Promise<User> {
   const id = crypto.randomUUID();
-  const rows = db
+  const rows = await db
     .insert(users)
     .values({
       id,
@@ -93,14 +104,14 @@ export async function registerUser(
   if (strengthError) {
     throw new RegistrationError("weak_password", strengthError);
   }
-  if (getUserByEmail(db, input.email)) {
+  if (await getUserByEmail(db, input.email)) {
     throw new RegistrationError(
       "email_taken",
       "An account with this email already exists. Try signing in instead.",
     );
   }
   const passwordHash = await hashPassword(input.password);
-  return createUser(db, {
+  return await createUser(db, {
     email: input.email,
     passwordHash,
     name: input.name ?? null,

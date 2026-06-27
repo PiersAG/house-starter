@@ -30,7 +30,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
 
-        const user = getUserByEmail(db, parsed.data.email);
+        const user = await getUserByEmail(db, parsed.data.email);
         if (!user) return null;
 
         const valid = await verifyPassword(

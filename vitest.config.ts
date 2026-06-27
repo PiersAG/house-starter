@@ -6,12 +6,6 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
-    // Native addons (better-sqlite3) fail to load under Vitest's default
-    // parallel/forked worker pool. Run test files in a single forked process
-    // so the native .node binary loads once and cleanly. Database test files
-    // additionally set `// @vitest-environment node` to override jsdom.
-    pool: "forks",
-    poolOptions: { forks: { singleFork: true } },
     globals: true,
     include: ["tests/unit/**/*.{test,spec}.{ts,tsx}", "app/**/*.{test,spec}.{ts,tsx}", "lib/**/*.{test,spec}.{ts,tsx}", "components/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["tests/e2e/**", "node_modules/**"],

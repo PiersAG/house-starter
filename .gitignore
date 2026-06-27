@@ -35,3 +35,10 @@ tsconfig.tsbuildinfo
 .DS_Store
 *.pem
 .vercel
+
+# Local development database (libSQL file mode). NEVER commit — a dev DB with
+# real data is a reportable data-protection breach. Covers the -wal/-shm
+# sidecar files SQLite/libSQL creates alongside it.
+local.db
+local.db-*
+*.local.db
