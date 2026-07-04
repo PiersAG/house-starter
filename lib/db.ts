@@ -1,51 +1,68 @@
-// Live Drizzle ORM client for the house-starter template.
+// Live Drizzle ORM client for the house-starter template, with the ADR-023
+// tenancy resolver seam.
 //
-// Wires the libSQL driver (@libsql/client) to Drizzle and exposes a single
-// shared `db` instance for server-side code (route handlers, server actions,
-// the credentials authorize callback). Excluded from unit-test coverage and
-// verified indirectly via the Playwright E2E suite — the repository logic that
-// runs against it lives in lib/users.ts, which IS unit-tested.
+// Every database access goes through getDb(tenantId). Per-tenant is the default
+// (ADR-023): a customer's requests resolve to that customer's own database.
+// Switching an app between per-tenant and shared is a change to THIS FILE only,
+// never a rewrite of the query layer.
 //
-// Migrations are NOT run here. Creating the Drizzle client is synchronous;
-// only queries are async. Schema is applied out-of-band by the migration
-// entry point (lib/migrate.ts -> scripts/migrate.ts, run as a deploy/CI step
-// via `npm run db:migrate`), keeping module load synchronous and side-effect
-// free. The same code runs against a local file (file:local.db) in dev and a
-// remote libSQL/Turso URL in prod — only DATABASE_URL differs.
+// Resolution order for a tenant's database URL:
+//   1. TENANT_DB_URL_<TENANTID>  (per-tenant override, set at provisioning)
+//   2. DATABASE_URL              (single shared DB — the shared-exception path)
+//   3. file:local.db             (dev default so data survives restarts)
+//
+// Migrations are NOT run here. Creating the client is synchronous; only queries
+// are async. Schema is applied out-of-band (lib/migrate.ts -> scripts/migrate.ts,
+// `npm run db:migrate`), keeping module load synchronous and side-effect free.
 
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import type { AppDatabase } from "@/lib/users";
 
-function resolveUrl(): string {
-  // Dev default is a persistent local file so data survives restarts and
-  // "sign up then log in" works locally. Tests pass ":memory:" explicitly via
-  // the migration helpers; the running app never defaults to in-memory (an
-  // empty, unmigrated, vanishing database is wrong for a real workflow).
-  // Prod sets DATABASE_URL to the hosted libSQL/Turso URL (UK/EU or in-region
-  // host per the app's target market — data residency is a per-app decision).
-  const url = process.env.DATABASE_URL;
-  const value = url && url.length > 0 ? url : "file:local.db";
+function normaliseUrl(raw: string | undefined): string {
+  // Dev default is a persistent local file so "sign up then log in" works
+  // locally. Tests pass ":memory:" explicitly; the running app never defaults
+  // to in-memory. Prod sets a hosted libSQL/Turso URL.
+  const value = raw && raw.length > 0 ? raw : "file:local.db";
   if (value === ":memory:") return value;
   if (/^[a-z]+:/i.test(value)) return value;
   return `file:${value}`;
 }
 
-function createDatabase(): AppDatabase {
-  const client = createClient({
-    url: resolveUrl(),
+function resolve(tenantId: string): { url: string; authToken?: string } {
+  const key = tenantId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  const perTenant = process.env[`TENANT_DB_URL_${key}`];
+  if (perTenant) {
+    return {
+      url: normaliseUrl(perTenant),
+      authToken: process.env[`TENANT_DB_AUTH_TOKEN_${key}`],
+    };
+  }
+  return {
+    url: normaliseUrl(process.env.DATABASE_URL),
     authToken: process.env.DATABASE_AUTH_TOKEN,
-  });
-  return drizzle(client);
+  };
 }
 
-// Cache the instance on globalThis so every module that imports `db` shares one
-// connection. In a production `next start` build each route handler is bundled
-// separately, so lib/db.ts is evaluated once per route bundle; a process-wide
-// cache means all bundles share one database/connection rather than each
-// opening its own.
-const globalForDb = globalThis as unknown as { __appDb?: AppDatabase };
+// Process-wide cache: every module importing a tenant's db shares one
+// connection per resolved URL, rather than each route bundle opening its own.
+const globalForDb = globalThis as unknown as {
+  __appDbCache?: Map<string, AppDatabase>;
+};
+const cache: Map<string, AppDatabase> =
+  globalForDb.__appDbCache ?? (globalForDb.__appDbCache = new Map());
 
-export const db: AppDatabase = globalForDb.__appDb ?? createDatabase();
+/** Get the Drizzle client for a tenant (singleton per resolved URL). */
+export function getDb(tenantId: string): AppDatabase {
+  const { url, authToken } = resolve(tenantId);
+  const existing = cache.get(url);
+  if (existing) return existing;
+  const client = createClient({ url, authToken });
+  const instance = drizzle(client) as AppDatabase;
+  cache.set(url, instance);
+  return instance;
+}
 
-globalForDb.__appDb = db;
+// Shared-exception convenience: a single default DB for apps deliberately run
+// shared (brief write_pattern = shared). Backed by DATABASE_URL / file:local.db.
+export const db: AppDatabase = getDb("__shared__");
