@@ -91,3 +91,12 @@ jobs:
       # Fail on high-severity vulnerabilities in production dependencies.
       - name: Security audit
         run: npm audit --audit-level high --omit=dev
+
+      # Anti-slopsquatting: for every dependency outside the pinned
+      # house-starter baseline (scripts/deps-baseline.json), verify it exists
+      # on the npm registry, the resolved version is >= 14 days old, and the
+      # package is established (>= 90 days old or >= 1000 weekly downloads).
+      # Also asserts the lockfile is in sync. Deterministic — no LLM, no
+      # writes. Spec: wiki/specs/stage0-deps-and-budget.md.
+      - name: Dependency existence check (anti-slopsquatting)
+        run: python3 scripts/check-deps-existence.py --workspace .
