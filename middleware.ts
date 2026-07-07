@@ -12,6 +12,7 @@
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
 import { authConfig } from "@/auth.config";
+import { decideAccess, currentLifecycleState } from "@/lib/live-eval";
 
 const { auth } = NextAuth(authConfig);
 
@@ -60,6 +61,29 @@ export default auth((req) => {
     const redirectRes = NextResponse.redirect(loginUrl);
     redirectRes.headers.set("Content-Security-Policy", csp);
     return redirectRes;
+  }
+
+  // ADR-026 D4 — LIVE-EVAL evaluator allowlist. When the app is in
+  // LIVE_EVAL (env APP_LIFECYCLE_STATE), an authenticated user must be on
+  // the allowlist (or be the CEO) to access a protected route. LIVE_OPEN
+  // and LAUNCHED (live-quiet) skip this check. LIVE_EVAL with an empty
+  // allowlist is a fail-closed configuration: no-one but the CEO passes.
+  if (isProtected && req.auth) {
+    const email = (req.auth.user as { email?: string } | undefined)?.email ?? null;
+    const decision = decideAccess(email);
+    if (!decision.allow) {
+      const state = currentLifecycleState();
+      const forbidden = NextResponse.json(
+        {
+          error:            "forbidden",
+          reason:           decision.reason,
+          lifecycle_state:  state,
+        },
+        { status: 403 },
+      );
+      forbidden.headers.set("Content-Security-Policy", csp);
+      return forbidden;
+    }
   }
 
   const requestHeaders = new Headers(req.headers);
