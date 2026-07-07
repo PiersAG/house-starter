@@ -1,6 +1,6 @@
 {
   "source": "house-starter/package.json",
-  "generated_from_commit": "dffd980",
+  "generated_from_commit": "880f8d0",
   "generated_at": "2026-07-07",
   "note": "Union of dependencies + devDependencies names in house-starter's package.json at generation time. Regenerate via agents/build/docker/regen-baseline.sh whenever house-starter's package.json changes.",
   "packages": [
@@ -42,6 +42,7 @@
     "react-dom",
     "tailwind-merge",
     "tailwindcss",
+    "tsx",
     "typescript",
     "vitest",
     "zod"

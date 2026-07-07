@@ -35,6 +35,38 @@ These are conditional — do not add until the app needs them:
 | DB schema | `lib/db/schema.ts` | Schema is app-specific |
 | Error tracking (Sentry) | `sentry.config.ts`, `app/global-error.tsx` | Configured at MVP boundary |
 
+### Tenant migration fan-out (per-tenant apps only)
+
+After a schema change lands, the tenancy migration fan-out applies the new schema
+across every tenant database in one run. Tenant DBs follow the naming convention
+`<app_slug>-<tenant_id>` in Turso, and the platform database list is the source of
+truth (no registry file). Operator runbook:
+
+```bash
+# One-time per environment
+export TURSO_API_TOKEN=...    # Turso platform token
+export TURSO_ORG=...           # Turso organisation slug
+export APP_SLUG=<slug>         # this app's slug — matches Turso DB name prefix
+
+# Dry-run to preview targets (no writes)
+npm run db:migrate:all-tenants -- --dry-run
+
+# Apply migrations to every tenant DB (per-DB failures isolated; report written)
+npm run db:migrate:all-tenants
+
+# Re-run a single failed tenant (idempotent — safe)
+npm run db:migrate:all-tenants -- --tenant <tenant_id>
+
+# Verify every tenant has point-in-time restore enabled (Stage 0 backup gate)
+npm run db:verify-tenant-backups
+```
+
+Refuses to run when `TENANCY_MODE=shared` — shared apps have one database and use
+`npm run db:migrate` (drizzle-kit). Reports are written to
+`migration-report-<timestamp>.json` and `pitr-report-<timestamp>.json` in the
+current working directory. Spec: `wiki/specs/tenancy-migration-fanout.md` in
+app-business-core; ADR-023 records the naming convention.
+
 ## Stack
 
 - Next.js 15 (App Router, TypeScript strict)

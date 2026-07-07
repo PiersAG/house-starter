@@ -40,10 +40,14 @@ function resolveUrl(url?: string): string {
 }
 
 /**
- * Open a libSQL client. Defaults to in-memory when no URL is supplied.
+ * Open a libSQL client. Defaults to in-memory when no URL is supplied. When
+ * a Turso remote URL is given, `authToken` is required — libSQL will not
+ * accept anonymous connections against a remote database. The token is
+ * ignored for `:memory:` and `file:` URLs, so the existing local paths keep
+ * working unchanged.
  */
-export function createMigrationDatabase(url?: string): Client {
-  const client = createClient({ url: resolveUrl(url) });
+export function createMigrationDatabase(url?: string, authToken?: string): Client {
+  const client = createClient({ url: resolveUrl(url), authToken });
   return client;
 }
 
@@ -59,12 +63,18 @@ export async function runMigrations(client: Client): Promise<void> {
 /**
  * Open a database (from `url`, falling back to DATABASE_URL, then in-memory),
  * run the migrations, and close it. This is the single entry point the
- * standalone CLI wrapper calls.
+ * standalone CLI wrapper AND the multi-tenant fan-out (scripts/
+ * migrate-all-tenants.ts) call — no second migration mechanism exists.
+ *
+ * `authToken` is required when `url` is a remote Turso libsql:// URL. For
+ * `:memory:` and `file:` URLs it is ignored. Backward-compatible: existing
+ * single-tenant callers pass no token.
  */
 export async function migrate(
   url: string | undefined = process.env.DATABASE_URL,
+  authToken?: string,
 ): Promise<void> {
-  const client = createMigrationDatabase(url);
+  const client = createMigrationDatabase(url, authToken);
   try {
     await runMigrations(client);
   } finally {
