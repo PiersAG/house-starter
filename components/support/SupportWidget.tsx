@@ -86,7 +86,7 @@ export function SupportWidget({ appId, defaultFrom = "", endpoint }: SupportWidg
         type="button"
         onClick={() => setStatus("open")}
         aria-label="Open support"
-        className="fixed bottom-6 right-6 z-50 rounded-full bg-blue-600 px-5 py-3 text-white shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+        className="fixed bottom-4 right-4 z-50 min-h-11 min-w-11 rounded-full bg-blue-600 px-5 py-3 text-white shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 sm:bottom-6 sm:right-6"
       >
         Support
       </button>
@@ -97,7 +97,7 @@ export function SupportWidget({ appId, defaultFrom = "", endpoint }: SupportWidg
     <div
       role="dialog"
       aria-label="Support"
-      className="fixed bottom-6 right-6 z-50 w-80 rounded-xl border border-border bg-white p-4 shadow-xl"
+      className="fixed inset-x-4 bottom-4 z-50 rounded-xl border border-border bg-white p-4 shadow-xl sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-80"
     >
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-text-primary">Get support</h3>
@@ -108,7 +108,7 @@ export function SupportWidget({ appId, defaultFrom = "", endpoint }: SupportWidg
             setError(null);
           }}
           aria-label="Close"
-          className="text-text-secondary hover:text-text-primary"
+          className="flex h-11 w-11 items-center justify-center text-lg text-text-secondary hover:text-text-primary"
         >
           ×
         </button>

@@ -16,7 +16,7 @@ export default async function DashboardPage() {
   const displayName = session.user.name ?? session.user.email ?? "there";
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col p-6">
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col p-4 sm:p-6">
       <header className="flex items-center justify-between border-b border-border pb-4">
         <h1 className="text-xl font-semibold text-text-primary">Your notes</h1>
         <form
@@ -27,7 +27,7 @@ export default async function DashboardPage() {
         >
           <button
             type="submit"
-            className="rounded border border-border px-3 py-1.5 text-sm font-medium text-text-primary hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            className="min-h-11 rounded border border-border px-3 py-1.5 text-sm font-medium text-text-primary hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
             Sign out
           </button>

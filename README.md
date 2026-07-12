@@ -85,6 +85,27 @@ npm install
 npm run dev
 ```
 
+## Responsive design (universal)
+
+Every page and component must render correctly across the full breakpoint contract. These are the gated widths — new UI is expected to work at all of them:
+
+| Name | Width | Notes |
+|---|---|---|
+| small phone | 320px | The floor. Where layouts actually break. |
+| phone | 390px | Modern default (touch profile). |
+| tablet | 768px | The forgotten middle case. Must be explicitly checked, not inferred. |
+| laptop | 1280px | |
+| desktop | 1920px | The ceiling. Content must not sprawl. |
+
+**Rules that apply to every UI file:**
+- **No horizontal overflow at any width.** `document.documentElement.scrollWidth <= window.innerWidth` for every page, at every viewport.
+- **Touch targets** meet WCAG 2.5.8: 24×24 CSS px absolute minimum; use 44×44 (Tailwind `min-h-11 min-w-11`) for anything a finger will tap.
+- **Breakpoint-aware spacing**, not fixed padding. Use `p-4 sm:p-6 lg:p-8`, not `p-12` alone. Existing pages (`app/login`, `app/signup`, `app/dashboard`, `app/contact`) are the reference.
+- **Content max-widths** cap sprawl at 1920px+. Use `max-w-sm`, `max-w-xl`, `max-w-2xl` on `<main>`.
+- **Fixed-width overlays are dangerous.** A `fixed w-80` element with right/left anchoring overflows at 320px. Use `inset-x-4 sm:w-80` or equivalent. See `components/support/SupportWidget.tsx` for the pattern.
+
+**Gate:** `npm run test:responsive` runs the E2E suite at all five widths with axe-core, no-horizontal-overflow, and touch-target checks. Ships **advisory** — failures are reported but do not fail the build. Flip to blocking with `RESPONSIVE_GATE=blocking npm run test:responsive`.
+
 ## CI gates (on every push and PR)
 
 1. Lint (`eslint`)
@@ -92,15 +113,17 @@ npm run dev
 3. Unit tests with coverage (≥80% lines globally; 100% on `**/compliance/**` and `**/auth/**` when those directories exist)
 4. Playwright E2E with axe-core accessibility check (WCAG 2.2 AA)
 5. `npm audit --audit-level high`
+6. Responsive suite at 320 / 390 / 768 / 1280 / 1920 — **advisory** (reports; does not block). Flip with `RESPONSIVE_GATE=blocking`.
 
 ## Key commands
 
 ```bash
-npm run dev          # Development server
-npm run build        # Production build
-npm run lint         # ESLint
-npm run type-check   # TypeScript
-npm run test         # Vitest (unit tests)
-npm run test:coverage # Vitest with coverage report
-npm run test:e2e     # Playwright E2E
+npm run dev             # Development server
+npm run build           # Production build
+npm run lint            # ESLint
+npm run type-check      # TypeScript
+npm run test            # Vitest (unit tests)
+npm run test:coverage   # Vitest with coverage report
+npm run test:e2e        # Playwright E2E (desktop)
+npm run test:responsive # Multi-viewport advisory gate (320 / 390 / 768 / 1280 / 1920)
 ```

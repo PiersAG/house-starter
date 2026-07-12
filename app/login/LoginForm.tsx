@@ -68,7 +68,7 @@ export function LoginForm() {
             type="button"
             onClick={() => setShowPassword((v) => !v)}
             aria-label={showPassword ? "Hide password" : "Show password"}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary"
+            className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center text-text-secondary hover:text-text-primary"
           >
             {showPassword ? (
               <EyeOff size={18} aria-hidden />
@@ -94,7 +94,7 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={pending}
-        className="w-full rounded bg-primary px-4 py-2 font-medium text-white disabled:opacity-60"
+        className="min-h-11 w-full rounded bg-primary px-4 py-2 font-medium text-white disabled:opacity-60"
       >
         {pending ? "Signing in…" : "Sign in"}
       </button>
