@@ -56,9 +56,14 @@ export function assertValidTenantId(tenantId: string): void {
 function normaliseUrl(raw: string | undefined): string {
   // Tests may pass ":memory:" explicitly; the running app never defaults to
   // in-memory. Any bare filename becomes file:<name>.
+  /* v8 ignore start -- defensive guard: both callers (resolve() shared and
+     per-tenant paths) already throw on empty/unset URLs before calling this,
+     so the guard is unreachable through the public API. Kept for future
+     callers of normaliseUrl; excluded from the per-file 100% coverage gate. */
   if (!raw || raw.length === 0) {
     throw new Error("lib/db.ts: empty database URL");
   }
+  /* v8 ignore stop */
   if (raw === ":memory:") return raw;
   if (/^[a-z]+:/i.test(raw)) return raw;
   return `file:${raw}`;

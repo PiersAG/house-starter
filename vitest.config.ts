@@ -15,9 +15,6 @@ export default defineConfig({
       exclude: [
         "**/*.test.*",
         "**/*.spec.*",
-        // Stubs replaced per-app — tested indirectly via integration tests:
-        "lib/db.ts",
-        "lib/auth.ts",
         // Server actions tested via E2E, not unit tests:
         "app/**/actions.ts",
         "app/api/**",
@@ -28,11 +25,36 @@ export default defineConfig({
         // UI primitive components — tested via E2E accessibility scans:
         "components/ui/**",
       ],
+      // SECURITY GATE (spec C4b): per-file 100% thresholds on the
+      // security-critical modules. This is the real gate — enforced here,
+      // where coverage is actually computed, on real files named by path.
+      // There are deliberately NO blanket global thresholds: the rest of the
+      // report is informational and must stay truthful, not aspirational.
       thresholds: {
-        lines: 80,
-        statements: 80,
-        branches: 70,
-        functions: 80,
+        "**/lib/password.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/rate-limit.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/users.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/db.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
       },
     },
   },
