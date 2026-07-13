@@ -15,6 +15,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test --project=chromium",
     "test:isolation": "vitest run tests/unit/db.test.ts && playwright test --project=isolation",
+    "test:responsive": "playwright test --project=responsive-320-small-phone --project=responsive-390-phone --project=responsive-768-tablet --project=responsive-1280-laptop --project=responsive-1920-desktop",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:all-tenants": "tsx scripts/migrate-all-tenants.ts",
