@@ -56,34 +56,69 @@ jobs:
       - name: Type check
         run: npm run type-check
 
-      # Global threshold: 80% lines. Enforced here for all source files.
-      - name: Unit tests (coverage ≥80%)
+      # Coverage truth (spec C4b): NO blanket global threshold — the report is
+      # informational and honest. The SECURITY GATE is per-file 100% coverage
+      # on lib/password.ts, lib/rate-limit.ts, lib/users.ts and lib/db.ts,
+      # declared in vitest.config.ts and enforced right here, where coverage
+      # is actually computed. This step FAILS if any of those files loses
+      # coverage.
+      - name: Unit tests + per-file 100% security coverage gate
         run: npm run test:coverage
 
-      # Per-path 100% gate: compliance and auth LOGIC must be fully unit-tested.
-      # Route handlers (app/api/**/route.ts) are EXCLUDED — by template design they
-      # are exercised through the Playwright E2E suite, not unit tests (see lib/db.ts
-      # / lib/auth.ts coverage exclusions in vitest.config.ts). The 100% bar applies
-      # to unit-testable auth/compliance logic, not to E2E-tested route handlers.
-      # Passes trivially until such logic files exist.
-      - name: Coverage gate — compliance and auth logic (100%)
+      # Tamper check for the gate above. Enforcement lives in the coverage run
+      # (single source of truth — deliberately no duplicate coverage logic
+      # here); this step pins the contract so the per-file 100% thresholds
+      # cannot be silently deleted, renamed, or lowered. It names REAL FILES
+      # BY PATH — no directory-name pattern matching.
+      - name: Security gate contract check (per-file 100% thresholds present)
         run: |
-          FILES=$(find . \( -path "*/compliance/*.ts" -o -path "*/compliance/*.tsx" \
-                          -o -path "*/auth/*.ts" -o -path "*/auth/*.tsx" \) \
-                      ! -path "*/node_modules/*" ! -name "*.test.*" ! -name "*.spec.*" \
-                      ! -name "route.ts" ! -name "route.tsx" 2>/dev/null)
-          if [ -n "$FILES" ]; then
-            npx vitest run --coverage \
-              --coverage.include="**/compliance/**" \
-              --coverage.include="**/auth/**" \
-              --coverage.exclude="**/api/**/route.ts" \
-              --coverage.exclude="**/api/**/route.tsx" \
-              --coverage.thresholds.lines=100
-          else
-            echo "No unit-testable compliance/auth logic files found — 100% gate passes (route handlers are E2E-tested)."
-          fi
+          node -e '
+            const { readFileSync, existsSync } = require("fs");
+            const cfg = readFileSync("vitest.config.ts", "utf8");
+            const files = ["lib/password.ts", "lib/rate-limit.ts", "lib/users.ts", "lib/db.ts"];
+            const metrics = ["lines", "statements", "branches", "functions"];
+            let failed = false;
+            for (const f of files) {
+              if (!existsSync(f)) {
+                console.error(`::error::Security gate contract: ${f} is missing from the repo.`);
+                failed = true;
+                continue;
+              }
+              const start = cfg.indexOf(`"**/${f}": {`);
+              if (start === -1) {
+                console.error(`::error::Security gate contract: vitest.config.ts no longer declares a per-file threshold block for ${f}.`);
+                failed = true;
+                continue;
+              }
+              const block = cfg.slice(start, cfg.indexOf("}", start) + 1);
+              const missing = metrics.filter((m) => !block.includes(`${m}: 100`));
+              if (missing.length > 0) {
+                console.error(`::error::Security gate contract: ${f} thresholds not pinned at 100 for: ${missing.join(", ")}.`);
+                failed = true;
+              } else {
+                console.log(`${f}: per-file 100% thresholds declared`);
+              }
+            }
+            process.exit(failed ? 1 : 0);
+          '
 
+      # E2E env (spec C4b, Deliverable D). CI-ONLY THROWAWAY VALUES — none of
+      # these are real secrets and none reach any real system. The app fails
+      # loudly at startup without a session secret and a database URL (by
+      # design, no insecure defaults), so CI must provide explicit values for
+      # the full chain to run.
       - name: Playwright smoke test
+        env:
+          # Dummy JWT-signing secret for this CI browser session only.
+          AUTH_SECRET: ci-e2e-only-dummy-secret-not-used-anywhere-real
+          # Local SQLite file (the scaffold's dev fallback), created on the
+          # runner and discarded with it. Shared tenancy mode matches how the
+          # template app wires lib/auth.ts to the shared db export.
+          TENANCY_MODE: shared
+          DATABASE_URL: file:ci-e2e.db
+          # Explicit safe-environment flag (ADR-015): in-memory rate limiting
+          # is acceptable only here, where nothing real is reachable.
+          RATE_LIMIT_ALLOW_IN_MEMORY: "true"
         run: |
           npx playwright install --with-deps chromium
           npm run test:e2e
