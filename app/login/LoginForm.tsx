@@ -82,7 +82,10 @@ export function LoginForm() {
         <input
           name="rememberMe"
           type="checkbox"
-          className="h-4 w-4 rounded border-border accent-primary"
+          // WCAG 2.5.8 target-size floor is 24×24 CSS px. h-6 w-6 = 24px hits
+          // it exactly; do not shrink below h-6/w-6 or the responsive gate and
+          // axe target-size will flag it on /login.
+          className="h-6 w-6 rounded border-border accent-primary"
         />
         Remember me for 30 days
       </label>
