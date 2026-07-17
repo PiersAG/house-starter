@@ -106,7 +106,11 @@ jobs:
       # these are real secrets and none reach any real system. The app fails
       # loudly at startup without a session secret and a database URL (by
       # design, no insecure defaults), so CI must provide explicit values for
-      # the full chain to run.
+      # the full chain to run. instrumentation.ts additionally validates the
+      # running env against .env.contract at boot, so CI must supply every
+      # deploy-injected contract var (DATABASE_AUTH_TOKEN is not required here
+      # because DATABASE_URL is a local file: URL — the boot validator only
+      # requires a token for a remote database).
       - name: Playwright smoke test
         env:
           # Dummy JWT-signing secret for this CI browser session only.
@@ -119,6 +123,14 @@ jobs:
           # Explicit safe-environment flag (ADR-015): in-memory rate limiting
           # is acceptable only here, where nothing real is reachable.
           RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+          # Declared deploy-injected in .env.contract → the boot validator
+          # requires them. Throwaway/non-gating values for CI only:
+          #   • STRIPE_SECRET_KEY: unused by the template today; a dummy string.
+          #   • APP_LIFECYCLE_STATE: LIVE_EVAL matches the current effective
+          #     default (an unset value already resolves to LIVE_EVAL) so E2E
+          #     behaviour is unchanged; the smoke suite hits only public routes.
+          STRIPE_SECRET_KEY: sk_test_ci-e2e-only-dummy-not-a-real-key
+          APP_LIFECYCLE_STATE: LIVE_EVAL
         run: |
           npx playwright install --with-deps chromium
           npm run test:e2e

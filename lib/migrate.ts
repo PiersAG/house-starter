@@ -24,6 +24,15 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
+
+CREATE TABLE IF NOT EXISTS revoked_sessions (
+  id TEXT PRIMARY KEY NOT NULL,
+  jti TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  revoked_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS revoked_sessions_jti_idx ON revoked_sessions(jti);
 `;
 
 /**

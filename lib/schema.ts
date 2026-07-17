@@ -21,9 +21,26 @@ export const users = sqliteTable("users", {
 });
 
 /**
- * Notes belong to exactly one user (ownership-only authorisation).
- * Each note has a title and a body — the entire product scope.
+ * Server-side session revocation records (CEO ruling 2026-07-15).
+ * Keyed by `jti` (JWT session ID). Checked ONLY at token renewal time —
+ * never on every request — so the DB cost is bounded to one check per
+ * RENEW_AFTER_SECONDS window, not per page load. See lib/revoked-sessions.ts.
  */
+export const revokedSessions = sqliteTable("revoked_sessions", {
+  id: text("id").primaryKey(),
+  /** The JWT session identifier set at sign-in. */
+  jti: text("jti").notNull().unique(),
+  /** The user who owned this session. */
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  revokedAt: integer("revoked_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+
+export type RevokedSession = typeof revokedSessions.$inferSelect;
+export type NewRevokedSession = typeof revokedSessions.$inferInsert;

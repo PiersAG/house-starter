@@ -15,6 +15,14 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Ship .env.contract inside the serverless bundle so instrumentation.ts can
+  // validate the running environment against it at boot on the host (not just
+  // in CI, where the file sits at the repo-root cwd). Keyed by a catch-all
+  // route glob because the boot validator runs for every request path. If the
+  // file is not bundled the validator warns and skips rather than crashing.
+  outputFileTracingIncludes: {
+    "/**": ["./.env.contract"],
+  },
   async headers() {
     return [
       {
