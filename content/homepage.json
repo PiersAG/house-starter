@@ -1,0 +1,34 @@
+{
+  "product": "House Starter",
+  "hero": {
+    "heading": "Launch your product on a foundation that already works",
+    "subheading": "House Starter is the template every app is born from — secure sign-in, billing, transactional email, and a responsive, accessible design system, ready on day one.",
+    "cta": {
+      "label": "Get started",
+      "href": "/signup"
+    }
+  },
+  "features": [
+    {
+      "title": "Secure by default",
+      "description": "Password sign-in, session handling, rate limiting, and per-tenant data isolation are built in and tested — not bolted on later."
+    },
+    {
+      "title": "Ready to charge",
+      "description": "Subscriptions, checkout, and a paid-access gate ship in the template, so turning on billing is configuration, not construction."
+    },
+    {
+      "title": "Accessible everywhere",
+      "description": "Every screen is checked against WCAG 2.2 AA and renders cleanly from a 320px phone to a widescreen desktop."
+    }
+  ],
+  "cta": {
+    "heading": "Ready to build?",
+    "subheading": "Create your account and start with the hard parts already solved.",
+    "label": "Create your account",
+    "href": "/signup"
+  },
+  "footer": {
+    "tagline": "House Starter — the foundation every app is built on."
+  }
+}
