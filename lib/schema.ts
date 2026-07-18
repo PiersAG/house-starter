@@ -81,6 +81,26 @@ export const stripeEvents = sqliteTable("stripe_events", {
     .default(sql`(unixepoch())`),
 });
 
+/**
+ * Password-reset tokens. Only a HASH of the token is stored (never the raw
+ * value — a database read must not yield a usable reset link). Single-use
+ * (`usedAt` set on consumption) and expiring (`expiresAt`). See
+ * lib/password-reset.ts.
+ */
+export const passwordResetTokens = sqliteTable("password_reset_tokens", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  /** SHA-256 hash of the raw token; the raw token is emailed, never stored. */
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  usedAt: integer("used_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 
@@ -92,3 +112,6 @@ export type NewSubscription = typeof subscriptions.$inferInsert;
 
 export type StripeEvent = typeof stripeEvents.$inferSelect;
 export type NewStripeEvent = typeof stripeEvents.$inferInsert;
+
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+export type NewPasswordResetToken = typeof passwordResetTokens.$inferInsert;

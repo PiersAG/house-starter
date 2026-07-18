@@ -45,6 +45,8 @@ const ENV_KEYS = [
   "STRIPE_WEBHOOK_SECRET",
   "APP_LIFECYCLE_STATE",
   "RATE_LIMIT_ALLOW_IN_MEMORY",
+  "EMAIL_PROVIDER_API_KEY",
+  "EMAIL_SEND_MODE",
 ] as const;
 const saved: Record<string, string | undefined> = {};
 
@@ -59,6 +61,8 @@ function setFullValidEnv(): void {
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_dummy";
   process.env.APP_LIFECYCLE_STATE = "LIVE_EVAL";
   process.env.RATE_LIMIT_ALLOW_IN_MEMORY = "true";
+  process.env.EMAIL_PROVIDER_API_KEY = "re_dummy";
+  process.env.EMAIL_SEND_MODE = "log";
 }
 
 beforeEach(() => {

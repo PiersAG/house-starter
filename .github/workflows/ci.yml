@@ -135,6 +135,13 @@ jobs:
           # webhook is delivered); a dummy string satisfies the presence check.
           STRIPE_WEBHOOK_SECRET: whsec_ci-e2e-only-dummy-not-a-real-secret
           APP_LIFECYCLE_STATE: LIVE_EVAL
+          # EMAIL_PROVIDER_API_KEY (secret) + EMAIL_SEND_MODE (fixed) are
+          # declared deploy-injected in .env.contract → the boot validator
+          # requires them. EMAIL_SEND_MODE=log means no real mail is ever sent
+          # in CI; the key is a dummy the log path never uses. (EMAIL_FROM is
+          # source=app, not deploy-injected, so the boot validator skips it.)
+          EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
+          EMAIL_SEND_MODE: log
         run: |
           npx playwright install --with-deps chromium
           npm run test:e2e
