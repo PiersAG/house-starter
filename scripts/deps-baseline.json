@@ -40,6 +40,7 @@
     "prettier-plugin-tailwindcss",
     "react",
     "react-dom",
+    "stripe",
     "tailwind-merge",
     "tailwindcss",
     "tsx",

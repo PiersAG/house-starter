@@ -42,6 +42,7 @@ const ENV_KEYS = [
   "DATABASE_AUTH_TOKEN",
   "AUTH_SECRET",
   "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
   "APP_LIFECYCLE_STATE",
   "RATE_LIMIT_ALLOW_IN_MEMORY",
 ] as const;
@@ -55,6 +56,7 @@ function setFullValidEnv(): void {
   process.env.DATABASE_AUTH_TOKEN = "test-token";
   process.env.AUTH_SECRET = "dummy-session-secret";
   process.env.STRIPE_SECRET_KEY = "sk_test_dummy";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_dummy";
   process.env.APP_LIFECYCLE_STATE = "LIVE_EVAL";
   process.env.RATE_LIMIT_ALLOW_IN_MEMORY = "true";
 }

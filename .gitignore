@@ -45,3 +45,6 @@ local.db-*
 # CI-only throwaway e2e database (created by the Playwright step's env).
 ci-e2e.db
 ci-e2e.db-*
+# Any other libSQL/SQLite file created by a local run or test (e.g. boot-check.db).
+*.db
+*.db-*

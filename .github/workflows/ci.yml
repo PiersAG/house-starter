@@ -130,6 +130,10 @@ jobs:
           #     default (an unset value already resolves to LIVE_EVAL) so E2E
           #     behaviour is unchanged; the smoke suite hits only public routes.
           STRIPE_SECRET_KEY: sk_test_ci-e2e-only-dummy-not-a-real-key
+          # STRIPE_WEBHOOK_SECRET: declared deploy-injected in .env.contract →
+          # the boot validator requires it. Unused by the smoke suite (no real
+          # webhook is delivered); a dummy string satisfies the presence check.
+          STRIPE_WEBHOOK_SECRET: whsec_ci-e2e-only-dummy-not-a-real-secret
           APP_LIFECYCLE_STATE: LIVE_EVAL
         run: |
           npx playwright install --with-deps chromium
