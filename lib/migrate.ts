@@ -33,6 +33,26 @@ CREATE TABLE IF NOT EXISTS revoked_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS revoked_sessions_jti_idx ON revoked_sessions(jti);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
+  status TEXT NOT NULL,
+  price_id TEXT,
+  current_period_end INTEGER,
+  trial_ends_at INTEGER,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS subscriptions_customer_idx ON subscriptions(stripe_customer_id);
+
+CREATE TABLE IF NOT EXISTS stripe_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  processed_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
 `;
 
 /**
