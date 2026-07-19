@@ -5,7 +5,12 @@
 // Application code and the migration logic both import these definitions.
 
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  primaryKey,
+} from "drizzle-orm/sqlite-core";
 
 /**
  * Passwords are never stored in plain text — only an Argon2id/bcrypt hash.
@@ -100,6 +105,82 @@ export const passwordResetTokens = sqliteTable("password_reset_tokens", {
     .notNull()
     .default(sql`(unixepoch())`),
 });
+
+/**
+ * Settings registry — the catalogue of every configurable behaviour in the
+ * factory (settings-registry-spec §3). Shipped with house-starter and seeded
+ * from the per-capability `settings.ts` declarations (lib/settings/*). One row
+ * per setting key. This is the "what exists / how it defaults" half; per-tenant
+ * chosen values live in `settingValues`.
+ *
+ * SQLite adaptation of the spec's Postgres DDL (flagged): jsonb → TEXT (JSON
+ * string), boolean → INTEGER (0/1). `enumValues`, `factoryDefault` and `bounds`
+ * hold JSON text; `factoryDefault` is always present.
+ */
+export const settingDefinitions = sqliteTable("setting_definitions", {
+  /** Dotted key, e.g. "booking.cancellation_cutoff_hours". */
+  key: text("key").primaryKey(),
+  /** 'core' | 'billing' | 'booking' | 'comms'. */
+  capability: text("capability").notNull(),
+  /** UI grouping within a capability, e.g. "Cancellations & refunds". */
+  functionalGroup: text("functional_group").notNull(),
+  label: text("label").notNull(),
+  /** Plain-English effect of the setting. */
+  description: text("description").notNull(),
+  /** boolean | integer | decimal | text | enum | duration_hours | json. */
+  valueType: text("value_type").notNull(),
+  /** JSON array of allowed strings, when valueType = 'enum'. */
+  enumValues: text("enum_values"),
+  /** JSON-encoded factory default. Always present. */
+  factoryDefault: text("factory_default").notNull(),
+  /** JSON {"min":n,"max":n} for numeric types; null = free. */
+  bounds: text("bounds"),
+  /** 0/1 — false locks the setting to the factory default. */
+  ownerEditable: integer("owner_editable", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  /** 0/1 — true means a per-client preference may override the owner value. */
+  clientScoped: integer("client_scoped", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  /** Capability feature flag; the UI hides the row when the flag is off. */
+  requiresFlag: text("requires_flag"),
+});
+
+/**
+ * Per-tenant chosen values (settings-registry-spec §3). Absence at a level
+ * falls through to the level above; the resolver never copies a value down.
+ *
+ * SQLite adaptation of the spec's `PRIMARY KEY (key, scope, COALESCE(client_id,
+ * sentinel))` (flagged): SQLite treats NULLs in a composite primary key as
+ * distinct, so the COALESCE sentinel is materialised as a NOT NULL column with
+ * a '' default — owner rows carry client_id = '' and the plain composite PK
+ * (key, scope, client_id) enforces one row per (key, scope, client).
+ */
+export const settingValues = sqliteTable(
+  "setting_values",
+  {
+    key: text("key")
+      .notNull()
+      .references(() => settingDefinitions.key),
+    /** 'owner' | 'client'. */
+    scope: text("scope").notNull(),
+    /** '' for owner scope; the client id for client scope (sentinel, not NULL). */
+    clientId: text("client_id").notNull().default(""),
+    /** JSON-encoded chosen value. */
+    value: text("value").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (table) => [primaryKey({ columns: [table.key, table.scope, table.clientId] })],
+);
+
+export type SettingDefinitionRow = typeof settingDefinitions.$inferSelect;
+export type NewSettingDefinitionRow = typeof settingDefinitions.$inferInsert;
+
+export type SettingValueRow = typeof settingValues.$inferSelect;
+export type NewSettingValueRow = typeof settingValues.$inferInsert;
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;

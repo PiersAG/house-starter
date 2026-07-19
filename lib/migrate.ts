@@ -11,6 +11,7 @@
 // the DATABASE_URL value.
 
 import { createClient, type Client } from "@libsql/client";
+import { seedSettingDefinitions } from "@/lib/settings/seed";
 
 /**
  * Idempotent DDL that brings an empty SQLite database up to the current schema.
@@ -64,6 +65,32 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS password_reset_tokens_user_idx ON password_reset_tokens(user_id);
+
+CREATE TABLE IF NOT EXISTS setting_definitions (
+  key TEXT PRIMARY KEY NOT NULL,
+  capability TEXT NOT NULL,
+  functional_group TEXT NOT NULL,
+  label TEXT NOT NULL,
+  description TEXT NOT NULL,
+  value_type TEXT NOT NULL CHECK (value_type IN ('boolean','integer','decimal','text','enum','duration_hours','json')),
+  enum_values TEXT,
+  factory_default TEXT NOT NULL,
+  bounds TEXT,
+  owner_editable INTEGER NOT NULL DEFAULT 1,
+  client_scoped INTEGER NOT NULL DEFAULT 0,
+  requires_flag TEXT
+);
+
+CREATE INDEX IF NOT EXISTS setting_definitions_capability_idx ON setting_definitions(capability);
+
+CREATE TABLE IF NOT EXISTS setting_values (
+  key TEXT NOT NULL REFERENCES setting_definitions(key),
+  scope TEXT NOT NULL CHECK (scope IN ('owner','client')),
+  client_id TEXT NOT NULL DEFAULT '',
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (key, scope, client_id)
+);
 `;
 
 /**
@@ -98,6 +125,10 @@ export function createMigrationDatabase(url?: string, authToken?: string): Clien
 export async function runMigrations(client: Client): Promise<void> {
   await client.execute("PRAGMA foreign_keys = ON;");
   await client.executeMultiple(MIGRATION_SQL);
+  // Seed the settings catalogue from the merged registry — part of the one
+  // true migration path so every migrated DB carries the current definitions
+  // (settings-registry-spec §4). Idempotent upsert; safe to run repeatedly.
+  await seedSettingDefinitions(client);
 }
 
 /**
