@@ -23,6 +23,20 @@ import {
 import { requireActiveSubscription } from "@/lib/billing/gate";
 import { handleStripeEvent } from "@/lib/billing/webhook";
 import { getStripe, __resetStripeForTests } from "@/lib/billing/stripe";
+import { setOwnerValue } from "@/lib/settings/values";
+
+const DAY_MS = 86_400_000;
+
+/** A verified event carrying a `created` time — the shape real Stripe events (and
+ *  test-clock events) have; the grace anchor is stamped from it. */
+function timedEvent(
+  id: string,
+  type: string,
+  createdSeconds: number,
+  object: unknown,
+): Stripe.Event {
+  return { id, type, created: createdSeconds, data: { object } } as unknown as Stripe.Event;
+}
 
 let client: Client;
 let db: AppDatabase;
@@ -224,6 +238,154 @@ describe("subscriptions repository", () => {
 
   it("updateSubscriptionByStripeCustomerId returns 0 when nothing matches", async () => {
     expect(await updateSubscriptionByStripeCustomerId(db, "cus_ghost", { status: "x" })).toBe(0);
+  });
+});
+
+describe("webhook — past_due grace anchor (pastDueAt)", () => {
+  it("invoice.payment_failed stamps pastDueAt from the event time", async () => {
+    const userId = await seedUser();
+    await upsertSubscriptionByUserId(db, {
+      userId,
+      status: "active",
+      stripeCustomerId: "cus_g1",
+    });
+    const failedAt = 1893456000; // 2030-01-01, seconds
+    await handleStripeEvent(
+      db,
+      timedEvent("evt_pf_1", "invoice.payment_failed", failedAt, { customer: "cus_g1" }),
+    );
+    const sub = await getSubscriptionByUserId(db, userId);
+    expect(sub?.status).toBe("past_due");
+    expect(sub?.pastDueAt?.getTime()).toBe(failedAt * 1000);
+  });
+
+  it("a re-fired invoice.payment_failed keeps the anchor at the FIRST failure", async () => {
+    const userId = await seedUser();
+    await upsertSubscriptionByUserId(db, {
+      userId,
+      status: "active",
+      stripeCustomerId: "cus_g2",
+    });
+    const first = 1893456000;
+    const retry = first + 3 * 86400; // Stripe re-fires on dunning retries
+    await handleStripeEvent(
+      db,
+      timedEvent("evt_pf_a", "invoice.payment_failed", first, { customer: "cus_g2" }),
+    );
+    await handleStripeEvent(
+      db,
+      timedEvent("evt_pf_b", "invoice.payment_failed", retry, { customer: "cus_g2" }),
+    );
+    const sub = await getSubscriptionByUserId(db, userId);
+    expect(sub?.pastDueAt?.getTime()).toBe(first * 1000);
+  });
+
+  it("recovery to active clears the grace anchor", async () => {
+    const userId = await seedUser();
+    await upsertSubscriptionByUserId(db, {
+      userId,
+      status: "past_due",
+      stripeCustomerId: "cus_g3",
+      pastDueAt: new Date("2030-01-01T00:00:00Z"),
+    });
+    await handleStripeEvent(
+      db,
+      timedEvent("evt_rec", "customer.subscription.updated", 1900000000, {
+        id: "sub_g3",
+        status: "active",
+        customer: "cus_g3",
+      }),
+    );
+    const sub = await getSubscriptionByUserId(db, userId);
+    expect(sub?.status).toBe("active");
+    expect(sub?.pastDueAt).toBeNull();
+  });
+});
+
+describe("gate — grace window (past_due)", () => {
+  const PAST_DUE_AT = new Date("2030-01-01T00:00:00Z");
+
+  async function pastDueSub(userId: string, customerId = "cus_grace"): Promise<void> {
+    await upsertSubscriptionByUserId(db, {
+      userId,
+      status: "past_due",
+      stripeCustomerId: customerId,
+      pastDueAt: PAST_DUE_AT,
+    });
+  }
+
+  it("allows a past_due subscription inside the grace window (3 of 7 days)", async () => {
+    const userId = await seedUser();
+    await pastDueSub(userId);
+    const now = new Date(PAST_DUE_AT.getTime() + 3 * DAY_MS);
+    expect((await requireActiveSubscription(db, userId, { now })).allowed).toBe(true);
+  });
+
+  it("denies with 402 once the grace window has elapsed (8 of 7 days)", async () => {
+    const userId = await seedUser();
+    await pastDueSub(userId);
+    const now = new Date(PAST_DUE_AT.getTime() + 8 * DAY_MS);
+    const result = await requireActiveSubscription(db, userId, { now });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) expect(result.status).toBe(402);
+  });
+
+  it("denies exactly at the boundary (grace is elapsed, not remaining)", async () => {
+    const userId = await seedUser();
+    await pastDueSub(userId);
+    const now = new Date(PAST_DUE_AT.getTime() + 7 * DAY_MS);
+    expect((await requireActiveSubscription(db, userId, { now })).allowed).toBe(false);
+  });
+
+  it("reads the grace length from the registry, not a literal", async () => {
+    const userId = await seedUser();
+    await pastDueSub(userId);
+    // Shorten grace to 2 days via a stored owner value. If the gate read a
+    // literal 7 it would still allow at day 3; honouring the override proves it
+    // resolves billing.subscription_grace_days through getSetting.
+    await setOwnerValue(db, "billing.subscription_grace_days", 2);
+    const now = new Date(PAST_DUE_AT.getTime() + 3 * DAY_MS);
+    expect((await requireActiveSubscription(db, userId, { now })).allowed).toBe(false);
+  });
+});
+
+describe("gate — 402 payload", () => {
+  it("carries the resolved Stripe portal link when a resolver is supplied", async () => {
+    const userId = await seedUser();
+    await upsertSubscriptionByUserId(db, {
+      userId,
+      status: "canceled",
+      stripeCustomerId: "cus_pay",
+    });
+    const result = await requireActiveSubscription(db, userId, {
+      portalLink: async (id) => `https://billing.stripe.com/p/session_for_${id}`,
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.status).toBe(402);
+      expect(result.portalUrl).toBe("https://billing.stripe.com/p/session_for_cus_pay");
+    }
+  });
+
+  it("portalUrl is null when there is no Stripe customer to manage", async () => {
+    const userId = await seedUser();
+    const result = await requireActiveSubscription(db, userId, {
+      portalLink: async () => "https://should-not-be-reached",
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) expect(result.portalUrl).toBeNull();
+  });
+
+  it("portalUrl is null when no resolver is supplied", async () => {
+    const userId = await seedUser();
+    await upsertSubscriptionByUserId(db, {
+      userId,
+      status: "canceled",
+      stripeCustomerId: "cus_np",
+    });
+    const result = await requireActiveSubscription(db, userId);
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) expect(result.portalUrl).toBeNull();
   });
 });
 

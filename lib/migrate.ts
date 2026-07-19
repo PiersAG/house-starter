@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   price_id TEXT,
   current_period_end INTEGER,
   trial_ends_at INTEGER,
+  past_due_at INTEGER,
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );

@@ -45,6 +45,8 @@ export interface UpsertSubscriptionInput {
   priceId?: string | null;
   currentPeriodEnd?: Date | null;
   trialEndsAt?: Date | null;
+  /** Grace-window anchor: when the subscription first went past_due. */
+  pastDueAt?: Date | null;
 }
 
 /**
@@ -64,6 +66,7 @@ export async function upsertSubscriptionByUserId(
   if (input.priceId !== undefined) set.priceId = input.priceId;
   if (input.currentPeriodEnd !== undefined) set.currentPeriodEnd = input.currentPeriodEnd;
   if (input.trialEndsAt !== undefined) set.trialEndsAt = input.trialEndsAt;
+  if (input.pastDueAt !== undefined) set.pastDueAt = input.pastDueAt;
 
   const rows = await db
     .insert(subscriptions)
@@ -76,6 +79,7 @@ export async function upsertSubscriptionByUserId(
       priceId: input.priceId ?? null,
       currentPeriodEnd: input.currentPeriodEnd ?? null,
       trialEndsAt: input.trialEndsAt ?? null,
+      pastDueAt: input.pastDueAt ?? null,
     })
     .onConflictDoUpdate({ target: subscriptions.userId, set })
     .returning()
@@ -89,6 +93,8 @@ export interface SubscriptionPatch {
   priceId?: string | null;
   currentPeriodEnd?: Date | null;
   trialEndsAt?: Date | null;
+  /** Grace-window anchor; set on entry to past_due, null on recovery. */
+  pastDueAt?: Date | null;
 }
 
 /**

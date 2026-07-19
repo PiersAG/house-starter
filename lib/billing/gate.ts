@@ -7,12 +7,25 @@
 // codebase keeps DB reads out of the per-request edge path (renewal-time
 // revocation checks in lib/revoked-sessions.ts). The gate reads the DB, so it
 // runs at the API/server-component layer.
+//
+// Grace window (billing-gap-fill-spec §WP1.1): a subscription that has gone
+// past_due keeps access for `billing.subscription_grace_days` after it first
+// went past_due — read through the settings resolver, never a literal here. Past
+// the boundary the deny carries a Stripe billing-portal link so the user can fix
+// payment. The portal link is resolved through an injected function so the gate
+// stays a pure DB unit (no Stripe call in tests).
 
 import { getSubscriptionByUserId } from "@/lib/billing/subscriptions";
+import { getSetting } from "@/lib/settings/resolver";
 import type { AppDatabase } from "@/lib/users";
 
-/** Stripe statuses that grant access. */
+/** Stripe statuses that grant access outright. */
 const ACTIVE_STATUSES = new Set(["active", "trialing"]);
+
+/** Registry key for the failed-payment grace window (days). */
+const GRACE_DAYS_KEY = "billing.subscription_grace_days";
+
+const DAY_MS = 86_400_000;
 
 export interface GateAllow {
   allowed: true;
@@ -22,20 +35,39 @@ export interface GateDeny {
   /** HTTP status a route should return — Payment Required. */
   status: 402;
   reason: string;
+  /**
+   * Stripe billing-portal link to fix payment, when there is a Stripe customer
+   * to manage and a resolver was supplied. Null otherwise (e.g. no subscription
+   * at all, or the gate was called without a portal resolver).
+   */
+  portalUrl: string | null;
 }
 export type GateResult = GateAllow | GateDeny;
 
+/** Resolves a Stripe billing-portal URL for a customer. Injected for testability. */
+export type PortalLinkResolver = (stripeCustomerId: string) => Promise<string | null>;
+
+export interface GateOptions {
+  /** Injectable clock for deterministic tests; production passes the default. */
+  now?: Date;
+  /**
+   * Supplies the billing-portal link embedded in a 402 deny. Omit and the deny
+   * carries `portalUrl: null` — the gate never calls Stripe itself.
+   */
+  portalLink?: PortalLinkResolver;
+}
+
 /**
- * Allow when the user has an active/trialing subscription, OR a trial that has
- * not yet expired (`trialEndsAt` in the future). Otherwise deny with 402.
- *
- * `now` is injectable for deterministic tests; production passes the default.
+ * Allow when the user has an active/trialing subscription, a trial that has not
+ * yet expired, OR a past_due subscription still inside its grace window. Any
+ * other state denies with 402, carrying a portal link where one can be resolved.
  */
 export async function requireActiveSubscription(
   db: AppDatabase,
   userId: string,
-  now: Date = new Date(),
+  opts: GateOptions = {},
 ): Promise<GateResult> {
+  const now = opts.now ?? new Date();
   const sub = await getSubscriptionByUserId(db, userId);
 
   if (sub && ACTIVE_STATUSES.has(sub.status)) {
@@ -45,11 +77,49 @@ export async function requireActiveSubscription(
     return { allowed: true };
   }
 
+  // Grace window: a past_due subscription keeps access for a registry-configured
+  // number of days measured from when it first went past_due. The anchor is the
+  // webhook-stamped pastDueAt; updatedAt is a defensive fallback for a legacy row
+  // that predates the column.
+  if (sub?.status === "past_due") {
+    const graceDays = await getSetting<number>(db, GRACE_DAYS_KEY);
+    const anchor = sub.pastDueAt ?? sub.updatedAt;
+    const boundary = anchor.getTime() + graceDays * DAY_MS;
+    if (now.getTime() < boundary) {
+      return { allowed: true };
+    }
+  }
+
+  const portalUrl =
+    sub?.stripeCustomerId && opts.portalLink
+      ? await opts.portalLink(sub.stripeCustomerId)
+      : null;
+
   return {
     allowed: false,
     status: 402,
     reason: sub
-      ? "Your subscription is not active. Please renew to continue."
+      ? "Your subscription payment is overdue. Please update your payment method to continue."
       : "This feature requires an active subscription.",
+    portalUrl,
   };
+}
+
+/**
+ * Default production portal-link resolver: creates a Stripe billing-portal
+ * session for the customer and returns its URL. Kept out of the gate module's
+ * pure path — callers that want a real link pass this (or a wrapper that adds a
+ * return_url) as `opts.portalLink`. Imported lazily so the gate module has no
+ * static Stripe dependency and stays edge-import-safe.
+ */
+export async function stripePortalLink(
+  stripeCustomerId: string,
+  returnUrl?: string,
+): Promise<string | null> {
+  const { getStripe } = await import("@/lib/billing/stripe");
+  const session = await getStripe().billingPortal.sessions.create({
+    customer: stripeCustomerId,
+    ...(returnUrl ? { return_url: returnUrl } : {}),
+  });
+  return session.url ?? null;
 }

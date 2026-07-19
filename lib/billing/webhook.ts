@@ -13,8 +13,10 @@ import { eq } from "drizzle-orm";
 import { stripeEvents } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";
 import {
+  getSubscriptionByStripeCustomerId,
   updateSubscriptionByStripeCustomerId,
   upsertSubscriptionByUserId,
+  type SubscriptionPatch,
 } from "@/lib/billing/subscriptions";
 
 // Minimal shapes for the fields we read. Deliberately NOT Stripe's full types:
@@ -90,13 +92,25 @@ export async function handleStripeEvent(
       const customerId = idOf(sub.customer);
       if (customerId) {
         const item = sub.items?.data?.[0];
-        await updateSubscriptionByStripeCustomerId(db, customerId, {
-          status: event.type === "customer.subscription.deleted" ? "canceled" : sub.status,
+        const newStatus =
+          event.type === "customer.subscription.deleted" ? "canceled" : sub.status;
+        const patch: SubscriptionPatch = {
+          status: newStatus,
           stripeSubscriptionId: sub.id,
           priceId: item?.price?.id ?? null,
           currentPeriodEnd: toDate(sub.current_period_end ?? item?.current_period_end),
           trialEndsAt: toDate(sub.trial_end),
-        });
+        };
+        // Keep the grace anchor consistent regardless of event ordering: entering
+        // past_due sets it (preserving any earlier invoice.payment_failed stamp),
+        // any other status clears it so a future failure starts a fresh window.
+        if (newStatus === "past_due") {
+          const existing = await getSubscriptionByStripeCustomerId(db, customerId);
+          patch.pastDueAt = existing?.pastDueAt ?? toDate(event.created) ?? new Date();
+        } else {
+          patch.pastDueAt = null;
+        }
+        await updateSubscriptionByStripeCustomerId(db, customerId, patch);
       }
       break;
     }
@@ -104,7 +118,14 @@ export async function handleStripeEvent(
       const inv = event.data.object as unknown as Invoiceish;
       const customerId = idOf(inv.customer);
       if (customerId) {
-        await updateSubscriptionByStripeCustomerId(db, customerId, { status: "past_due" });
+        const existing = await getSubscriptionByStripeCustomerId(db, customerId);
+        const patch: SubscriptionPatch = { status: "past_due" };
+        // Anchor the grace window to the FIRST failure. Stripe re-fires this on
+        // every dunning retry; resetting the stamp each time would extend grace
+        // indefinitely. event.created is the failure time (the test-clock time
+        // under a Stripe test clock); fall back to now for synthetic events.
+        if (!existing?.pastDueAt) patch.pastDueAt = toDate(event.created) ?? new Date();
+        await updateSubscriptionByStripeCustomerId(db, customerId, patch);
       }
       break;
     }

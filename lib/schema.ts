@@ -65,6 +65,12 @@ export const subscriptions = sqliteTable("subscriptions", {
   priceId: text("price_id"),
   currentPeriodEnd: integer("current_period_end", { mode: "timestamp" }),
   trialEndsAt: integer("trial_ends_at", { mode: "timestamp" }),
+  /**
+   * When the subscription FIRST entered past_due — the anchor the paid-gate's
+   * grace window is measured from (billing-gap-fill-spec §WP1.1). Set by the
+   * invoice.payment_failed webhook, cleared when the subscription recovers.
+   */
+  pastDueAt: integer("past_due_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),

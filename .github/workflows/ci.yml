@@ -102,6 +102,16 @@ jobs:
             process.exit(failed ? 1 : 0);
           '
 
+      # Billing grace-window acceptance (billing-gap-fill-spec §3 item 4): a REAL
+      # Stripe test clock advanced past the failed-payment grace boundary. The
+      # suite self-skips unless STRIPE_TEST_SECRET_KEY holds a real test-mode key
+      # (the CI dummy is rejected), so this step is green with or without the
+      # secret — and actually exercises the clock once the secret is provided.
+      - name: Billing grace test-clock (real Stripe test key only; auto-skips without one)
+        run: npm run test:integration
+        env:
+          STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+
       # E2E env (spec C4b, Deliverable D). CI-ONLY THROWAWAY VALUES — none of
       # these are real secrets and none reach any real system. The app fails
       # loudly at startup without a session secret and a database URL (by

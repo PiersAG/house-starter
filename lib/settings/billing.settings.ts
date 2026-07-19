@@ -62,4 +62,20 @@ export const billingSettings: SettingDefinition[] = [
     factoryDefault: true,
     requiresFlag: "payments",
   },
+  {
+    // WP1 (billing-gap-fill-spec §WP1.1): the failed-payment grace window. Read
+    // by the paid-gate (lib/billing/gate.ts) via getSetting — no literal in the
+    // gate. Factory policy, so owner_editable is false.
+    key: "billing.subscription_grace_days",
+    capability: "billing",
+    functionalGroup: "Subscription access",
+    label: "Failed-payment grace period (days)",
+    description:
+      "How many days a subscription keeps access after a payment fails (status past_due) before the paid gate blocks it. Factory policy — not owner-editable.",
+    valueType: "integer",
+    factoryDefault: 7,
+    bounds: { min: 0, max: 90 },
+    ownerEditable: false,
+    requiresFlag: "payments",
+  },
 ];
