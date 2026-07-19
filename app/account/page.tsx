@@ -10,6 +10,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { buildClientSettingsView } from "@/lib/settings/service";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { AppNav } from "@/components/AppNav";
 import { SettingControl } from "@/app/dashboard/settings/SettingControl";
 
 export const metadata = { title: "Your preferences" };
@@ -29,6 +30,8 @@ export default async function AccountPage() {
           Preferences that apply to your account.
         </p>
       </header>
+
+      <AppNav />
 
       {isEmpty ? (
         <div className="mt-8">

@@ -8,6 +8,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { buildOwnerSettingsView } from "@/lib/settings/service";
+import { AppNav } from "@/components/AppNav";
 import { SettingControl } from "./SettingControl";
 
 export const metadata = { title: "Settings" };
@@ -34,6 +35,8 @@ export default async function SettingsPage() {
           immediately — no deploy.
         </p>
       </header>
+
+      <AppNav />
 
       {view.map((cap) => (
         <section key={cap.capability} className="mt-8" aria-label={cap.capability}>
