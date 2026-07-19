@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/lib/auth";
+import { AppNav } from "@/components/AppNav";
 
 export const metadata = {
   title: "Dashboard",
@@ -33,6 +34,8 @@ export default async function DashboardPage() {
           </button>
         </form>
       </header>
+
+      <AppNav />
 
       <section className="mt-6" aria-label="Account">
         <p className="text-text-secondary">

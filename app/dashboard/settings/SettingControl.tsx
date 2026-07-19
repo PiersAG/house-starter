@@ -148,13 +148,19 @@ function Editor({
   }
 
   if (setting.valueType === "enum") {
+    // pr-8 reserves room for the native dropdown arrow so the value text (e.g.
+    // "GBP") never sits under it. pl-2 (not the shared px-2) keeps the left
+    // padding without a px-2/pr-8 right-padding conflict. Applies to every enum
+    // select, not just currency.
+    const selectClasses =
+      "min-h-11 rounded border border-border bg-surface pl-2 pr-8 py-1 text-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary";
     return (
       <select
         id={id}
         defaultValue={String(value ?? "")}
         disabled={disabled}
         onChange={(e) => onCommit(e.target.value)}
-        className={base}
+        className={selectClasses}
       >
         {(setting.enumValues ?? []).map((opt) => (
           <option key={opt} value={opt}>
