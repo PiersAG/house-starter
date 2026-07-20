@@ -82,10 +82,15 @@ describe.skipIf(!HAS_REAL_KEY)("billing grace window — real Stripe test clock"
     const customer = await stripe.customers.create({ test_clock: clockId });
     customerId = customer.id;
 
-    // A card that succeeds attachment but fails when charged.
-    await stripe.paymentMethods.attach("pm_card_chargeCustomerFail", { customer: customerId });
+    // A card that succeeds attachment but fails when charged. `attach` resolves
+    // the test token into a NEW PaymentMethod with a generated id — the token
+    // string is not itself an attached PM id, so the default must be set from
+    // the attach result or Stripe rejects the update.
+    const failingCard = await stripe.paymentMethods.attach("pm_card_chargeCustomerFail", {
+      customer: customerId,
+    });
     await stripe.customers.update(customerId, {
-      invoice_settings: { default_payment_method: "pm_card_chargeCustomerFail" },
+      invoice_settings: { default_payment_method: failingCard.id },
     });
 
     const price = await stripe.prices.create({
