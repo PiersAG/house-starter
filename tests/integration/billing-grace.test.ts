@@ -129,19 +129,45 @@ describe.skipIf(!HAS_REAL_KEY)("billing grace window — real Stripe test clock"
     await waitForClockReady(stripe, clockId);
 
     // 2. Pull the REAL invoice.payment_failed event this clock produced.
+    //    NOTE: deliberately NO `created` filter. Under a test clock it is not
+    //    contractual whether an event's `created` carries the simulated time or
+    //    the real ingestion time, and a filter anchored to the (far-future)
+    //    simulated t0 silently matches nothing. Filtering client-side on our own
+    //    customer id is unambiguous — the customer is unique to this run.
     let failedEvent: Stripe.Event | undefined;
-    for (let i = 0; i < 20 && !failedEvent; i++) {
-      const events = await stripe.events.list({
-        type: "invoice.payment_failed",
-        created: { gte: t0 },
-        limit: 100,
-      });
+    for (let i = 0; i < 40 && !failedEvent; i++) {
+      const events = await stripe.events.list({ type: "invoice.payment_failed", limit: 100 });
       failedEvent = events.data.find((e) => {
         const inv = e.data.object as { customer?: string | { id: string } | null };
         const c = typeof inv.customer === "string" ? inv.customer : inv.customer?.id;
         return c === customerId;
       });
-      if (!failedEvent) await new Promise((r) => setTimeout(r, 2000));
+      if (!failedEvent) await new Promise((r) => setTimeout(r, 3000));
+    }
+
+    if (!failedEvent) {
+      // Make a miss self-explaining rather than a bare "expected undefined".
+      const clock = await stripe.testHelpers.testClocks.retrieve(clockId);
+      const subs = await stripe.subscriptions.list({ customer: customerId, status: "all" });
+      const invoices = await stripe.invoices.list({ customer: customerId, limit: 10 });
+      console.error(
+        "No invoice.payment_failed for this customer. Diagnostics:",
+        JSON.stringify(
+          {
+            clockStatus: clock.status,
+            clockFrozenTime: clock.frozen_time,
+            subscriptions: subs.data.map((s) => ({ id: s.id, status: s.status })),
+            invoices: invoices.data.map((i) => ({
+              id: i.id,
+              status: i.status,
+              attempted: i.attempted,
+              total: i.total,
+            })),
+          },
+          null,
+          2,
+        ),
+      );
     }
     expect(failedEvent, "expected a real invoice.payment_failed from the test clock").toBeDefined();
 
@@ -151,6 +177,17 @@ describe.skipIf(!HAS_REAL_KEY)("billing grace window — real Stripe test clock"
     expect(sub?.status).toBe("past_due");
     expect(sub?.pastDueAt).toBeTruthy();
     const anchor = sub!.pastDueAt!.getTime();
+
+    // The whole test rests on the anchor being SIMULATED (clock) time, not real
+    // wall-clock time: steps 4a/4b advance the clock to anchor-relative targets,
+    // and a test clock can only move forwards. Assert it explicitly so a drift in
+    // Stripe's timestamp semantics fails here with a clear message rather than as
+    // a baffling "cannot advance to a time in the past" further down.
+    const clockNow = (await stripe.testHelpers.testClocks.retrieve(clockId)).frozen_time;
+    expect(
+      Math.abs(Math.floor(anchor / 1000) - clockNow) < 2 * DAY,
+      `grace anchor (${Math.floor(anchor / 1000)}) should be simulated clock time (~${clockNow}), not real time`,
+    ).toBe(true);
 
     // 4a. Inside the window: advance the clock to anchor + (GRACE-2) days and
     //     evaluate the gate at the clock's advanced time → still allowed.
