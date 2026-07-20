@@ -117,11 +117,16 @@ describe.skipIf(!HAS_REAL_KEY)("billing grace window — real Stripe test clock"
     });
 
     // Mirror the pre-failure state locally (as the checkout webhook would).
+    // trialEndsAt must be on the REAL timeline, like every other date our gate
+    // compares: the gate's "trial not yet expired" branch is checked BEFORE the
+    // past_due grace branch, so a trial end stamped in Stripe's simulated 2030
+    // would allow access unconditionally and mask the grace boundary entirely.
+    // By the time the renewal fails, the trial is over — stamp it in the past.
     await upsertSubscriptionByUserId(db, {
       userId,
       status: "trialing",
       stripeCustomerId: customerId,
-      trialEndsAt: new Date((t0 + 3 * DAY) * 1000),
+      trialEndsAt: new Date(Date.now() - DAY * 1000),
     });
   }, 180_000);
 
