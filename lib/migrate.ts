@@ -120,12 +120,95 @@ export function createMigrationDatabase(url?: string, authToken?: string): Clien
 }
 
 /**
+ * Split a CREATE TABLE body into its top-level entries (column definitions and
+ * table-level constraints), respecting parentheses so `CHECK (a IN (...))` and
+ * `PRIMARY KEY (a, b)` are not split on their inner commas.
+ */
+function splitTopLevel(body: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of body) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      parts.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts;
+}
+
+/**
+ * The column definitions declared per table in `MIGRATION_SQL` — the single
+ * source of truth. Parsed (not hand-listed) so the reconciler below can never
+ * drift from the schema: a column added to a CREATE TABLE is picked up here
+ * automatically. Table-level constraints (PRIMARY KEY(...), UNIQUE(...), etc.)
+ * are skipped — only real columns are returned, as { name, def }.
+ */
+function declaredColumns(sql: string): Map<string, { name: string; def: string }[]> {
+  const tables = new Map<string, { name: string; def: string }[]>();
+  const re = /CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(([\s\S]*?)\)\s*;/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql)) !== null) {
+    const [, table, body] = m;
+    const cols: { name: string; def: string }[] = [];
+    for (const raw of splitTopLevel(body)) {
+      const line = raw.trim();
+      if (!line) continue;
+      if (/^(PRIMARY KEY|FOREIGN KEY|UNIQUE|CHECK|CONSTRAINT)\b/i.test(line)) continue;
+      const name = line.split(/\s+/)[0].replace(/["'`]/g, "");
+      const def = line.slice(name.length).trim();
+      cols.push({ name, def });
+    }
+    tables.set(table, cols);
+  }
+  return tables;
+}
+
+/**
+ * Additive schema reconciliation. `CREATE TABLE IF NOT EXISTS` builds a FRESH
+ * database to the full current schema, but it does NOTHING to a table that
+ * already exists — so a column added to the schema after a persistent DB was
+ * first created (e.g. `subscriptions.past_due_at`, added in WP1) never reaches
+ * that DB, and any query selecting it crashes at runtime. This closes that gap:
+ * for every table that already exists, add any column the schema declares but
+ * the table is missing, via `ALTER TABLE ... ADD COLUMN`.
+ *
+ * Scope + limits (SQLite `ADD COLUMN`): additive columns are the realistic case
+ * and are nullable or carry a constant default — always addable. A column that
+ * SQLite cannot add this way (NOT NULL without a constant default, PRIMARY KEY,
+ * UNIQUE) can only ever be an INITIAL column and so is never missing from an
+ * existing table; if one somehow is, the ALTER throws — a loud failure is
+ * correct, and strictly better than the silent drift that caused digest 456544406.
+ */
+async function reconcileColumns(client: Client): Promise<void> {
+  for (const [table, cols] of declaredColumns(MIGRATION_SQL)) {
+    const info = await client.execute(`PRAGMA table_info(${table});`);
+    if (info.rows.length === 0) continue; // fresh — CREATE TABLE already built it in full
+    const existing = new Set(info.rows.map((r) => String((r as Record<string, unknown>).name)));
+    for (const { name, def } of cols) {
+      if (existing.has(name)) continue;
+      await client.execute(`ALTER TABLE ${table} ADD COLUMN ${name} ${def};`);
+    }
+  }
+}
+
+/**
  * Apply every migration to the given client. Safe to run repeatedly.
  * Uses executeMultiple so the whole DDL script runs as one batch.
  */
 export async function runMigrations(client: Client): Promise<void> {
   await client.execute("PRAGMA foreign_keys = ON;");
   await client.executeMultiple(MIGRATION_SQL);
+  // Retrofit any column the schema gained after a persistent DB was created —
+  // CREATE TABLE IF NOT EXISTS cannot do this, and a missing column is a runtime
+  // crash (digest 456544406: subscriptions.past_due_at). Derived from
+  // MIGRATION_SQL, so it can never drift from the schema.
+  await reconcileColumns(client);
   // Seed the settings catalogue from the merged registry — part of the one
   // true migration path so every migrated DB carries the current definitions
   // (settings-registry-spec §4). Idempotent upsert; safe to run repeatedly.
