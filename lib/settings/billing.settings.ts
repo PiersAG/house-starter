@@ -1,8 +1,19 @@
-// BILLING capability settings (settings-registry-spec §6 · BILLING, flag:
-// `payments`). Registered here now; the billing code is wired to the resolver
-// in a later dispatch (WP1 of the billing gap-fill spec) — this dispatch only
-// seeds the definitions and generates their UI. Do not read these keys from
-// billing code yet.
+// BILLING settings (settings-registry-spec §6 · BILLING). These definitions
+// span TWO switches, by design (capability-model-spec §2):
+//
+//   • CLIENT PAYMENTS — flag `payments` (CAPABILITY, off until built): payment
+//     methods, currency, invoice notes, the payments-due board and payment
+//     requests. The client→owner money flow. Not built yet, so these stay
+//     hidden from the Settings UI while `payments` is off.
+//   • SUBSCRIPTION BILLING — flag `subscription_billing` (KERNEL, always on):
+//     `billing.subscription_grace_days`, the owner→factory subscription's
+//     failed-payment grace window. It is read live by the paid-gate
+//     (lib/billing/gate.ts) via getSetting, so it must resolve regardless of
+//     the client-payments capability. Kernel, not capability — see config/kernel.ts.
+//
+// Grouping both under the "billing" capability keeps the Settings UI section
+// coherent; the per-definition `requiresFlag` is what actually governs
+// visibility, not the capability label.
 
 import type { SettingDefinition } from "@/lib/settings/types";
 
@@ -76,6 +87,9 @@ export const billingSettings: SettingDefinition[] = [
     factoryDefault: 7,
     bounds: { min: 0, max: 90 },
     ownerEditable: false,
-    requiresFlag: "payments",
+    // KERNEL, not `payments`: this is the owner→factory subscription's grace
+    // window, read live by the paid-gate. It stays resolvable even when the
+    // client-payments capability is off. See config/kernel.ts.
+    requiresFlag: "subscription_billing",
   },
 ];

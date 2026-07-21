@@ -25,10 +25,12 @@ export interface BillingConfig {
    * gate helper matches a request path against these; empty = nothing gated
    * yet (the template default). Example: ["/app", "/api/reports"].
    *
-   * NOTE: an empty array is NOT a signal that billing is dormant. Whether the
-   * billing capability is active is governed solely by the `payments` flag in
-   * config/capabilities.ts (billing-gap-fill-spec §WP1.2). This array only ever
-   * decides which paths the paid-gate covers.
+   * NOTE: an empty array is NOT a signal that billing is dormant. This file
+   * configures SUBSCRIPTION BILLING — the owner→factory subscription, which is
+   * KERNEL and always on (config/kernel.ts, flag `subscription_billing`). It is
+   * NOT governed by the `payments` capability flag: `payments` is client
+   * payments (client→owner), a separate, not-yet-built capability. This array
+   * only ever decides which paths the paid-gate covers.
    */
   gatedRoutePrefixes: string[];
 }

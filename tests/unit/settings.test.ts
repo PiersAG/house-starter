@@ -196,7 +196,11 @@ describe("delete reverts to fall-through (never a copied value)", () => {
 });
 
 describe("flag-hidden definitions absent from the generated UI", () => {
-  it("owner view includes core + billing (payments on) but not booking/comms (flags off)", async () => {
+  it("owner view includes core + billing (subscription_billing kernel) but not booking/comms (flags off)", async () => {
+    // Default posture (config/capabilities.ts): payments OFF, booking OFF,
+    // comms OFF. The "billing" section still appears because the kernel
+    // subscription-billing setting (billing.subscription_grace_days) is always
+    // on — but the client-payments settings under `payments` are hidden.
     const view = await buildOwnerSettingsView(db);
     const capabilities = view.map((c) => c.capability);
     expect(capabilities).toContain("core");
@@ -205,12 +209,17 @@ describe("flag-hidden definitions absent from the generated UI", () => {
     expect(capabilities).not.toContain("comms");
   });
 
-  it("no booking.* or comms.* key surfaces in the owner view", async () => {
+  it("client-payments (payments OFF) settings are hidden; the kernel grace setting is shown", async () => {
     const view = await buildOwnerSettingsView(db);
     const keys = view.flatMap((c) => c.groups.flatMap((g) => g.settings.map((s) => s.key)));
-    expect(keys.some((k) => k.startsWith("booking.") || k.startsWith("comms."))).toBe(false);
     expect(keys).toContain("core.app_name");
-    expect(keys).toContain("billing.currency");
+    // Kernel subscription-billing setting: always resolvable, always shown.
+    expect(keys).toContain("billing.subscription_grace_days");
+    // Client-payments settings (requiresFlag: "payments", flag OFF) — hidden.
+    expect(keys).not.toContain("billing.currency");
+    expect(keys).not.toContain("billing.payment_methods");
+    // booking/comms are off too.
+    expect(keys.some((k) => k.startsWith("booking.") || k.startsWith("comms."))).toBe(false);
   });
 
   it("client-scoped view is empty while comms is off", () => {
