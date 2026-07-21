@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { registerUser, RegistrationError } from "@/lib/users";
+import { startTrialForNewOwner } from "@/lib/billing/trial";
 import { clientKeyFromHeaders, getRateLimiter } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -61,6 +62,10 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const user = await registerUser(db, parsed.data);
+    // Step 6: give the new owner a trial subscription so the step-5 paywall does
+    // not lock them out of their own app on day one (length from the settings
+    // registry — billing.trial_period_days).
+    await startTrialForNewOwner(db, user.id);
     return NextResponse.json(
       { id: user.id, email: user.email, name: user.name },
       { status: 201 },
