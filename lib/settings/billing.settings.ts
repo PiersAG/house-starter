@@ -92,4 +92,21 @@ export const billingSettings: SettingDefinition[] = [
     // client-payments capability is off. See config/kernel.ts.
     requiresFlag: "subscription_billing",
   },
+  {
+    // Step 6: the auto-trial length. On signup a trial subscription is created
+    // for this many days (lib/billing/trial.ts) so a new owner is not instantly
+    // paywalled. Owner-configurable (unlike the grace window) — hence no
+    // ownerEditable:false. Read via getSetting — no literal in the trial code.
+    key: "billing.trial_period_days",
+    capability: "billing",
+    functionalGroup: "Subscription access",
+    label: "Free trial length (days)",
+    description:
+      "How many days a newly registered owner can use the app before a subscription is required. Applied when their account is created.",
+    valueType: "integer",
+    factoryDefault: 14,
+    bounds: { min: 0, max: 365 },
+    // KERNEL (subscription_billing) so it always resolves, like the grace window.
+    requiresFlag: "subscription_billing",
+  },
 ];

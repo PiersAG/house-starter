@@ -38,7 +38,7 @@ import {
   isFlagEnabled,
   type CapabilityFlag,
 } from "@/config/capabilities";
-import { enabledKernel } from "@/config/kernel";
+import { enabledKernel, isKernelFlag, isKernelEnabled, type KernelFlag } from "@/config/kernel";
 
 const CAPABILITY_FLAGS: CapabilityFlag[] = ["payments", "booking", "comms"];
 
@@ -152,6 +152,33 @@ describe("capability both-states — nav filtering drops OFF-capability items (s
       const visible = visibleNavItems([{ href: "/", label: "Home" }, item]);
       expect(visible).toContainEqual({ href: "/", label: "Home" }); // core always shows
       expect(visible.includes(item)).toBe(on);
+    });
+  }
+});
+
+describe("kernel switches — declared, hidden, and ON (incl. auth, step 6)", () => {
+  // The four kernel parts an app is not an app without. Each carries a switch so
+  // OFF is a *testable* state and the kernel cannot grow un-switchable behaviour,
+  // but every real build has them ON — no automated path turns one off. This is
+  // the ON proof the matrix runs in every leg (kernel flags are independent of
+  // the capability flag being flipped, so they stay ON throughout).
+  //
+  // `auth` is declared here alongside the others but deliberately has NO OFF code
+  // path: auth.config.ts throws at import without AUTH_SECRET, so an auth-OFF
+  // branch would be never-run dead code. We prove ON only. Note this suite never
+  // imports auth.config.ts — isKernelEnabled resolves the flag from config/kernel.ts
+  // alone, so the AUTH_SECRET import-time throw is not engaged.
+  const KERNEL_FLAGS: KernelFlag[] = ["auth", "subscription_billing", "settings", "nav"];
+
+  for (const flag of KERNEL_FLAGS) {
+    it(`${flag}: recognised as a kernel flag, resolvable, and ON`, () => {
+      expect(isKernelFlag(flag)).toBe(true);
+      expect(isKernelEnabled(flag)).toBe(true);
+      expect(enabledKernel[flag]).toBe(true);
+      // Resolves ON through the unified capability resolver too (a kernel flag is
+      // always enabled), which is how requiresFlag:"subscription_billing" settings
+      // stay visible/resolvable regardless of capability posture.
+      expect(isFlagEnabled(flag)).toBe(true);
     });
   }
 });
