@@ -5,11 +5,24 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import { settingValues } from "@/lib/schema";
+import { isSettingKeyEnabled } from "@/lib/capabilities/settings";
+import { CapabilityDisabledError } from "@/lib/settings/errors";
 import type { AppDatabase } from "@/lib/users";
 import type { SettingScope } from "@/lib/settings/types";
 
 /** Owner-scope rows carry this sentinel in place of a client id (not NULL). */
 export const OWNER_CLIENT_ID = "";
+
+/**
+ * R2 write guard: a write to a key whose capability is off is refused here too,
+ * not only at the API. This is the lower of the two write surfaces the substrate
+ * reaches; the settings route 404s first, this backstops any direct caller.
+ * getStoredValue (the internal read primitive) is deliberately NOT guarded — the
+ * public read path (resolveSetting) already refuses off keys.
+ */
+function assertWritable(key: string): void {
+  if (!isSettingKeyEnabled(key)) throw new CapabilityDisabledError(key);
+}
 
 /**
  * Read the stored value at one exact level, or undefined if none is set there.
@@ -61,6 +74,7 @@ export async function setOwnerValue(
   key: string,
   value: unknown,
 ): Promise<void> {
+  assertWritable(key);
   await upsert(db, key, "owner", OWNER_CLIENT_ID, value);
 }
 
@@ -71,6 +85,7 @@ export async function setClientValue(
   clientId: string,
   value: unknown,
 ): Promise<void> {
+  assertWritable(key);
   await upsert(db, key, "client", clientId, value);
 }
 
@@ -84,6 +99,7 @@ export async function deleteValue(
   scope: SettingScope,
   clientId: string = OWNER_CLIENT_ID,
 ): Promise<boolean> {
+  assertWritable(key);
   const existing = await getStoredValue(db, key, scope, clientId);
   if (existing === undefined) return false;
   await db

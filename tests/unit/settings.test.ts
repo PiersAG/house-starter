@@ -32,6 +32,8 @@ import {
   visibleDefinitions,
 } from "@/lib/settings/service";
 import { ALL_DEFINITIONS } from "@/lib/settings/registry";
+import { CapabilityDisabledError } from "@/lib/settings/errors";
+import { isCapabilityEnabled } from "@/lib/capabilities/flags";
 import { enabledCapabilities } from "@/config/capabilities";
 
 let client: Client;
@@ -66,24 +68,37 @@ describe("resolution fall-through (all three levels)", () => {
     expect(source).toBe("owner");
   });
 
-  it("client preference wins over owner and factory for a client-scoped setting", async () => {
-    // comms.reminders_enabled is client-scoped; resolution ignores feature flags.
-    await setOwnerValue(db, "comms.reminders_enabled", true);
-    await setClientValue(db, "comms.reminders_enabled", "client-1", false);
+  // comms.reminders_enabled is the only client-scoped setting, and it is a
+  // capability key. Flag-aware so the matrix proves BOTH: full three-level
+  // client resolution when comms is on, and R2 inertness when it is off.
+  if (enabledCapabilities.comms === true) {
+    it("client preference wins over owner and factory for a client-scoped setting", async () => {
+      await setOwnerValue(db, "comms.reminders_enabled", true);
+      await setClientValue(db, "comms.reminders_enabled", "client-1", false);
 
-    const forClient1 = await resolveSetting(db, "comms.reminders_enabled", {
-      clientId: "client-1",
-    });
-    expect(forClient1.value).toBe(false);
-    expect(forClient1.source).toBe("client");
+      const forClient1 = await resolveSetting(db, "comms.reminders_enabled", {
+        clientId: "client-1",
+      });
+      expect(forClient1.value).toBe(false);
+      expect(forClient1.source).toBe("client");
 
-    // A different client with no preference falls through to the owner value.
-    const forClient2 = await resolveSetting(db, "comms.reminders_enabled", {
-      clientId: "client-2",
+      // A different client with no preference falls through to the owner value.
+      const forClient2 = await resolveSetting(db, "comms.reminders_enabled", {
+        clientId: "client-2",
+      });
+      expect(forClient2.value).toBe(true);
+      expect(forClient2.source).toBe("owner");
     });
-    expect(forClient2.value).toBe(true);
-    expect(forClient2.source).toBe("owner");
-  });
+  } else {
+    it("a client-scoped OFF-capability key (comms off) is inert — write and read throw", async () => {
+      await expect(
+        setOwnerValue(db, "comms.reminders_enabled", true),
+      ).rejects.toBeInstanceOf(CapabilityDisabledError);
+      await expect(
+        resolveSetting(db, "comms.reminders_enabled", { clientId: "client-1" }),
+      ).rejects.toBeInstanceOf(CapabilityDisabledError);
+    });
+  }
 
   it("ignores a client preference on a NON-client-scoped setting", async () => {
     // core.app_name is not client-scoped: a stray client row must not win.
@@ -96,8 +111,9 @@ describe("resolution fall-through (all three levels)", () => {
   });
 
   it("getSetting returns the effective value directly", async () => {
-    await setOwnerValue(db, "billing.overdue_display_days", 14);
-    expect(await getSetting<number>(db, "billing.overdue_display_days")).toBe(14);
+    // core.app_name is a core key (no capability flag) — always readable/writable.
+    await setOwnerValue(db, "core.app_name", "Acme");
+    expect(await getSetting<string>(db, "core.app_name")).toBe("Acme");
   });
 });
 
@@ -243,22 +259,34 @@ describe("flag-hidden definitions absent from the generated UI", () => {
 });
 
 describe("seed (settings-registry-spec §4 — merges declarations into the seed)", () => {
-  it("seeds every registered definition, idempotently", async () => {
+  it("seeds exactly the ENABLED definitions, idempotently (R2: off-capability keys not seeded)", async () => {
     await runMigrations(client); // second run — must not duplicate
     const res = await client.execute("SELECT COUNT(*) AS n FROM setting_definitions;");
     const n = Number((res.rows[0] as Record<string, unknown>).n);
-    expect(n).toBe(ALL_DEFINITIONS.length);
+    const enabled = ALL_DEFINITIONS.filter((d) => isCapabilityEnabled(d.requiresFlag)).length;
+    expect(n).toBe(enabled);
+  });
+
+  it("an OFF-capability key is absent from the catalogue; core/kernel keys are present", async () => {
+    const count = async (key: string): Promise<number> => {
+      const r = await client.execute(
+        `SELECT COUNT(*) AS n FROM setting_definitions WHERE key = '${key}';`,
+      );
+      return Number((r.rows[0] as Record<string, unknown>).n);
+    };
+    // core (no flag) and kernel (subscription_billing) are always seeded.
+    expect(await count("core.app_name")).toBe(1);
+    expect(await count("billing.subscription_grace_days")).toBe(1);
+    // A client-payments key is seeded iff payments is on.
+    expect(await count("billing.currency")).toBe(enabledCapabilities.payments === true ? 1 : 0);
   });
 
   it("re-seeding updates an existing row rather than inserting a duplicate", async () => {
-    const before = await client.execute(
-      "SELECT COUNT(*) AS n FROM setting_definitions WHERE key = 'billing.currency';",
-    );
+    const q = "SELECT COUNT(*) AS n FROM setting_definitions WHERE key = 'core.app_name';";
+    const before = await client.execute(q);
     expect(Number((before.rows[0] as Record<string, unknown>).n)).toBe(1);
     await runMigrations(client);
-    const after = await client.execute(
-      "SELECT COUNT(*) AS n FROM setting_definitions WHERE key = 'billing.currency';",
-    );
+    const after = await client.execute(q);
     expect(Number((after.rows[0] as Record<string, unknown>).n)).toBe(1);
   });
 });

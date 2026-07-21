@@ -6,27 +6,33 @@
 // states, not just the default one.
 //
 // What is proven per capability, per state:
-//   • settings visibility — OFF hides every definition that requires the flag;
-//     ON shows them.
-//   • settings-API 404 (step 1 substrate) — every setting key a capability owns
-//     is 404'd on PUT/DELETE /api/settings/<key> when the flag is off, via the
-//     shared guard the route calls (requireCapabilityForSettingKey). This is a
-//     REAL 404 Response, not a placeholder — the R2 gap the audit named on the
-//     settings write path, now closed.
-//   • nav gating — a capability-flagged nav item shows iff its flag is on,
-//     through the same predicate AppNav filters with (isCapabilityEnabled).
+//   • settings visibility — OFF hides every definition that requires the flag.
+//   • settings-API 404 (step 1) — each owned key is 404'd on PUT/DELETE
+//     /api/settings/<key> when off, via the shared guard the route calls.
+//   • settings READ/WRITE/SEED inertness (step 3) — with a real migrated DB:
+//     an OFF capability's key cannot be read (resolveSetting throws), written
+//     (setOwnerValue throws), or seeded (absent from setting_definitions). ON →
+//     all three work. This closes R2 beyond the write API, at every surface the
+//     substrate reaches.
+//   • nav filtering (step 4) — a capability-flagged nav item is dropped by
+//     visibleNavItems (the one filter every nav surface uses) when off.
 //
 // Dedicated capability ENDPOINTS (e.g. a future /api/payments/*) do not exist
-// yet; their request-level 404 proof attaches per-feature in steps 3–9 as those
-// routes are built. The settings-API surface above is gated for real now.
-// End-to-end wiring of the route handler itself is proven in
-// tests/unit/settings-api.test.ts (it invokes the real PUT/DELETE handler).
+// yet; their request-level 404 proof attaches per-feature in steps 5–9. The
+// route handler's own wiring is proven in tests/unit/settings-api.test.ts.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { drizzle } from "drizzle-orm/libsql";
+import type { Client } from "@libsql/client";
+import { createMigrationDatabase, runMigrations } from "@/lib/migrate";
+import type { AppDatabase } from "@/lib/users";
 import { ALL_DEFINITIONS } from "@/lib/settings/registry";
 import { visibleDefinitions } from "@/lib/settings/service";
-import { isCapabilityEnabled } from "@/lib/capabilities/flags";
+import { resolveSetting } from "@/lib/settings/resolver";
+import { setOwnerValue } from "@/lib/settings/values";
+import { CapabilityDisabledError } from "@/lib/settings/errors";
 import { requireCapabilityForSettingKey } from "@/lib/capabilities/guard";
+import { visibleNavItems, type NavItem } from "@/lib/nav/primary-nav";
 import {
   enabledCapabilities,
   isFlagEnabled,
@@ -92,14 +98,60 @@ describe("capability both-states — settings-API 404 for OFF-capability keys (r
   }
 });
 
-describe("capability both-states — nav gating predicate tracks the flag", () => {
-  // AppNav filters its links by isCapabilityEnabled(link.requiresFlag). This is
-  // that exact predicate — a capability-flagged nav item shows iff its flag is
-  // on. (Additive to the 404; a hidden link is polish, the guard is enforcement.)
+describe("capability both-states — settings read/write/seed inertness (step 3, real DB)", () => {
+  let client: Client;
+  let db: AppDatabase;
+
+  beforeEach(async () => {
+    client = createMigrationDatabase(":memory:"); // runMigrations also seeds
+    await runMigrations(client);
+    db = drizzle(client) as AppDatabase;
+  });
+  afterEach(() => client.close());
+
+  for (const flag of CAPABILITY_FLAGS) {
+    const keys = settingKeysFor(flag);
+    const on = enabledCapabilities[flag] === true;
+    const sample = keys[0];
+
+    it(`${flag} ${on ? "ON → its keys read/write/seed" : "OFF → its keys are inert (read/write throw, not seeded)"}`, async () => {
+      expect(sample).toBeTruthy();
+      // SEED: present in the catalogue iff on.
+      const seeded = await client.execute(
+        `SELECT COUNT(*) AS n FROM setting_definitions WHERE key = '${sample}';`,
+      );
+      expect(Number((seeded.rows[0] as Record<string, unknown>).n)).toBe(on ? 1 : 0);
+
+      if (on) {
+        // READ resolves (factory default); WRITE is accepted (values layer does
+        // not type-check — that is the API validator's job, tested elsewhere).
+        await expect(resolveSetting(db, sample)).resolves.toBeDefined();
+        await expect(setOwnerValue(db, sample, "x")).resolves.toBeUndefined();
+      } else {
+        // READ and WRITE both refuse — the key is absent, not merely hidden.
+        await expect(resolveSetting(db, sample)).rejects.toBeInstanceOf(
+          CapabilityDisabledError,
+        );
+        await expect(setOwnerValue(db, sample, "x")).rejects.toBeInstanceOf(
+          CapabilityDisabledError,
+        );
+      }
+    });
+  }
+});
+
+describe("capability both-states — nav filtering drops OFF-capability items (step 4)", () => {
+  // visibleNavItems is the single filter every nav/menu surface runs. A
+  // capability-flagged entry appears iff its flag is on — proven here against
+  // the real filter, not just the predicate.
   for (const flag of CAPABILITY_FLAGS) {
     const on = enabledCapabilities[flag] === true;
-    it(`${flag}: a nav item requiring it is ${on ? "shown" : "hidden"}`, () => {
-      expect(isCapabilityEnabled(flag)).toBe(on);
+    const item: NavItem = { href: `/x/${flag}`, label: flag, requiresFlag: flag };
+
+    it(`${flag}: a nav item requiring it is ${on ? "present" : "absent"}`, () => {
+      const visible = visibleNavItems([{ href: "/", label: "Home" }, item]);
+      expect(visible).toContainEqual({ href: "/", label: "Home" }); // core always shows
+      expect(visible.includes(item)).toBe(on);
     });
   }
 });

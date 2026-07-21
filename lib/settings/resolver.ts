@@ -18,6 +18,8 @@
 
 import { getDefinition } from "@/lib/settings/registry";
 import { getStoredValue } from "@/lib/settings/values";
+import { isCapabilityEnabled } from "@/lib/capabilities/flags";
+import { UnknownSettingError, CapabilityDisabledError } from "@/lib/settings/errors";
 import type { AppDatabase } from "@/lib/users";
 import type { SettingSource } from "@/lib/settings/types";
 
@@ -26,19 +28,14 @@ export interface ResolveOptions {
   clientId?: string;
 }
 
-export class UnknownSettingError extends Error {
-  readonly key: string;
-  constructor(key: string) {
-    super(`Unknown setting "${key}".`);
-    this.name = "UnknownSettingError";
-    this.key = key;
-  }
-}
+// Re-exported for callers that import it from here (its historical home).
+export { UnknownSettingError } from "@/lib/settings/errors";
 
 /**
  * Resolve the effective value of `key`, plus where it came from. Throws
- * UnknownSettingError for a key with no definition (unknown keys are never
- * silently null).
+ * UnknownSettingError for a key with no definition, and CapabilityDisabledError
+ * (a subclass — so it is caught as "absent" too) for a key whose capability is
+ * off. An OFF capability's key is not readable (R2), not merely hidden.
  */
 export async function resolveSetting(
   db: AppDatabase,
@@ -47,6 +44,10 @@ export async function resolveSetting(
 ): Promise<{ value: unknown; source: SettingSource }> {
   const def = getDefinition(key);
   if (!def) throw new UnknownSettingError(key);
+  // R2: an off capability's key reads as absent, at the one true read path.
+  // Kernel flags (e.g. subscription_billing) are always on, so the paid-gate's
+  // read of billing.subscription_grace_days is unaffected.
+  if (!isCapabilityEnabled(def.requiresFlag)) throw new CapabilityDisabledError(key);
 
   // 1. Client preference — only for client-scoped settings with a clientId.
   if (def.clientScoped && opts.clientId) {

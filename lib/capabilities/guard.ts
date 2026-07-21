@@ -10,8 +10,8 @@
 // bar is that the route does not answer at all for a caller of an off capability.
 
 import { NextResponse } from "next/server";
-import { getDefinition } from "@/lib/settings/registry";
 import { isCapabilityEnabled } from "@/lib/capabilities/flags";
+import { flagForSettingKey } from "@/lib/capabilities/settings";
 
 /** The 404 a guarded surface returns when its capability is off. */
 export function capabilityNotFound(): NextResponse {
@@ -31,14 +31,6 @@ export function requireCapability(
   flag: string | null | undefined,
 ): NextResponse | null {
   return isCapabilityEnabled(flag) ? null : capabilityNotFound();
-}
-
-/**
- * The capability/kernel flag that governs a setting key, or null when the key is
- * core (no flag) or unknown. Reads the registry so nothing hard-codes key→flag.
- */
-export function flagForSettingKey(key: string): string | null {
-  return getDefinition(key)?.requiresFlag ?? null;
 }
 
 /**
