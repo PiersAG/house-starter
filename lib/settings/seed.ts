@@ -10,6 +10,7 @@
 
 import type { Client, InValue } from "@libsql/client";
 import { ALL_DEFINITIONS } from "@/lib/settings/registry";
+import { isCapabilityEnabled } from "@/lib/capabilities/flags";
 import type { SettingDefinition } from "@/lib/settings/types";
 
 const UPSERT_SQL = `
@@ -48,10 +49,21 @@ function argsFor(def: SettingDefinition): InValue[] {
   ];
 }
 
-/** Upsert every registered definition into setting_definitions. Idempotent. */
+/**
+ * Upsert every ENABLED definition into setting_definitions. Idempotent.
+ *
+ * R2: a key whose capability is off is not seeded — an OFF capability's keys
+ * cannot be read, written, OR seeded. Core keys (no flag) and kernel keys
+ * (always on) are always seeded. When a capability is later turned on, the
+ * migration re-runs this seed and its keys appear (idempotent upsert). A row
+ * seeded while a flag was on and then turned off is left in place — harmless,
+ * because enforcement is at the read/write path (resolver/values), not this
+ * catalogue table, which nothing reads for gating.
+ */
 export async function seedSettingDefinitions(client: Client): Promise<void> {
+  const enabled = ALL_DEFINITIONS.filter((def) => isCapabilityEnabled(def.requiresFlag));
   await client.batch(
-    ALL_DEFINITIONS.map((def) => ({ sql: UPSERT_SQL, args: argsFor(def) })),
+    enabled.map((def) => ({ sql: UPSERT_SQL, args: argsFor(def) })),
     "write",
   );
 }

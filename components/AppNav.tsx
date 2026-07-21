@@ -14,25 +14,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { isCapabilityEnabled } from "@/lib/capabilities/flags";
+import { visibleNavItems } from "@/lib/nav/primary-nav";
 
-// Each link may carry `requiresFlag`: a capability-gated nav item is filtered
-// out when its flag is off, through the same substrate the route/API 404 uses.
-// This is additive to the 404 (R2) — a hidden link is polish; the guard in
-// lib/capabilities/guard.ts is the enforcement. Current links are all core
-// (no flag) so every one shows; capability nav items (e.g. a future payments
-// or booking tab) set `requiresFlag` and disappear automatically when off.
-type NavLink = { href: string; label: string; requiresFlag?: string };
-
-const LINKS: NavLink[] = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/dashboard/settings", label: "Settings" },
-  { href: "/account", label: "Account" },
-];
+// Nav items and their capability filtering live in lib/nav/primary-nav.ts (data
+// + the one filter, unit-testable). A capability-gated entry carries
+// `requiresFlag` and is dropped when its flag is off — additive to the route/API
+// 404 (R2), never a substitute. Current entries are all core.
 
 export function AppNav() {
   const pathname = usePathname();
-  const links = LINKS.filter((l) => isCapabilityEnabled(l.requiresFlag));
+  const links = visibleNavItems();
   return (
     <nav
       aria-label="Primary"
