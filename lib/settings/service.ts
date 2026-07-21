@@ -8,7 +8,7 @@
 
 import { ALL_DEFINITIONS } from "@/lib/settings/registry";
 import { resolveSetting } from "@/lib/settings/resolver";
-import { isFlagEnabled } from "@/config/capabilities";
+import { isCapabilityEnabled } from "@/lib/capabilities/flags";
 import type { AppDatabase } from "@/lib/users";
 import type { SettingDefinition, SettingSource } from "@/lib/settings/types";
 
@@ -47,7 +47,7 @@ export interface CapabilityView {
 export function visibleDefinitions(clientScoped: boolean): SettingDefinition[] {
   return ALL_DEFINITIONS.filter(
     (def) =>
-      isFlagEnabled(def.requiresFlag) &&
+      isCapabilityEnabled(def.requiresFlag) &&
       (def.clientScoped === true) === clientScoped,
   );
 }

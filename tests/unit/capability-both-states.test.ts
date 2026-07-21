@@ -7,21 +7,26 @@
 //
 // What is proven per capability, per state:
 //   • settings visibility — OFF hides every definition that requires the flag;
-//     ON shows them. This is fully asserted here today.
-//   • routes / API 404 when OFF — see CAPABILITY_ROUTES. EMPTY today: no
-//     client-facing capability (client payments, booking, comms) ships routes
-//     yet, so there is nothing to 404. Per-feature retrofit steps (1, 3–9) add
-//     their routes here and the request-level 404 assertion switches on.
-//   • nav absent when OFF — see CAPABILITY_NAV. EMPTY today, same reason.
+//     ON shows them.
+//   • settings-API 404 (step 1 substrate) — every setting key a capability owns
+//     is 404'd on PUT/DELETE /api/settings/<key> when the flag is off, via the
+//     shared guard the route calls (requireCapabilityForSettingKey). This is a
+//     REAL 404 Response, not a placeholder — the R2 gap the audit named on the
+//     settings write path, now closed.
+//   • nav gating — a capability-flagged nav item shows iff its flag is on,
+//     through the same predicate AppNav filters with (isCapabilityEnabled).
 //
-// The empty route/nav registries are deliberately explicit, not silently
-// skipped: this file is where a reader (and CI) sees that route/nav OFF-proof is
-// PENDING per capability, established as a pattern but not yet exercised because
-// the capabilities are unbuilt.
+// Dedicated capability ENDPOINTS (e.g. a future /api/payments/*) do not exist
+// yet; their request-level 404 proof attaches per-feature in steps 3–9 as those
+// routes are built. The settings-API surface above is gated for real now.
+// End-to-end wiring of the route handler itself is proven in
+// tests/unit/settings-api.test.ts (it invokes the real PUT/DELETE handler).
 
 import { describe, it, expect } from "vitest";
 import { ALL_DEFINITIONS } from "@/lib/settings/registry";
 import { visibleDefinitions } from "@/lib/settings/service";
+import { isCapabilityEnabled } from "@/lib/capabilities/flags";
+import { requireCapabilityForSettingKey } from "@/lib/capabilities/guard";
 import {
   enabledCapabilities,
   isFlagEnabled,
@@ -31,21 +36,10 @@ import { enabledKernel } from "@/config/kernel";
 
 const CAPABILITY_FLAGS: CapabilityFlag[] = ["payments", "booking", "comms"];
 
-// Routes/APIs each capability owns. When a capability is OFF, every path here
-// must 404. EMPTY until the capability is built — extended per-feature.
-const CAPABILITY_ROUTES: Record<CapabilityFlag, string[]> = {
-  payments: [],
-  booking: [],
-  comms: [],
-};
-
-// Nav hrefs each capability contributes. When OFF, none of these appear in the
-// rendered nav. EMPTY until the capability is built — extended per-feature.
-const CAPABILITY_NAV: Record<CapabilityFlag, string[]> = {
-  payments: [],
-  booking: [],
-  comms: [],
-};
+/** The setting keys a capability owns — its gated surface on the settings API. */
+function settingKeysFor(flag: CapabilityFlag): string[] {
+  return ALL_DEFINITIONS.filter((d) => d.requiresFlag === flag).map((d) => d.key);
+}
 
 /** Keys visible in either scope given the live flag posture. */
 function visibleKeys(): Set<string> {
@@ -73,24 +67,39 @@ describe("capability both-states — settings visibility tracks the live flag", 
   }
 });
 
-describe("capability both-states — route/API 404 when OFF (pattern; empty until built)", () => {
+describe("capability both-states — settings-API 404 for OFF-capability keys (real R2 enforcement)", () => {
+  // The gated surface delivered by step 1: PUT/DELETE /api/settings/<key> is
+  // 404'd for any key whose capability is off, via requireCapabilityForSettingKey
+  // (wired into app/api/settings/[key]/route.ts). Asserted against the shared
+  // substrate the route calls, in BOTH states — this is the R2 gap the audit
+  // named, now closed. NOT a placeholder: `denied` is a real 404 Response.
   for (const flag of CAPABILITY_FLAGS) {
-    const routes = CAPABILITY_ROUTES[flag];
-    it(`${flag}: ${routes.length} route(s) registered for 404-when-off proof`, () => {
-      // No assertion beyond documenting the count today: request-level 404
-      // proof attaches here per-feature as routes land (steps 1, 3–9). When a
-      // route is added, iterate `routes` and assert a request returns 404 while
-      // `isFlagEnabled(flag)` is false.
-      expect(routes.length).toBeGreaterThanOrEqual(0);
+    const keys = settingKeysFor(flag);
+    const on = enabledCapabilities[flag] === true;
+
+    it(`${flag} ${on ? "ON → its setting keys are writable (guard allows)" : "OFF → each setting key 404s on the settings API"}`, () => {
+      expect(keys.length).toBeGreaterThan(0);
+      for (const key of keys) {
+        const denied = requireCapabilityForSettingKey(key);
+        if (on) {
+          expect(denied).toBeNull();
+        } else {
+          expect(denied).not.toBeNull();
+          expect(denied?.status).toBe(404);
+        }
+      }
     });
   }
 });
 
-describe("capability both-states — nav absent when OFF (pattern; empty until built)", () => {
+describe("capability both-states — nav gating predicate tracks the flag", () => {
+  // AppNav filters its links by isCapabilityEnabled(link.requiresFlag). This is
+  // that exact predicate — a capability-flagged nav item shows iff its flag is
+  // on. (Additive to the 404; a hidden link is polish, the guard is enforcement.)
   for (const flag of CAPABILITY_FLAGS) {
-    const nav = CAPABILITY_NAV[flag];
-    it(`${flag}: ${nav.length} nav item(s) registered for absent-when-off proof`, () => {
-      expect(nav.length).toBeGreaterThanOrEqual(0);
+    const on = enabledCapabilities[flag] === true;
+    it(`${flag}: a nav item requiring it is ${on ? "shown" : "hidden"}`, () => {
+      expect(isCapabilityEnabled(flag)).toBe(on);
     });
   }
 });

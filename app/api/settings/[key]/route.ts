@@ -14,6 +14,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { requireCapabilityForSettingKey } from "@/lib/capabilities/guard";
 import {
   validateOwnerWrite,
   validateClientWrite,
@@ -35,6 +36,14 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ key: string }> },
 ): Promise<Response> {
+  const { key } = await params;
+
+  // R2: a write to a key whose capability is OFF is answered 404 — the key must
+  // look absent, not hidden. Checked BEFORE auth so an off capability leaks
+  // nothing (no 401 that would confirm the key exists).
+  const disabled = requireCapabilityForSettingKey(key);
+  if (disabled) return disabled;
+
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) {
@@ -43,8 +52,6 @@ export async function PUT(
       { status: 401 },
     );
   }
-
-  const { key } = await params;
 
   let payload: unknown;
   try {
@@ -83,6 +90,13 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ key: string }> },
 ): Promise<Response> {
+  const { key } = await params;
+
+  // R2: clearing a value is also a write to the gated surface — 404 when the
+  // key's capability is off (same reasoning as PUT), before auth.
+  const disabled = requireCapabilityForSettingKey(key);
+  if (disabled) return disabled;
+
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) {
@@ -92,7 +106,6 @@ export async function DELETE(
     );
   }
 
-  const { key } = await params;
   const scope =
     new URL(request.url).searchParams.get("scope") === "client"
       ? "client"
