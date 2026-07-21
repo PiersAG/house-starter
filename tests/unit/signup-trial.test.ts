@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { drizzle } from "drizzle-orm/libsql";
 import type { Client } from "@libsql/client";
 import { createMigrationDatabase, runMigrations } from "@/lib/migrate";
-import { createUser, type AppDatabase } from "@/lib/users";
+import { createUser, getUserByEmail, type AppDatabase } from "@/lib/users";
 import { setOwnerValue } from "@/lib/settings/values";
 import {
   getSubscriptionByUserId,
@@ -36,9 +36,13 @@ vi.mock("@/lib/rate-limit", () => ({
   getRateLimiter: () => ({ hit: async () => ({ allowed: true }) }),
   clientKeyFromHeaders: () => "test-key",
 }));
+// Mock @/lib/auth so importing the signup server action does not load auth.config
+// (which throws at import without AUTH_SECRET); signIn resolves without redirecting.
+vi.mock("@/lib/auth", () => ({ signIn: vi.fn(async () => {}) }));
 
 // Imported after the mocks are registered.
 import { POST as signupRoute } from "@/app/api/auth/signup/route";
+import { signupAction } from "@/app/signup/actions";
 
 describe("startTrialForNewOwner", () => {
   let client: Client;
@@ -121,5 +125,38 @@ describe("POST /api/auth/signup — new owner is trialed, not instantly paywalle
 
     const gate = await requireActiveSubscription(db, body.id);
     expect(gate.allowed).toBe(true);
+  });
+});
+
+describe("signupAction (the UI signup path) — new owner is trialed", () => {
+  // The SignupForm submits via this server action, NOT the API route, so the
+  // trial must be created here too. This is the regression the E2E caught: an
+  // action that registers-then-signs-in without a trial lands the owner on
+  // /reactivate.
+  let client: Client;
+  let db: AppDatabase;
+
+  beforeEach(async () => {
+    client = createMigrationDatabase(":memory:");
+    await runMigrations(client);
+    db = drizzle(client) as AppDatabase;
+    holder.db = db;
+  });
+  afterEach(() => {
+    client.close();
+    vi.clearAllMocks();
+  });
+
+  it("registers AND trials the owner; the gate allows the dashboard", async () => {
+    const fd = new FormData();
+    fd.set("email", "action@owner.test");
+    fd.set("password", "TestPass123!secure");
+    await signupAction(null, fd);
+
+    const user = await getUserByEmail(db, "action@owner.test");
+    expect(user).toBeTruthy();
+    const sub = await getSubscriptionByUserId(db, user!.id);
+    expect(sub?.trialEndsAt).toBeTruthy();
+    expect((await requireActiveSubscription(db, user!.id)).allowed).toBe(true);
   });
 });
