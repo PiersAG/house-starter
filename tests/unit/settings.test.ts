@@ -32,6 +32,7 @@ import {
   visibleDefinitions,
 } from "@/lib/settings/service";
 import { ALL_DEFINITIONS } from "@/lib/settings/registry";
+import { enabledCapabilities } from "@/config/capabilities";
 
 let client: Client;
 let db: AppDatabase;
@@ -196,35 +197,38 @@ describe("delete reverts to fall-through (never a copied value)", () => {
 });
 
 describe("flag-hidden definitions absent from the generated UI", () => {
-  it("owner view includes core + billing (subscription_billing kernel) but not booking/comms (flags off)", async () => {
-    // Default posture (config/capabilities.ts): payments OFF, booking OFF,
-    // comms OFF. The "billing" section still appears because the kernel
-    // subscription-billing setting (billing.subscription_grace_days) is always
-    // on — but the client-payments settings under `payments` are hidden.
+  // Flag-aware so the CI both-states matrix (which flips each capability flag
+  // ON and OFF) passes the full suite in every leg. At the default posture
+  // (payments/booking/comms all OFF) these assert the hidden state; when the
+  // matrix flips a flag ON, the same assertions require the visible state.
+  it("owner view always includes core and the kernel billing setting", async () => {
     const view = await buildOwnerSettingsView(db);
     const capabilities = view.map((c) => c.capability);
     expect(capabilities).toContain("core");
+    // subscription_billing is KERNEL (always on) and labelled under "billing".
     expect(capabilities).toContain("billing");
-    expect(capabilities).not.toContain("booking");
-    expect(capabilities).not.toContain("comms");
   });
 
-  it("client-payments (payments OFF) settings are hidden; the kernel grace setting is shown", async () => {
+  it("a capability's settings surface in the owner view iff its flag is on", async () => {
     const view = await buildOwnerSettingsView(db);
     const keys = view.flatMap((c) => c.groups.flatMap((g) => g.settings.map((s) => s.key)));
     expect(keys).toContain("core.app_name");
     // Kernel subscription-billing setting: always resolvable, always shown.
     expect(keys).toContain("billing.subscription_grace_days");
-    // Client-payments settings (requiresFlag: "payments", flag OFF) — hidden.
-    expect(keys).not.toContain("billing.currency");
-    expect(keys).not.toContain("billing.payment_methods");
-    // booking/comms are off too.
-    expect(keys.some((k) => k.startsWith("booking.") || k.startsWith("comms."))).toBe(false);
+    // Client-payments settings (requiresFlag: "payments") track the flag.
+    expect(keys.includes("billing.currency")).toBe(enabledCapabilities.payments === true);
+    expect(keys.includes("billing.payment_methods")).toBe(enabledCapabilities.payments === true);
+    // booking is owner-scoped; it surfaces here iff booking is on.
+    expect(keys.some((k) => k.startsWith("booking."))).toBe(enabledCapabilities.booking === true);
   });
 
-  it("client-scoped view is empty while comms is off", () => {
-    // The only client-scoped settings live under comms, which is flag-off.
-    expect(visibleDefinitions(true)).toHaveLength(0);
+  it("client-scoped view is non-empty iff comms (the only client-scoped capability) is on", () => {
+    const clientDefs = visibleDefinitions(true);
+    if (enabledCapabilities.comms === true) {
+      expect(clientDefs.length).toBeGreaterThan(0);
+    } else {
+      expect(clientDefs).toHaveLength(0);
+    }
   });
 
   it("groups by capability then functional group with effective values", async () => {
