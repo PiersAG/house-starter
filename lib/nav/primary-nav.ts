@@ -12,6 +12,7 @@
 // next/server — so it bundles into the client nav without pulling either in.
 
 import { isCapabilityEnabled } from "@/lib/capabilities/flags";
+import type { CapabilityFlag } from "@/config/capabilities";
 
 export type NavItem = {
   href: string;
@@ -20,12 +21,35 @@ export type NavItem = {
   requiresFlag?: string;
 };
 
-/** The signed-in primary nav. Current entries are all core (no capability tab
- * exists yet); a future payments/booking/comms entry sets `requiresFlag`. */
-export const PRIMARY_NAV: NavItem[] = [
+/** Core/kernel entries — always shown (no capability flag). */
+const CORE_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/dashboard/settings", label: "Settings" },
   { href: "/account", label: "Account" },
+];
+
+/**
+ * Nav entries each capability owns (steps 7–9). Registered here — not yet built
+ * as pages — so the both-states matrix asserts nav-absent-when-OFF against REAL
+ * entries, and a capability's tab appears automatically once its flag flips on.
+ * Each entry's `href` sits under the capability's CAPABILITY_ROUTES prefix
+ * (lib/capabilities/routes.ts), so with the flag OFF the link is hidden AND the
+ * route 404s — the two enforcement surfaces stay consistent. Placeholder
+ * destinations until the feature is built; hidden in every default (all-off)
+ * build, so the live nav is unchanged today.
+ */
+export const CAPABILITY_NAV: Record<CapabilityFlag, NavItem[]> = {
+  payments: [{ href: "/dashboard/payments", label: "Payments", requiresFlag: "payments" }],
+  booking: [{ href: "/dashboard/bookings", label: "Bookings", requiresFlag: "booking" }],
+  comms: [{ href: "/dashboard/messages", label: "Messages", requiresFlag: "comms" }],
+};
+
+/** The signed-in primary nav: core entries plus every capability's registered
+ * entries. Capability entries are filtered out by `visibleNavItems` whenever
+ * their flag is off (the default for all three today). */
+export const PRIMARY_NAV: NavItem[] = [
+  ...CORE_NAV,
+  ...Object.values(CAPABILITY_NAV).flat(),
 ];
 
 /**

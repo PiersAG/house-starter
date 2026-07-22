@@ -12,6 +12,7 @@
 import { NextResponse } from "next/server";
 import { isCapabilityEnabled } from "@/lib/capabilities/flags";
 import { flagForSettingKey } from "@/lib/capabilities/settings";
+import { capabilityForPath } from "@/lib/capabilities/routes";
 
 /** The 404 a guarded surface returns when its capability is off. */
 export function capabilityNotFound(): NextResponse {
@@ -43,4 +44,21 @@ export function requireCapability(
  */
 export function requireCapabilityForSettingKey(key: string): NextResponse | null {
   return requireCapability(flagForSettingKey(key));
+}
+
+/**
+ * Route/API guard by PATH: the 404 Response when `pathname` belongs to an OFF
+ * capability (per CAPABILITY_ROUTES), else null. Two callers resolve through the
+ * same path→flag map:
+ *   • the edge middleware, which runs this on every request so a capability's
+ *     whole route subtree is inert when off — current handlers and not-yet-built
+ *     ones alike (the request-level 404 R2 requires);
+ *   • a feature's own route handler, which SHOULD also call this at the top as
+ *     defence in depth once the feature is built:
+ *         const denied = requireCapabilityForPath(new URL(req.url).pathname);
+ *         if (denied) return denied;
+ * A core/kernel path (owned by no capability) returns null.
+ */
+export function requireCapabilityForPath(pathname: string): NextResponse | null {
+  return requireCapability(capabilityForPath(pathname));
 }
