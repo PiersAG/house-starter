@@ -49,6 +49,25 @@ jobs:
           fi
           echo "DB-driver lock OK: libSQL is the sole database driver."
 
+      # Fail-closed billing-price guard (root fix for the stub-price checkout
+      # 500; K9Coach /reactivate, 2026-07-22). config/billing.ts ships the stub
+      # "price_stub_replace_me" in this TEMPLATE deliberately — its CI never
+      # talks to Stripe. But that stub must never survive into a generated app:
+      # /api/billing/checkout hands priceIds.default straight to Stripe, and the
+      # stub makes every Subscribe click 500 ("No such price"). Commissioning now
+      # creates a real price at scaffold (provision_stripe_price.py); this is the
+      # CI backstop. Mode is chosen by repo identity so one ci.yml serves both:
+      # the template asserts the stub is still present (no real id can be
+      # hardcoded into it), every generated app fails-closed unless it carries a
+      # real price_… id.
+      - name: Billing price configured (fail-closed; template keeps the stub)
+        run: |
+          if [ "${{ github.repository }}" = "PiersAG/house-starter" ]; then
+            node scripts/check-billing-configured.mjs --expect-stub
+          else
+            node scripts/check-billing-configured.mjs
+          fi
+
       # Fail fast: lint runs first, blocks type-check and tests if it fails.
       - name: Lint
         run: npm run lint
