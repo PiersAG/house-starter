@@ -14,12 +14,18 @@
 //     (setOwnerValue throws), or seeded (absent from setting_definitions). ON →
 //     all three work. This closes R2 beyond the write API, at every surface the
 //     substrate reaches.
-//   • nav filtering (step 4) — a capability-flagged nav item is dropped by
-//     visibleNavItems (the one filter every nav surface uses) when off.
+//   • nav filtering (steps 4, 7–9) — a capability's REGISTERED nav entries
+//     (CAPABILITY_NAV, now part of PRIMARY_NAV) are dropped by visibleNavItems
+//     (the one filter every nav surface uses) when off.
+//   • route/API 404 (steps 7–9) — a request under a capability's REGISTERED
+//     route prefix (CAPABILITY_ROUTES) is 404'd when off, via the same predicate
+//     the edge middleware runs (isPathDisabledByCapability) and the per-handler
+//     guard returns (requireCapabilityForPath). This REPLACES the step-2
+//     empty-registry placeholder: the OFF-leg 404 is now real enforcement over
+//     each capability's whole route subtree (current + not-yet-built paths).
 //
-// Dedicated capability ENDPOINTS (e.g. a future /api/payments/*) do not exist
-// yet; their request-level 404 proof attaches per-feature in steps 5–9. The
-// route handler's own wiring is proven in tests/unit/settings-api.test.ts.
+// The features themselves are still unbuilt — CAPABILITY_ROUTES/CAPABILITY_NAV
+// are the enforcement SCAFFOLDING each attaches to when built (see routes.ts).
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { drizzle } from "drizzle-orm/libsql";
@@ -31,8 +37,13 @@ import { visibleDefinitions } from "@/lib/settings/service";
 import { resolveSetting } from "@/lib/settings/resolver";
 import { setOwnerValue } from "@/lib/settings/values";
 import { CapabilityDisabledError } from "@/lib/settings/errors";
-import { requireCapabilityForSettingKey } from "@/lib/capabilities/guard";
-import { visibleNavItems, type NavItem } from "@/lib/nav/primary-nav";
+import { requireCapabilityForSettingKey, requireCapabilityForPath } from "@/lib/capabilities/guard";
+import { visibleNavItems, PRIMARY_NAV } from "@/lib/nav/primary-nav";
+import {
+  CAPABILITY_ROUTES,
+  capabilityForPath,
+  isPathDisabledByCapability,
+} from "@/lib/capabilities/routes";
 import {
   enabledCapabilities,
   isFlagEnabled,
@@ -140,20 +151,99 @@ describe("capability both-states — settings read/write/seed inertness (step 3,
   }
 });
 
-describe("capability both-states — nav filtering drops OFF-capability items (step 4)", () => {
-  // visibleNavItems is the single filter every nav/menu surface runs. A
-  // capability-flagged entry appears iff its flag is on — proven here against
-  // the real filter, not just the predicate.
+describe("capability both-states — route/API 404 for OFF-capability prefixes (steps 7-9, real R2)", () => {
+  // Replaces the step-2 empty-registry placeholder with real enforcement. Each
+  // capability declares its route prefixes in CAPABILITY_ROUTES; a request under
+  // an OFF capability's prefix is 404'd via the same predicate the edge
+  // middleware runs (isPathDisabledByCapability) and the per-handler guard
+  // returns (requireCapabilityForPath — a real 404 Response). Proven in BOTH
+  // states for every capability, over its whole subtree (a nested sample path).
   for (const flag of CAPABILITY_FLAGS) {
+    const prefixes = CAPABILITY_ROUTES[flag];
     const on = enabledCapabilities[flag] === true;
-    const item: NavItem = { href: `/x/${flag}`, label: flag, requiresFlag: flag };
 
-    it(`${flag}: a nav item requiring it is ${on ? "present" : "absent"}`, () => {
-      const visible = visibleNavItems([{ href: "/", label: "Home" }, item]);
-      expect(visible).toContainEqual({ href: "/", label: "Home" }); // core always shows
-      expect(visible.includes(item)).toBe(on);
+    it(`${flag} owns ≥1 route prefix; each is ${on ? "reachable (guard allows)" : "404'd over its whole subtree"}`, () => {
+      expect(prefixes.length).toBeGreaterThan(0);
+      for (const prefix of prefixes) {
+        // The prefix and any nested path resolve to this capability.
+        expect(capabilityForPath(prefix)).toBe(flag);
+        const nested = `${prefix}/deep/child`;
+        expect(capabilityForPath(nested)).toBe(flag);
+        // Enforcement tracks the live flag, in both states.
+        expect(isPathDisabledByCapability(nested)).toBe(!on);
+        const denied = requireCapabilityForPath(nested);
+        if (on) {
+          expect(denied).toBeNull();
+        } else {
+          expect(denied).not.toBeNull();
+          expect(denied?.status).toBe(404);
+        }
+      }
     });
   }
+});
+
+describe("capability both-states — nav filtering drops OFF-capability items (steps 4, 7-9)", () => {
+  // visibleNavItems is the single filter every nav/menu surface runs. Now proven
+  // against each capability's REAL registered entries in PRIMARY_NAV (CAPABILITY_NAV),
+  // not a synthetic item: a capability's tab appears iff its flag is on.
+  for (const flag of CAPABILITY_FLAGS) {
+    const on = enabledCapabilities[flag] === true;
+    const owned = PRIMARY_NAV.filter((item) => item.requiresFlag === flag);
+
+    it(`${flag} owns ≥1 nav entry; it is ${on ? "present" : "absent"} when ${on ? "on" : "off"}`, () => {
+      expect(owned.length).toBeGreaterThan(0);
+      const visibleHrefs = new Set(visibleNavItems(PRIMARY_NAV).map((i) => i.href));
+      for (const item of owned) {
+        expect(visibleHrefs.has(item.href)).toBe(on);
+        // A capability's nav href must sit under its own route prefix, so nav and
+        // route enforcement stay consistent (hidden AND 404'd together when off).
+        expect(capabilityForPath(item.href)).toBe(flag);
+      }
+      expect(visibleHrefs.has("/dashboard")).toBe(true); // core always shows
+    });
+  }
+});
+
+describe("capability route matcher — core paths untouched, segment-boundary safe", () => {
+  // Invariants that hold in every leg: the matcher never captures a core/kernel
+  // path, and never false-matches a sibling that merely shares a string prefix.
+  it("core/kernel paths belong to no capability and are never disabled", () => {
+    for (const p of [
+      "/", "/dashboard", "/dashboard/settings", "/account",
+      "/login", "/signup", "/api/settings/foo", "/api/auth/session",
+    ]) {
+      expect(capabilityForPath(p)).toBeNull();
+      expect(isPathDisabledByCapability(p)).toBe(false);
+    }
+  });
+
+  it("matches only on a path-segment boundary", () => {
+    for (const flag of CAPABILITY_FLAGS) {
+      for (const prefix of CAPABILITY_ROUTES[flag]) {
+        expect(capabilityForPath(prefix)).toBe(flag); // exact
+        expect(capabilityForPath(`${prefix}/x`)).toBe(flag); // nested
+        expect(capabilityForPath(`${prefix}-other`)).toBeNull(); // sibling, no false match
+        expect(capabilityForPath(`${prefix}extra`)).toBeNull();
+      }
+    }
+  });
+
+  it("capability route prefixes are disjoint (no path owned by two capabilities)", () => {
+    const seen = new Map<string, CapabilityFlag>();
+    for (const flag of CAPABILITY_FLAGS) {
+      for (const prefix of CAPABILITY_ROUTES[flag]) {
+        for (const other of CAPABILITY_FLAGS) {
+          if (other === flag) continue;
+          for (const otherPrefix of CAPABILITY_ROUTES[other]) {
+            expect(otherPrefix === prefix || otherPrefix.startsWith(prefix + "/")).toBe(false);
+          }
+        }
+        expect(seen.has(prefix)).toBe(false);
+        seen.set(prefix, flag);
+      }
+    }
+  });
 });
 
 describe("kernel switches — declared, hidden, and ON (incl. auth, step 6)", () => {

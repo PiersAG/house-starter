@@ -13,6 +13,7 @@ import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
 import { authConfig } from "@/auth.config";
 import { decideAccess, currentLifecycleState } from "@/lib/live-eval";
+import { isPathDisabledByCapability } from "@/lib/capabilities/routes";
 
 const { auth } = NextAuth(authConfig);
 
@@ -49,6 +50,17 @@ export default auth((req) => {
   const nonce = generateNonce();
   const csp = buildCsp(nonce);
   const { pathname } = req.nextUrl;
+
+  // Capability R2 enforcement (steps 7–9): a request under an OFF capability's
+  // registered route prefix (lib/capabilities/routes.ts) is answered 404 — the
+  // surface is ABSENT, not forbidden — before auth or anything else runs, so an
+  // off capability looks identical to a route that was never built, to any
+  // caller. A core/kernel path returns false here and falls through untouched.
+  if (isPathDisabledByCapability(pathname)) {
+    const notFound = NextResponse.json({ error: "Not found." }, { status: 404 });
+    notFound.headers.set("Content-Security-Policy", csp);
+    return notFound;
+  }
 
   const isProtected = PROTECTED_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
