@@ -11,7 +11,10 @@
 // the DATABASE_URL value.
 
 import { createClient, type Client } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
 import { seedSettingDefinitions } from "@/lib/settings/seed";
+import { seedOwnerAccount } from "@/lib/owner-seed";
+import type { AppDatabase } from "@/lib/users";
 
 /**
  * Idempotent DDL that brings an empty SQLite database up to the current schema.
@@ -236,6 +239,11 @@ export async function runMigrations(client: Client): Promise<void> {
   // true migration path so every migrated DB carries the current definitions
   // (settings-registry-spec §4). Idempotent upsert; safe to run repeatedly.
   await seedSettingDefinitions(client);
+  // Seed the factory owner account + owner grant when OWNER_EMAIL is configured
+  // (v0-owner-account-seed). On the same migration path so every tenant DB
+  // inherits it. Strictly idempotent (account absent -> create + grant; present
+  // -> no-op); a no-op when OWNER_EMAIL is unset (dev/CI).
+  await seedOwnerAccount(drizzle(client) as AppDatabase, process.env.OWNER_EMAIL);
 }
 
 /**
