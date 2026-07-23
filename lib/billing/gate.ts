@@ -16,6 +16,7 @@
 // stays a pure DB unit (no Stripe call in tests).
 
 import { getSubscriptionByUserId } from "@/lib/billing/subscriptions";
+import { hasLiveGrant } from "@/lib/billing/grants";
 import { getSetting } from "@/lib/settings/resolver";
 import type { AppDatabase } from "@/lib/users";
 
@@ -88,6 +89,13 @@ export async function requireActiveSubscription(
     if (now.getTime() < boundary) {
       return { allowed: true };
     }
+  }
+
+  // Access grant (owner-account-paywall-exemption): a LIVE grant allows access
+  // exactly as an active subscription does — the single audited exemption path.
+  // An expired grant falls through to the 402 below, same as a lapsed sub.
+  if (await hasLiveGrant(db, userId, now)) {
+    return { allowed: true };
   }
 
   const portalUrl =
