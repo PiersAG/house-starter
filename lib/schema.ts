@@ -202,3 +202,26 @@ export type NewStripeEvent = typeof stripeEvents.$inferInsert;
 
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 export type NewPasswordResetToken = typeof passwordResetTokens.$inferInsert;
+
+/**
+ * Durable runtime error sink (la-a-uptime-monitoring §b). Written by
+ * instrumentation.onRequestError and any handler that catches an error; read by
+ * /api/health (error-rate signal) and the external prober. Persisted to the
+ * app's own database so records survive past Vercel's ephemeral live-tail
+ * window (the checkout-500 incident left no recoverable log after 16h).
+ */
+export const errorEvents = sqliteTable("error_events", {
+  id: text("id").primaryKey(),
+  occurredAt: integer("occurred_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  message: text("message").notNull(),
+  stack: text("stack"),
+  route: text("route"),
+  method: text("method"),
+  digest: text("digest"),
+  context: text("context"),
+});
+
+export type ErrorEvent = typeof errorEvents.$inferSelect;
+export type NewErrorEvent = typeof errorEvents.$inferInsert;

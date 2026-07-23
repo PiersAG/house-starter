@@ -92,6 +92,19 @@ CREATE TABLE IF NOT EXISTS setting_values (
   updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
   PRIMARY KEY (key, scope, client_id)
 );
+
+CREATE TABLE IF NOT EXISTS error_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  occurred_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  message TEXT NOT NULL,
+  stack TEXT,
+  route TEXT,
+  method TEXT,
+  digest TEXT,
+  context TEXT
+);
+
+CREATE INDEX IF NOT EXISTS error_events_occurred_idx ON error_events(occurred_at);
 `;
 
 /**

@@ -86,6 +86,47 @@ export function assertBootEnv(contractText: string): void {
   }
 }
 
+/**
+ * Next.js error instrumentation (la-a-uptime-monitoring §b). Called by the
+ * framework for every server-side error (route handlers, RSC, middleware).
+ * Persists a structured record to the durable in-house sink so the exception
+ * survives past Vercel's live-tail window — the class of failure that left the
+ * checkout 500 undiagnosable after 16h.
+ *
+ * Node-only: the sink uses @libsql/client, which is not edge-safe, so the
+ * import is dynamic and guarded by NEXT_RUNTIME — the edge build never pulls it
+ * in. Never throws: an error while recording an error must not mask the
+ * original.
+ */
+export async function onRequestError(
+  error: unknown,
+  request: { path?: string; method?: string },
+  context: { routerKind?: string; routePath?: string; renderSource?: string },
+): Promise<void> {
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  try {
+    const { recordError } = await import("./lib/observability/error-log");
+    const err = error as { message?: string; stack?: string; digest?: string };
+    await recordError({
+      message: err?.message ? String(err.message) : String(error),
+      stack: err?.stack ?? null,
+      route: request?.path ?? context?.routePath ?? null,
+      method: request?.method ?? null,
+      digest: err?.digest ?? null,
+      context: {
+        routerKind: context?.routerKind,
+        routePath: context?.routePath,
+        renderSource: context?.renderSource,
+      },
+    });
+  } catch (recordErr) {
+    console.error(
+      "instrumentation.onRequestError: failed to record error event",
+      recordErr,
+    );
+  }
+}
+
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     // (1) Deterministic misconfiguration — fail loudly at boot.
