@@ -225,3 +225,29 @@ export const errorEvents = sqliteTable("error_events", {
 
 export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type NewErrorEvent = typeof errorEvents.$inferInsert;
+
+/**
+ * Access grants (owner-account-paywall-exemption). The single audited path
+ * around the subscription paywall: an account with a LIVE grant reaches gated
+ * routes exactly as an active subscriber does (lib/billing/gate.ts). One grant
+ * per account (userId unique). Set EXPLICITLY by the CEO only (never at signup,
+ * never env/pattern-matched). `type` ∈ owner|tester|comp; `expiresAt` null =
+ * never expires; an expired grant confers no access, same as a lapsed sub.
+ */
+export const accessGrants = sqliteTable("access_grants", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id),
+  type: text("type").notNull(),
+  note: text("note"),
+  grantedBy: text("granted_by"),
+  grantedAt: integer("granted_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  expiresAt: integer("expires_at", { mode: "timestamp" }),
+});
+
+export type AccessGrant = typeof accessGrants.$inferSelect;
+export type NewAccessGrant = typeof accessGrants.$inferInsert;

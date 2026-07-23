@@ -105,6 +105,16 @@ CREATE TABLE IF NOT EXISTS error_events (
 );
 
 CREATE INDEX IF NOT EXISTS error_events_occurred_idx ON error_events(occurred_at);
+
+CREATE TABLE IF NOT EXISTS access_grants (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
+  type TEXT NOT NULL CHECK (type IN ('owner','tester','comp')),
+  note TEXT,
+  granted_by TEXT,
+  granted_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  expires_at INTEGER
+);
 `;
 
 /**
