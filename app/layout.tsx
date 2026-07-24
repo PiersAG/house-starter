@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { getAppName } from "@/lib/branding";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "House Starter",
-  description: "Replace this placeholder",
-};
+// Title comes from the owner-set app name (settings registry), neutral
+// fallback otherwise — never a hardcoded template brand. See lib/branding.ts.
+export async function generateMetadata(): Promise<Metadata> {
+  const appName = await getAppName();
+  return { title: appName };
+}
 
 export default async function RootLayout({
   children,
