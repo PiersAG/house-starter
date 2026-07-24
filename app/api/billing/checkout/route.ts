@@ -24,16 +24,26 @@ export async function POST(request: Request): Promise<Response> {
   const priceId = billingConfig.priceIds.default;
   const origin = new URL(request.url).origin;
 
+  // stripe-per-app-accounts: tag the session and the subscription with this
+  // app's id so every Stripe object created by the app's own code is traceable
+  // to its app. The customer and price carry the same app_id, set at their
+  // creation in the app's own Stripe account (docs/per-app-stripe-account.md).
+  const appMetadata = { app_id: billingConfig.appId };
+
   const checkout = await getStripe().checkout.sessions.create({
     mode: "subscription",
     line_items: [{ price: priceId, quantity: 1 }],
     client_reference_id: userId,
     customer_email: session.user?.email ?? undefined,
+    metadata: appMetadata,
     success_url: `${origin}/dashboard?checkout=success`,
     cancel_url: `${origin}/dashboard?checkout=cancelled`,
-    ...(billingConfig.trialDays > 0
-      ? { subscription_data: { trial_period_days: billingConfig.trialDays } }
-      : {}),
+    subscription_data: {
+      metadata: appMetadata,
+      ...(billingConfig.trialDays > 0
+        ? { trial_period_days: billingConfig.trialDays }
+        : {}),
+    },
   });
 
   return NextResponse.json({ url: checkout.url });
