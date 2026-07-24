@@ -1,0 +1,19 @@
+name: Provision billing (Stripe price)
+# Thin caller — invokes app-business-core's reusable provision-app-billing.yml in
+# THIS app's secret context (secrets: inherit), so the Stripe product/price are
+# created in this app's OWN account (stripe-per-app-accounts) and the real price
+# id is stamped into config/billing.ts by a PR. Dispatch after this app's
+# STRIPE_TEST_SECRET_KEY points at its own account. Test mode only.
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: "This app's build id (e.g. 20260708-iyec for K9Coach)"
+        required: true
+        type: string
+jobs:
+  provision:
+    uses: PiersAG/app-business-core/.github/workflows/provision-app-billing.yml@main
+    with:
+      build_id: ${{ inputs.build_id }}
+    secrets: inherit

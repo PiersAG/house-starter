@@ -18,6 +18,23 @@ export interface BillingConfig {
    * with multiple tiers add more named entries.
    */
   priceIds: Record<string, string>;
+  /**
+   * This app's id (stripe-per-app-accounts). Written onto the metadata of the
+   * Stripe objects the app's own code creates — the checkout session and the
+   * subscription — as `app_id`, so a Stripe object can be traced to its app.
+   * The per-app build phase sets this. See docs/per-app-stripe-account.md; the
+   * customer and price carry the same `app_id`, set at their (dashboard/script)
+   * creation time in the app's OWN Stripe account.
+   */
+  appId: string;
+  /**
+   * Optional statement descriptor for this app (5–22 chars). With per-app
+   * Stripe ACCOUNTS the account's own name is what shows on Checkout, receipts
+   * and the card statement — so this is normally left null and the account
+   * setting governs. Kept here for the price/product statement_descriptor set
+   * at creation, and for documentation of the app's intended descriptor.
+   */
+  statementDescriptor: string | null;
   /** Free-trial length in days. 0 = no trial (card required up front). */
   trialDays: number;
   /**
@@ -40,6 +57,11 @@ export const billingConfig: BillingConfig = {
     // STUB — replace with the app's real Stripe price id at build time.
     default: "price_stub_replace_me",
   },
+  // STUB — the per-app build phase replaces this with the app's id (e.g. its
+  // slug), tagged onto Stripe objects as `app_id`.
+  appId: "app_stub_replace_me",
+  // Normally null: the per-app Stripe account's own name governs the descriptor.
+  statementDescriptor: null,
   trialDays: 14,
   gatedRoutePrefixes: [],
 };
