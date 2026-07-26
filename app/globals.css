@@ -44,10 +44,11 @@
   --surface: 210 20% 98%;
   /* Subtle border #e5e7eb — non-text UI only */
   --border: 220 13% 91%;
-  /* Teal #0d9488 — 3.74:1 on white. NOT AA for normal text (needs 4.5:1).
-     Meets AA for large text (18.66px+ bold / 24px+) and non-text UI components
-     (3:1). Do not use for body copy on a white or --surface background. */
-  --accent: 174.7 83.9% 31.6%;
+  /* Teal #0b8176 — 4.55:1 on --surface, 4.76:1 on --background ✓ AA for normal
+     text. Darkened from #0d9488 (3.74:1, which FAILED AA for text) by lightness
+     alone: HSL L 31.6% -> 27.5%, hue and saturation untouched. Solved against
+     --surface, the worse of the two backgrounds, so it holds on both. */
+  --accent: 174.4 84.3% 27.5%;
   /* Dark red #b91c1c — 6.47:1 on white ✓ AA */
   --destructive: 0 73.7% 41.8%;
   /* Links: same as primary #1d4ed8 — 6.70:1 on white ✓ AA */
