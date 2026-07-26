@@ -1,0 +1,67 @@
+# Dependabot — version updates (card 2.3.4).
+#
+# Security ALERTS were already active on this repo; what was missing is this
+# file, which is what enables scheduled VERSION updates. Without it Dependabot
+# only reacts to published advisories and never proposes routine upgrades, so
+# dependencies drift until an advisory forces a jump.
+#
+# Grouping is deliberate. Ungrouped, this config would open a PR per package
+# per week and every one of them would need the exact-pin discipline applied by
+# hand. Grouped, related packages move together in one reviewable PR.
+#
+# NOTE ON EXACT PINS: every dependency here is pinned exactly (no ^ or ~), which
+# is the point — Dependabot proposes the bump as a visible diff rather than a
+# lockfile resolving to something new on its own. Its PRs must still clear the
+# anti-slopsquatting gate (14-day cooldown, establishment, lockfile sync) in
+# ci.yml, which is precisely why that gate had to be restored first.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    labels:
+      - "dependencies"
+    groups:
+      radix:
+        patterns:
+          - "@radix-ui/*"
+      next:
+        patterns:
+          - "next"
+          - "eslint-config-next"
+          - "@next/*"
+      testing:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "@testing-library/*"
+          - "@playwright/test"
+          - "playwright"
+          - "@axe-core/*"
+          - "jsdom"
+      tooling:
+        patterns:
+          - "eslint"
+          - "@typescript-eslint/*"
+          - "prettier*"
+          - "typescript"
+          - "husky"
+          - "lint-staged"
+          - "tailwindcss"
+          - "postcss"
+          - "autoprefixer"
+
+  # Keep the CI actions themselves current — a compromised or abandoned action
+  # is the same class of supply-chain risk as a compromised npm package.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"

@@ -82,8 +82,18 @@ cp .env.example .env.local
 # Fill in AUTH_SECRET (generate with: openssl rand -base64 32)
 # Fill in DATABASE_URL
 npm install
+npm run prepare   # installs git hooks — see note below
 npm run dev
 ```
+
+**Why the extra `npm run prepare` step.** `.npmrc` sets `ignore-scripts=true`, so
+npm does not execute lifecycle scripts — the control that stops a compromised
+dependency running code at install time, before anyone has read it. npm applies
+that to this project's own scripts too, so `npm install` no longer runs our
+`prepare` (husky) automatically. `npm run <name>` still executes its named
+script under `ignore-scripts`, so `npm run prepare` remains the supported way to
+install git hooks. The hooks are not disabled; they just need one explicit
+command after a clone.
 
 ## Responsive design (universal)
 

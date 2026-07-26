@@ -185,8 +185,41 @@ jobs:
       # package is established (>= 90 days old or >= 1000 weekly downloads).
       # Also asserts the lockfile is in sync. Deterministic — no LLM, no
       # writes. Spec: wiki/specs/stage0-deps-and-budget.md.
+      #
+      # `if: always()` is load-bearing, not defensive. Steps are skipped once an
+      # earlier one fails, and `Security audit` above has been failing on
+      # pre-existing advisories in next / next-auth / postcss / sharp. That made
+      # this step SKIP on every run, so the anti-slopsquatting gate — the one
+      # control specifically aimed at a hallucinated or typosquatted package
+      # entering the tree — was silently absent from CI while appearing in the
+      # job list. Discovered closing card 2.3.3, restored by card 2.3.4.
+      #
+      # This runs the check independently of the audit's outcome. It does NOT
+      # suppress the audit: that step still fails the job, because those
+      # advisories are real and are reported as a finding, not hidden.
       - name: Dependency existence check (anti-slopsquatting)
+        if: always()
         run: python3 scripts/check-deps-existence.py --workspace .
+
+      # Socket supply-chain signal — ADVISORY ONLY, by CEO ruling. It reports;
+      # it never fails the job and never blocks a merge. Both guards are
+      # deliberate and both are needed:
+      #   continue-on-error: true  — a Socket outage, quota exhaustion or API
+      #                              change can never turn into a red build.
+      #   if: always()             — it still runs when an earlier step failed,
+      #                              which is the whole point of this card.
+      # The script itself also exits 0 unconditionally, so this is non-blocking
+      # in three independent ways. Making it blocking is a CEO decision, not a
+      # config tweak.
+      #
+      # Self-skips when SOCKET_API_KEY is absent, exactly like the Stripe
+      # test-clock step above, so the job is green with or without the secret.
+      - name: Socket supply-chain report (advisory only, never blocks)
+        if: always()
+        continue-on-error: true
+        env:
+          SOCKET_API_KEY: ${{ secrets.SOCKET_API_KEY }}
+        run: node scripts/socket-report.mjs
 
   # Both-states matrix (capability-model-spec R3): prove every capability flag is
   # a REAL switch by running the suite with it flipped OFF as well as ON, not
