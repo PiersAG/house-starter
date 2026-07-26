@@ -29,17 +29,68 @@ const config: Config = {
       //
       // This is also the convention shadcn/ui's own Tailwind v3 template uses,
       // so components copied in from it work against these tokens unmodified.
+      // The DEFAULT/foreground nesting is shadcn's shape. `bg-primary` still
+      // resolves via DEFAULT exactly as before, and `text-primary-foreground`
+      // becomes available for components that need the paired text colour.
+      //
+      // ONE SEMANTIC COLLISION TO KNOW ABOUT, for card 2.3.3 (the seed):
+      // shadcn uses `--accent` for a SUBDUED hover background (its own default
+      // is roughly slate-100), with dark --accent-foreground text on it. In
+      // this palette --accent is a VIVID brand colour. We keep our meaning,
+      // because generated apps already use accent as a brand fill and changing
+      // it would break them. The consequence is that shadcn components which
+      // use `bg-accent` for hover states (dropdown items, command menus,
+      // calendar cells) will render a vivid hover instead of a subtle one.
+      // Fix at seed time by changing those copied components to `bg-muted` —
+      // a one-word edit per component, and cheap precisely because copy-in
+      // means we own the source. Do NOT "fix" it by redefining --accent.
       colors: {
-        primary: "hsl(var(--primary))",
-        secondary: "hsl(var(--secondary))",
         background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
         surface: "hsl(var(--surface))",
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        link: "hsl(var(--link))",
         "text-primary": "hsl(var(--text-primary))",
         "text-secondary": "hsl(var(--text-secondary))",
-        border: "hsl(var(--border))",
-        accent: "hsl(var(--accent))",
-        destructive: "hsl(var(--destructive))",
-        link: "hsl(var(--link))",
+        primary: {
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
+        },
+        secondary: {
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))",
+        },
+        accent: {
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
+        },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
+        },
+        muted: {
+          DEFAULT: "hsl(var(--muted))",
+          foreground: "hsl(var(--muted-foreground))",
+        },
+        card: {
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))",
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
+      },
+      // --radius is a LENGTH, so it is used bare — never hsl()-wrapped.
+      // lg resolves to 0.5rem and md to 0.375rem, both identical to Tailwind's
+      // defaults, so nothing already built changes shape. sm moves from
+      // 0.125rem to 0.25rem; `rounded-sm` is unused in this template.
+      borderRadius: {
+        lg: "var(--radius)",
+        md: "calc(var(--radius) - 2px)",
+        sm: "calc(var(--radius) - 4px)",
       },
     },
   },

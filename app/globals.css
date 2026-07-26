@@ -44,14 +44,79 @@
   --surface: 210 20% 98%;
   /* Subtle border #e5e7eb — non-text UI only */
   --border: 220 13% 91%;
-  /* Teal #0d9488 — 3.74:1 on white. NOT AA for normal text (needs 4.5:1).
-     Meets AA for large text (18.66px+ bold / 24px+) and non-text UI components
-     (3:1). Do not use for body copy on a white or --surface background. */
-  --accent: 174.7 83.9% 31.6%;
+  /* Teal #0b8176 — 4.55:1 on --surface, 4.76:1 on --background ✓ AA for normal
+     text. Darkened from #0d9488 (3.74:1, which FAILED AA for text) by lightness
+     alone: HSL L 31.6% -> 27.5%, hue and saturation untouched. Solved against
+     --surface, the worse of the two backgrounds, so it holds on both. */
+  --accent: 174.4 84.3% 27.5%;
   /* Dark red #b91c1c — 6.47:1 on white ✓ AA */
   --destructive: 0 73.7% 41.8%;
   /* Links: same as primary #1d4ed8 — 6.70:1 on white ✓ AA */
   --link: 224.3 76.3% 48%;
+
+  /* ── shadcn/ui vocabulary ────────────────────────────────────────────────
+   * The ten tokens above are this factory's own semantic names and remain the
+   * canonical set. The names below are the vocabulary shadcn/ui components
+   * assume, added so components copied in (card 2.3.3) render correctly with
+   * no edits. Most are ALIASES of a token above — one palette, two names —
+   * which is why they carry no new colour decisions except where noted.
+   *
+   * Every *-foreground token below was chosen by measuring contrast against
+   * its own paired background, not by convention. Ratios stated per pair.
+   *
+   * NOT included, deliberately: --chart-1..5 and the --sidebar-* family.
+   * Charts are deferred (the charting tool is an open CEO decision) and the
+   * sidebar family belongs to a component we have not seeded. Adding unused
+   * tokens now would be guessing at values nothing consumes.
+   */
+
+  /* Body text on --background. Alias of --text-primary. 17.74:1 ✓ AAA */
+  --foreground: 220.9 39.3% 11%;
+
+  /* Card surface. Alias of --surface. */
+  --card: 210 20% 98%;
+  /* Alias of --text-primary. 16.98:1 on --card ✓ AAA */
+  --card-foreground: 220.9 39.3% 11%;
+
+  /* Popover surface. Alias of --surface. */
+  --popover: 210 20% 98%;
+  /* Alias of --text-primary. 16.98:1 on --popover ✓ AAA */
+  --popover-foreground: 220.9 39.3% 11%;
+
+  /* White on --primary #1d4ed8 — 6.70:1 ✓ AA */
+  --primary-foreground: 0 0% 100%;
+  /* White on --secondary #6d28d9 — 7.10:1 ✓ AA */
+  --secondary-foreground: 0 0% 100%;
+  /* White on --accent #0b8176 — 4.76:1 ✓ AA. This is why --accent had to be
+     darkened: on the old #0d9488 white was only 3.74:1. */
+  --accent-foreground: 0 0% 100%;
+  /* White on --destructive #b91c1c — 6.47:1 ✓ AA */
+  --destructive-foreground: 0 0% 100%;
+
+  /* Muted/subdued surface. Alias of --background — the rule build-design.py
+     applies to every generated app (--card takes --surface, --muted takes
+     --background) so the template matches what it generates. In this palette
+     the two are 1.05:1 apart, so the choice is visually immaterial here; in a
+     palette with a distinct page tone it is the correct one. */
+  --muted: 0 0% 100%;
+  /* Alias of --text-secondary. 10.31:1 on --muted ✓ AAA */
+  --muted-foreground: 216.9 19.1% 26.7%;
+
+  /* Form-control BORDER — #8790a3, 3.07:1 on --surface ✓ WCAG 1.4.11.
+     NOT an alias of --border. shadcn separates the two precisely because they
+     have different requirements: --border draws decorative dividers (1.4.11
+     does not apply), while --input draws the visual boundary of an active UI
+     component, which must reach 3:1. --border at 1.18:1 would fail that, so
+     reusing it here would have shipped inaccessible form fields. */
+  --input: 220.7 13.2% 58.4%;
+
+  /* Focus ring. Alias of --primary. 6.70:1 on --background ✓ (needs 3:1) */
+  --ring: 224.3 76.3% 48%;
+
+  /* Corner radius — a LENGTH, not a colour, so it is never hsl()-wrapped.
+     0.5rem matches Tailwind's existing rounded-lg, so nothing already built
+     changes shape. */
+  --radius: 0.5rem;
 }
 
 /* Visible focus ring for keyboard navigation (WCAG 2.4.7).

@@ -1,20 +1,25 @@
 /**
- * Design-token format contract.
+ * Design-token contract: format, mapping, and measured accessibility.
  *
- * These tests exist because of a silent failure, not a hypothetical one. The
- * previous scheme stored hex in the tokens and mapped them in tailwind.config.ts
- * as raw `var(--primary)`. Tailwind cannot inject an alpha channel into an
- * already-opaque colour value, so every opacity modifier — bg-primary/50,
- * ring-accent/20 — produced NO CSS AT ALL. Not a wrong colour: no rule, no
- * warning, nothing. Any component written with `bg-primary/50` rendered with no
- * background whatsoever and CI stayed green.
+ * These tests exist because of two silent failures, neither hypothetical.
  *
- * The fix is a paired contract: bare HSL channel triplets in globals.css,
- * hsl(var(--token)) wrappers in tailwind.config.ts. Break either half and the
- * colours stop rendering entirely, so both halves are asserted here.
+ * 1. FORMAT. The original scheme stored hex in the tokens and mapped them in
+ *    tailwind.config.ts as raw `var(--primary)`. Tailwind cannot inject an
+ *    alpha channel into an already-opaque colour value, so every opacity
+ *    modifier — bg-primary/50, ring-accent/20 — produced NO CSS AT ALL. Not a
+ *    wrong colour: no rule, no warning. `bg-primary/50` rendered with no
+ *    background and CI stayed green. The fix is a paired contract — bare HSL
+ *    channel triplets in globals.css, hsl(var(--token)) wrappers in the config.
+ *    Break either half and colours stop rendering, so both are asserted.
  *
- * The Tailwind build is driven through PostCSS against the REAL
- * tailwind.config.ts, so these tests fail if that config regresses.
+ * 2. CONTRAST. Several tokens carried WCAG claims that were simply wrong —
+ *    one documented as "4.60:1 AA-pass" measured 3.74:1, and a status badge
+ *    set amber text on a 20% wash of the same amber (1.80:1). Comments cannot
+ *    be trusted to stay true, so the ratios are now COMPUTED from the live
+ *    token values on every run. These assertions are palette-agnostic: they
+ *    check relationships, not specific colours, so they travel to any app
+ *    generated from this template and fail if a regenerated palette is
+ *    inaccessible.
  *
  * Kept byte-identical with house-starter's copy — template and generated app
  * must not drift on this contract.
@@ -29,8 +34,97 @@ import type { Config } from "tailwindcss";
 import config from "../../tailwind.config";
 
 const ROOT = resolve(__dirname, "../..");
+const css = readFileSync(resolve(ROOT, "app/globals.css"), "utf8");
 
-/** Run the real Tailwind config over a snippet of markup and return the CSS. */
+/** Colour tokens mapped flat in the config (no paired foreground). */
+const FLAT_TOKENS = [
+  "background",
+  "foreground",
+  "surface",
+  "border",
+  "input",
+  "ring",
+  "link",
+  "text-primary",
+  "text-secondary",
+] as const;
+
+/** Colour tokens mapped as { DEFAULT, foreground } — shadcn's shape. */
+const PAIRED_TOKENS = [
+  "primary",
+  "secondary",
+  "accent",
+  "destructive",
+  "muted",
+  "card",
+  "popover",
+] as const;
+
+const COLOUR_TOKENS = [
+  ...FLAT_TOKENS,
+  ...PAIRED_TOKENS,
+  ...PAIRED_TOKENS.map((t) => `${t}-foreground`),
+];
+
+/** Non-colour tokens: lengths, never hsl()-wrapped. */
+const LENGTH_TOKENS = /^--(bp-|touch-target-min|radius)/;
+
+const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+/** Every `--token: value;` declaration, including any inside a media query. */
+function declarations(): Array<{ name: string; value: string }> {
+  return [...withoutComments.matchAll(/(--[a-z-]+):\s*([^;]+);/g)].map((m) => ({
+    name: m[1],
+    value: m[2].trim(),
+  }));
+}
+
+function tokenValue(name: string): string {
+  const found = declarations().filter((d) => d.name === `--${name}`);
+  if (found.length === 0) throw new Error(`--${name} is not declared in app/globals.css`);
+  return found[0].value;
+}
+
+// ── Colour maths (WCAG 2.x, sRGB relative luminance) ────────────────────────
+
+function tripletToRgb(triplet: string): [number, number, number] {
+  const [h, s, l] = triplet.replace(/%/g, "").split(/\s+/).map(Number);
+  const sN = s / 100;
+  const lN = l / 100;
+  const c = (1 - Math.abs(2 * lN - 1)) * sN;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = lN - c / 2;
+  const seg = Math.floor(h / 60) % 6;
+  const [r, g, b] = [
+    [c, x, 0],
+    [x, c, 0],
+    [0, c, x],
+    [0, x, c],
+    [x, 0, c],
+    [c, 0, x],
+  ][seg];
+  return [r, g, b].map((v) => Math.round((v + m) * 255)) as [number, number, number];
+}
+
+function luminance([r, g, b]: [number, number, number]): number {
+  const f = (v: number) => {
+    const n = v / 255;
+    return n <= 0.04045 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+function contrast(aToken: string, bToken: string): number {
+  const [l1, l2] = [tokenValue(aToken), tokenValue(bToken)]
+    .map((t) => luminance(tripletToRgb(t)))
+    .sort((x, y) => y - x);
+  return (l1 + 0.05) / (l2 + 0.05);
+}
+
+/** Round to 2dp for readable failure messages. */
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Run the real Tailwind config over markup and return the generated CSS. */
 async function buildCss(markup: string): Promise<string> {
   const result = await postcss([
     tailwindcss({ ...(config as Config), content: [{ raw: markup, extension: "html" }] }),
@@ -38,47 +132,20 @@ async function buildCss(markup: string): Promise<string> {
   return result.css;
 }
 
-const TOKENS = [
-  "primary",
-  "secondary",
-  "background",
-  "surface",
-  "text-primary",
-  "text-secondary",
-  "border",
-  "accent",
-  "destructive",
-  "link",
-] as const;
-
-/** Numeric tokens are lengths, not colours — they are correctly bare. */
-const NUMERIC_TOKENS = /^--(bp-|touch-target-min)/;
-
-const css = readFileSync(resolve(ROOT, "app/globals.css"), "utf8");
-
-/** Every `--token: value;` declaration in the file, including any inside a
- *  media query (dark mode redefines --link), with comments stripped first. */
-function declarations(): Array<{ name: string; value: string }> {
-  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  return [...withoutComments.matchAll(/(--[a-z-]+):\s*([^;]+);/g)].map((m) => ({
-    name: m[1],
-    value: m[2].trim(),
-  }));
-}
+// ── Format ──────────────────────────────────────────────────────────────────
 
 describe("design tokens — globals.css format", () => {
-  it.each(TOKENS)("--%s is a bare HSL channel triplet everywhere it is declared", (token) => {
+  it.each(COLOUR_TOKENS)("--%s is a bare HSL channel triplet everywhere declared", (token) => {
     const found = declarations().filter((d) => d.name === `--${token}`);
     expect(found.length, `--${token} is not declared in app/globals.css`).toBeGreaterThan(0);
     for (const d of found) {
-      // "<hue> <sat>% <light>%" — hue unitless, both others percentages.
       expect(d.value, `--${token} = ${d.value}`).toMatch(/^-?[\d.]+ [\d.]+% [\d.]+%$/);
     }
   });
 
   it("no colour token holds a hex value (hex under an hsl() wrapper is invalid CSS)", () => {
     for (const d of declarations()) {
-      if (NUMERIC_TOKENS.test(d.name)) continue;
+      if (LENGTH_TOKENS.test(d.name)) continue;
       expect(d.value.startsWith("#"), `${d.name} is hex: ${d.value}`).toBe(false);
     }
   });
@@ -89,72 +156,122 @@ describe("design tokens — globals.css format", () => {
     }
   });
 
-  it("numeric tokens, where present, stay bare lengths", () => {
-    // Generated apps carry the Spec C4 responsive contract (--bp-*,
-    // --touch-target-min) emitted by build-design.py; the house-starter
-    // template itself does not, so their presence is not asserted here — only
-    // that they are never wrapped in hsl() if they exist.
-    for (const d of declarations().filter((x) => NUMERIC_TOKENS.test(x.name))) {
-      expect(d.value, `${d.name} is not a bare length`).toMatch(/^\d+px$/);
+  it("length tokens stay bare lengths — --radius, and the Spec C4 responsive set", () => {
+    for (const d of declarations().filter((x) => LENGTH_TOKENS.test(x.name))) {
+      expect(d.value, `${d.name} is not a bare length`).toMatch(/^[\d.]+(px|rem)$/);
     }
+    expect(tokenValue("radius")).toMatch(/^[\d.]+rem$/);
   });
 
   it("plain-CSS reads of a colour token supply their own hsl() wrapper", () => {
-    // A rule outside Tailwind (e.g. :focus-visible reading --primary) must wrap
-    // the token itself. A bare var(--primary) there resolves to a channel
-    // triplet, which is not a colour, so the declaration is silently dropped.
-    const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
-    for (const token of TOKENS) {
-      const uses = withoutComments.matchAll(new RegExp(`(hsl\\()?var\\(--${token}\\)`, "g"));
-      for (const m of uses) {
-        expect(m[1], `var(--${token}) is read in plain CSS without an hsl() wrapper`).toBe(
-          "hsl(",
-        );
+    for (const token of COLOUR_TOKENS) {
+      for (const m of withoutComments.matchAll(new RegExp(`(hsl\\()?var\\(--${token}\\)`, "g"))) {
+        expect(m[1], `var(--${token}) is read in plain CSS without an hsl() wrapper`).toBe("hsl(");
       }
     }
   });
 });
 
-describe("design tokens — tailwind.config.ts mapping", () => {
-  const colors = (config.theme?.extend?.colors ?? {}) as Record<string, string>;
+// ── Config mapping ──────────────────────────────────────────────────────────
 
-  it.each(TOKENS)("%s is mapped as hsl(var(--token))", (token) => {
+describe("design tokens — tailwind.config.ts mapping", () => {
+  const colors = (config.theme?.extend?.colors ?? {}) as Record<string, unknown>;
+
+  it.each(FLAT_TOKENS)("%s maps flat to hsl(var(--token))", (token) => {
     expect(colors[token]).toBe(`hsl(var(--${token}))`);
   });
 
-  it("maps exactly the ten tokens globals.css defines — no orphans either way", () => {
-    expect(Object.keys(colors).sort()).toEqual([...TOKENS].sort());
+  it.each(PAIRED_TOKENS)("%s maps as { DEFAULT, foreground }", (token) => {
+    expect(colors[token]).toEqual({
+      DEFAULT: `hsl(var(--${token}))`,
+      foreground: `hsl(var(--${token}-foreground))`,
+    });
+  });
+
+  it("every mapped colour resolves to a token that globals.css actually defines", () => {
+    const declared = new Set(declarations().map((d) => d.name));
+    const refs = JSON.stringify(colors).matchAll(/var\((--[a-z-]+)\)/g);
+    for (const [, name] of refs) {
+      expect(declared.has(name), `tailwind.config.ts references ${name}, undefined in globals.css`).toBe(true);
+    }
+  });
+
+  it("--radius drives the border-radius scale and is used bare", () => {
+    const radii = (config.theme?.extend?.borderRadius ?? {}) as Record<string, string>;
+    expect(radii.lg).toBe("var(--radius)");
+    for (const value of Object.values(radii)) {
+      expect(value, `${value} must not be hsl()-wrapped`).not.toContain("hsl(");
+    }
   });
 });
 
-describe("design tokens — opacity modifiers emit real CSS (the regression that started this)", () => {
+// ── Opacity modifiers (the regression that started this) ────────────────────
+
+describe("design tokens — opacity modifiers emit real CSS", () => {
   it("bg-primary/50 emits a rule carrying the alpha channel", async () => {
     const out = await buildCss('<div class="bg-primary/50"></div>');
     expect(out).toContain(".bg-primary\\/50");
     expect(out).toMatch(/background-color:\s*hsl\(var\(--primary\)\s*\/\s*0\.5\)/);
   });
 
-  it("every token supports an opacity modifier", async () => {
-    const markup = TOKENS.map((t) => `<div class="bg-${t}/40"></div>`).join("");
-    const out = await buildCss(markup);
-    for (const token of TOKENS) {
+  it("every colour token supports an opacity modifier", async () => {
+    const utilities = [...FLAT_TOKENS, ...PAIRED_TOKENS];
+    const out = await buildCss(utilities.map((t) => `<div class="bg-${t}/40"></div>`).join(""));
+    for (const token of utilities) {
       expect(out, `bg-${token}/40 emitted no CSS`).toContain(`.bg-${token}\\/40`);
       expect(out).toMatch(new RegExp(`hsl\\(var\\(--${token}\\)\\s*/\\s*0\\.4\\)`));
     }
   });
 
-  it("modifiers work across utility families, not just background", async () => {
+  it("paired foreground utilities resolve too", async () => {
     const out = await buildCss(
-      '<div class="text-primary/60 border-border/30 ring-accent/20"></div>',
+      PAIRED_TOKENS.map((t) => `<div class="text-${t}-foreground"></div>`).join(""),
     );
+    for (const token of PAIRED_TOKENS) {
+      expect(out).toMatch(new RegExp(`hsl\\(var\\(--${token}-foreground\\)`));
+    }
+  });
+
+  it("modifiers work across utility families, not just background", async () => {
+    const out = await buildCss('<div class="text-primary/60 border-border/30 ring-accent/20"></div>');
     expect(out).toMatch(/color:\s*hsl\(var\(--primary\)\s*\/\s*0\.6\)/);
     expect(out).toMatch(/border-color:\s*hsl\(var\(--border\)\s*\/\s*0\.3\)/);
     expect(out).toMatch(/hsl\(var\(--accent\)\s*\/\s*0\.2\)/);
   });
+});
 
-  it("opaque utilities still resolve to the plain token", async () => {
-    const out = await buildCss('<div class="bg-primary text-text-primary"></div>');
-    expect(out).toMatch(/background-color:\s*hsl\(var\(--primary\)/);
-    expect(out).toMatch(/color:\s*hsl\(var\(--text-primary\)/);
+// ── Measured accessibility ──────────────────────────────────────────────────
+
+describe("design tokens — WCAG contrast, computed from the live values", () => {
+  // 4.5:1 — normal text (WCAG 1.4.3). Every foreground on its own surface.
+  const TEXT_PAIRS: Array<[string, string]> = [
+    ["foreground", "background"],
+    ["text-primary", "background"],
+    ["text-secondary", "background"],
+    ...PAIRED_TOKENS.map((t) => [`${t}-foreground`, t] as [string, string]),
+  ];
+
+  it.each(TEXT_PAIRS)("--%s on --%s reaches 4.5:1 (normal text)", (fg, bg) => {
+    const ratio = contrast(fg, bg);
+    expect(ratio, `--${fg} on --${bg} is ${r2(ratio)}:1, below the 4.5:1 AA floor`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // 3:1 — non-text UI components and their boundaries (WCAG 1.4.11).
+  const UI_PAIRS: Array<[string, string]> = [
+    ["input", "background"],
+    ["input", "surface"],
+    ["ring", "background"],
+  ];
+
+  it.each(UI_PAIRS)("--%s against --%s reaches 3:1 (non-text UI)", (fg, bg) => {
+    const ratio = contrast(fg, bg);
+    expect(ratio, `--${fg} on --${bg} is ${r2(ratio)}:1, below the 3:1 floor`).toBeGreaterThanOrEqual(3);
+  });
+
+  it("--input is not merely an alias of --border", () => {
+    // --border draws decorative dividers, where 1.4.11 does not apply, and is
+    // typically far below 3:1. --input draws the boundary of an active control
+    // and must clear it. Aliasing them ships inaccessible form fields.
+    expect(tokenValue("input")).not.toBe(tokenValue("border"));
   });
 });
