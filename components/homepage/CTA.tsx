@@ -19,7 +19,7 @@ export function CTA({ cta }: { cta: HomepageClosingCta }) {
         <div className="mt-6">
           <a
             href={cta.href}
-            className="inline-flex min-h-11 items-center justify-center rounded bg-primary px-6 py-2 font-medium text-white"
+            className="inline-flex min-h-11 items-center justify-center rounded bg-primary px-6 py-2 font-medium text-primary-foreground"
           >
             {cta.label}
           </a>

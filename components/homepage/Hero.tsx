@@ -17,7 +17,7 @@ export function Hero({ hero }: { hero: HomepageHero }) {
       <div className="mt-8">
         <a
           href={hero.cta.href}
-          className="inline-flex min-h-11 items-center justify-center rounded bg-primary px-6 py-2 font-medium text-white"
+          className="inline-flex min-h-11 items-center justify-center rounded bg-primary px-6 py-2 font-medium text-primary-foreground"
         >
           {hero.cta.label}
         </a>

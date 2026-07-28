@@ -30,5 +30,80 @@
   },
   "footer": {
     "tagline": "House Starter — the foundation every app is built on."
-  }
+  },
+  "sections": [
+    {
+      "type": "heroSplit",
+      "content": {
+        "eyebrow": "The template every app is born from",
+        "heading": "Launch your product on a foundation that already works",
+        "subheading": "House Starter is the template every app is born from — secure sign-in, billing, transactional email, and a responsive, accessible design system, ready on day one.",
+        "cta": {
+          "label": "Get started",
+          "href": "/signup"
+        },
+        "secondaryCta": {
+          "label": "Talk to us",
+          "href": "/contact"
+        },
+        "trustLine": "Every screen checked against WCAG 2.2 AA in CI."
+      }
+    },
+    {
+      "type": "features",
+      "content": [
+        {
+          "title": "Secure by default",
+          "description": "Password sign-in, session handling, rate limiting, and per-tenant data isolation are built in and tested — not bolted on later."
+        },
+        {
+          "title": "Ready to charge",
+          "description": "Subscriptions, checkout, and a paid-access gate ship in the template, so turning on billing is configuration, not construction."
+        },
+        {
+          "title": "Accessible everywhere",
+          "description": "Every screen is checked against WCAG 2.2 AA and renders cleanly from a 320px phone to a widescreen desktop."
+        }
+      ]
+    },
+    {
+      "type": "faq",
+      "content": {
+        "heading": "Questions about the template",
+        "items": [
+          {
+            "question": "What is already built?",
+            "answer": "Password sign-in with sessions and rate limiting, subscription billing with checkout and a paid-access gate, transactional email, an account settings area, and a design-token system that drives every screen."
+          },
+          {
+            "question": "Does changing the landing page mean writing code?",
+            "answer": "No. This page is composed from content/homepage.json — the blocks on it, their order, and every word are data. Changing the page means changing that file."
+          },
+          {
+            "question": "How is accessibility handled?",
+            "answer": "Every screen is checked against WCAG 2.2 AA by an automated axe pass in CI, and the colour tokens are contrast-tested on every run rather than documented and trusted."
+          },
+          {
+            "question": "How are dependencies managed?",
+            "answer": "Every dependency is pinned to an exact version, install-time scripts are disabled, and new packages are checked against a known baseline before they can enter the build."
+          }
+        ]
+      }
+    },
+    {
+      "type": "cta",
+      "content": {
+        "heading": "Ready to build?",
+        "subheading": "Create your account and start with the hard parts already solved.",
+        "label": "Create your account",
+        "href": "/signup"
+      }
+    },
+    {
+      "type": "footer",
+      "content": {
+        "tagline": "House Starter — the foundation every app is built on."
+      }
+    }
+  ]
 }
