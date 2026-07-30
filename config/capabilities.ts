@@ -20,6 +20,10 @@
 //   • booking  OFF — capability not built yet (spec drafted).
 //   • comms    OFF — spec still to follow.
 //
+// All three are also NOT BUILT — see `builtCapabilities` below, which is the
+// machine-readable form of the three "not built" notes above and is what stops
+// the control centre offering a switch that leads nowhere.
+//
 // A definition with no flag (core) is always enabled. A definition whose flag
 // is a KERNEL flag resolves through config/kernel.ts (always on).
 
@@ -33,6 +37,54 @@ export const enabledCapabilities: Record<CapabilityFlag, boolean> = {
   booking: false,
   comms: false,
 };
+
+/**
+ * BUILT ≠ ON. Two different facts, and conflating them is what put a dead
+ * switch in front of the CEO.
+ *
+ *   • `enabledCapabilities` above is the POSTURE — is this capability on in
+ *     this app? It is brief-/archetype-selected and varies per app.
+ *   • `builtCapabilities` below is whether the feature EXISTS AT ALL. It does
+ *     not vary per app: a capability is built in the factory or it is not.
+ *
+ * A built-but-off capability is a legitimate, useful state — it is exactly what
+ * the control centre exists to switch on. An UNBUILT capability has nothing to
+ * switch on: `CAPABILITY_ROUTES` and `CAPABILITY_NAV` register its prefixes and
+ * its menu link as enforcement scaffolding (see lib/capabilities/routes.ts), so
+ * turning it on today would publish a menu link to a page that does not exist.
+ * routes.ts already says "turning a capability ON is only valid once its
+ * feature exists" — this record is that sentence made machine-readable, so the
+ * control centre can refuse instead of the CEO discovering it as a 404.
+ *
+ * WHEN A CAPABILITY SHIPS, THIS IS THE ONE EDIT: flip its entry here to `true`,
+ * in the same PR that lands the feature. The switch becomes offerable
+ * everywhere at once. The type is Record<CapabilityFlag, boolean>, so a new
+ * capability flag cannot be added without deciding this for it.
+ *
+ * NOTE — this does NOT gate `isFlagEnabled` below, deliberately. The both-states
+ * matrix (capability-model-spec R3) flips a flag ON in a throwaway checkout to
+ * prove the settings/nav/route scaffolding really works; gating flag resolution
+ * on built-ness would make that ON leg prove nothing. Built-ness constrains what
+ * may be TURNED ON (an authoring-time decision, enforced by the control centre
+ * and by the admission test), not how a flag RESOLVES at runtime.
+ */
+export const builtCapabilities: Record<CapabilityFlag, boolean> = {
+  // Client-pay checkout, payment requests, payments-due board. Not built.
+  payments: false,
+  // Calendar, availability model, booking records. Not built (spec drafted).
+  booking: false,
+  // Message storage and sending schedule. Not built (spec still to follow).
+  comms: false,
+};
+
+/**
+ * True when a capability's feature actually exists in the factory, so offering
+ * a switch for it is honest. An unknown flag is treated as NOT built, so a
+ * stray name can never be offered as a working switch.
+ */
+export function isCapabilityBuilt(flag: string | null | undefined): boolean {
+  return typeof flag === "string" && builtCapabilities[flag as CapabilityFlag] === true;
+}
 
 /**
  * True when a definition's `requiresFlag` is satisfied. Resolution order:
