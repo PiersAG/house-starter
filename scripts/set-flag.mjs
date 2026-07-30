@@ -52,17 +52,61 @@ const desired = state === "on" ? "true" : "false";
 
 const src = readFileSync(file, "utf8");
 
-// Match a `  <flag>: true|false,` entry inside the record literal, tolerating
-// surrounding whitespace and an optional trailing comment on the value line.
-const re = new RegExp(`(\\n\\s*${flag}\\s*:\\s*)(true|false)(\\s*,)`);
-const m = src.match(re);
-if (!m) fail(`flag "${flag}" not found as a boolean entry in ${file}`);
+/**
+ * Rewrite `<flag>: true|false,` inside ONE NAMED RECORD, not the first match in
+ * the file. config/capabilities.ts declares TWO records keyed by the same flag
+ * names — `enabledCapabilities` (posture) and `builtCapabilities` (does the
+ * feature exist) — so a whole-file regex would silently rewrite whichever
+ * happened to come first. Scoping to the named record makes the file's
+ * declaration order stop being load-bearing.
+ */
+function setInRecord(text, record, key, value) {
+  const open = new RegExp(`export const ${record}\\s*:[^=]*=\\s*\\{`);
+  const opened = text.match(open);
+  if (!opened) return null;
+  const start = opened.index + opened[0].length;
+  const end = text.indexOf("};", start);
+  if (end === -1) return null;
 
-const current = m[2];
-const next = src.replace(re, `$1${desired}$3`);
+  const block = text.slice(start, end);
+  const re = new RegExp(`(\\n\\s*${key}\\s*:\\s*)(true|false)(\\s*,)`);
+  const m = block.match(re);
+  if (!m) return null;
+
+  return {
+    text: text.slice(0, start) + block.replace(re, `$1${value}$3`) + text.slice(end),
+    previous: m[2],
+  };
+}
+
+const posture = isKernel
+  ? setInRecord(src, "enabledKernel", flag, desired)
+  : setInRecord(src, "enabledCapabilities", flag, desired);
+if (!posture) fail(`flag "${flag}" not found as a boolean entry in ${file}`);
+
+let next = posture.text;
+const notes = [];
+
+// Turning a capability ON also marks it BUILT for this throwaway checkout. The
+// ON leg of the both-states matrix simulates the world AFTER the capability
+// ships — built and on — which is the only world in which ON is a valid state
+// (config/capabilities.ts · builtCapabilities). Without this the leg would
+// declare a capability enabled-but-unbuilt, a posture the admission test
+// forbids and no real app may ever ship. The OFF leg leaves built-ness at its
+// committed value: off is valid whether or not the feature exists.
+if (isCapability && state === "on") {
+  const built = setInRecord(next, "builtCapabilities", flag, "true");
+  if (!built) {
+    fail(`capability "${flag}" has no builtCapabilities entry in ${file}`);
+  }
+  next = built.text;
+  notes.push(`builtCapabilities.${flag} ${built.previous} -> true`);
+}
+
 writeFileSync(file, next, "utf8");
 
 console.log(
-  `set-flag: ${file} ${flag} ${current} -> ${desired} (state=${state})` +
-    (current === desired ? " [already at target]" : ""),
+  `set-flag: ${file} ${flag} ${posture.previous} -> ${desired} (state=${state})` +
+    (posture.previous === desired ? " [already at target]" : "") +
+    (notes.length ? ` · ${notes.join(", ")}` : ""),
 );

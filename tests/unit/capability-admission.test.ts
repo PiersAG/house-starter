@@ -12,7 +12,12 @@
 // both-states suite's kernel block.
 
 import { describe, it, expect } from "vitest";
-import { enabledCapabilities, type CapabilityFlag } from "@/config/capabilities";
+import {
+  builtCapabilities,
+  enabledCapabilities,
+  isCapabilityBuilt,
+  type CapabilityFlag,
+} from "@/config/capabilities";
 import { isKernelFlag } from "@/config/kernel";
 import { CAPABILITY_ROUTES } from "@/lib/capabilities/routes";
 import { CAPABILITY_NAV } from "@/lib/nav/primary-nav";
@@ -66,6 +71,46 @@ describe("capability admission — no flag, not done (R1/R2/R5 wiring present fo
       expect(owned.length).toBeGreaterThan(0);
     });
   }
+});
+
+describe("capability admission — an unbuilt capability is never enabled", () => {
+  // BUILT ≠ ON. `enabledCapabilities` is the per-app posture; `builtCapabilities`
+  // is whether the feature exists at all. Every capability registers route
+  // prefixes and a nav entry as enforcement scaffolding BEFORE it is built, so
+  // enabling an unbuilt one publishes a menu link to a page that does not exist
+  // — the dead switch this invariant forbids. The control centre refuses to
+  // offer such a switch (dashboard side); this is the app-side gate that stops
+  // one ever shipping, including by a hand edit.
+  //
+  // Holds in every matrix leg: scripts/set-flag.mjs marks a capability built
+  // when it turns it on, so the ON leg simulates "shipped and on" rather than a
+  // posture no real app may have.
+  for (const flag of CAPABILITY_FLAGS) {
+    it(`${flag}: declares whether it is built, and is not enabled unless it is`, () => {
+      expect(typeof builtCapabilities[flag]).toBe("boolean");
+      if (enabledCapabilities[flag]) {
+        expect(
+          builtCapabilities[flag],
+          `capability "${flag}" is switched ON but is not marked built — its nav ` +
+            `entry would link to a page that does not exist. Either build it and ` +
+            `flip builtCapabilities.${flag} to true, or switch it off.`,
+        ).toBe(true);
+      }
+    });
+  }
+
+  it("builtCapabilities covers exactly the declared capability set (no orphan, no gap)", () => {
+    expect(new Set(Object.keys(builtCapabilities))).toEqual(new Set<string>(CAPABILITY_FLAGS));
+  });
+
+  it("isCapabilityBuilt agrees with the record, and treats an unknown flag as not built", () => {
+    for (const flag of CAPABILITY_FLAGS) {
+      expect(isCapabilityBuilt(flag)).toBe(builtCapabilities[flag] === true);
+    }
+    for (const unknown of [null, undefined, "", "not_a_capability", "auth"]) {
+      expect(isCapabilityBuilt(unknown)).toBe(false);
+    }
+  });
 });
 
 describe("capability admission — registries cover exactly the declared capability set", () => {
