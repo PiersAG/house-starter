@@ -131,14 +131,25 @@ describe("the convention is documented where UI authors will see it", () => {
 });
 
 describe("AppNav — the worked example stays worked", () => {
-  const nav = readFileSync(resolve(ROOT, "components/AppNav.tsx"), "utf8");
+  /* Assert on the CODE, not the comments. AppNav's header explains the pattern
+     by naming what it must not do ("no useMediaQuery", "not a <MobileNav/>"),
+     and matching raw source would fail on the very documentation the rule
+     exists to protect — with "delete the explanation" as the only fix. */
+  const nav = readFileSync(resolve(ROOT, "components/AppNav.tsx"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
 
   it("declares its own named container", () => {
     expect(nav).toContain("@container/appnav");
   });
 
   it("switches arrangement on a container boundary, not a viewport one", () => {
-    expect(nav).toMatch(/@compact\/appnav:flex-row/);
+    // Card 2.3.49 moved the boundary from `compact` to `roomy` when the narrow
+    // arrangement became a real bottom tab bar: a tab bar is right for a phone,
+    // not for every container under 24rem. The RULE under test is unchanged —
+    // the switch is a container query — only the named boundary moved.
+    expect(nav).toMatch(/@roomy\/appnav:/);
     // A media-query breakpoint inside this component would be the regression.
     expect(nav).not.toMatch(/\bclassName=[^>]*\b(sm|md|lg):flex-(row|col)/);
   });
