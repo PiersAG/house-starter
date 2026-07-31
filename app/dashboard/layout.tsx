@@ -31,10 +31,18 @@ export default async function DashboardLayout({
   // it rather than against the window (card 2.3.15, docs/responsive.md). It is
   // a context only — it sets no width and changes no layout, so nothing that
   // already renders here moves.
+  // The nav's narrow arrangement is a FIXED bottom tab bar (card 2.3.49), which
+  // is out of flow and would otherwise sit on top of the last few lines of every
+  // page. `pb-24` gives the content something to scroll past; at `roomy` the bar
+  // returns to the top of the page in normal flow and the padding goes away.
+  //
+  // The boundary name here MUST match the one AppNav switches on — both are
+  // `roomy`. A test asserts it: if they drifted, either the bar would cover
+  // content or a desktop page would carry dead space at the bottom.
   return (
     <div className="@container/page">
       <AppNav />
-      {children}
+      <div className="pb-24 @roomy/page:pb-0">{children}</div>
     </div>
   );
 }
