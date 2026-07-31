@@ -1,5 +1,77 @@
 import type { Config } from "tailwindcss";
 import forms from "@tailwindcss/forms";
+import containerQueries from "@tailwindcss/container-queries";
+
+/* ── THE RESPONSIVE FOUNDATION (card 2.3.15) ──────────────────────────────────
+ *
+ * Read docs/responsive.md before writing UI code. The short version:
+ *
+ *   COMPONENTS ASK THEIR CONTAINER, PAGES ASK THE VIEWPORT.
+ *   A component that reflows on `md:` is guessing — it assumes it occupies the
+ *   whole viewport, and it breaks the moment somebody drops it in a sidebar, a
+ *   two-column grid, or a modal. Container variants (`@sm:`, `@md:`, `@[30rem]:`)
+ *   ask the only question that is actually answerable locally: how much room do
+ *   *I* have? Viewport media queries (`sm:`, `md:`) are reserved for the
+ *   top-level page skeleton, which genuinely is the viewport.
+ *
+ *   TYPE AND SPACING ARE FLUID, NOT STEPPED.
+ *   `fluid()` below emits a clamp() that interpolates smoothly between a small
+ *   and a large viewport, so there is no snap at a breakpoint and no need to
+ *   restate a size at every screen width.
+ *
+ * WHY THIS LIVES HERE AND NOT IN globals.css: agents/build-init.py OVERWRITES
+ * app/globals.css with the generator's output for every new app, but never
+ * touches this file. A scale defined as custom properties in globals.css would
+ * silently vanish from every generated product. Defined here, it is inherited.
+ *
+ * This layer is ADDITIVE. Every existing `sm:`/`md:` class keeps working exactly
+ * as before; nothing was removed.
+ */
+
+/** The viewport range the fluid scale interpolates across, in px. */
+const FLUID_MIN_VW = 320;
+const FLUID_MAX_VW = 1280;
+
+/**
+ * A smoothly interpolating size.
+ *
+ * `minPx` is the size at a 320px viewport, `maxPx` the size at 1280px. Between
+ * them the value tracks the viewport linearly; outside them it is clamped.
+ *
+ * ── THE CEILING IS A ZOOM ALLOWANCE, NOT A DESIGN SIZE (WCAG 1.4.4) ─────────
+ * The obvious way to write this is `clamp(min, fluid, max)` with `max` set to
+ * the intended large-screen size. That quietly breaks text resizing: the `vw`
+ * term does not grow when a user raises their browser's font size, so the rem
+ * terms grow, hit `max`, and stop. Text that must reach 200% caps out far below
+ * it, and the failure is invisible to anyone not testing at zoom.
+ *
+ * So the third argument is NOT the design size — it is `2 x minPx`, pure
+ * headroom, and `assertZoomHeadroom` refuses any step where the design size
+ * would collide with it. At a 1280px viewport the middle term is what renders
+ * (that is the design size); the ceiling only ever binds once the user has
+ * zoomed, which is precisely when it should stop binding.
+ */
+function fluid(minPx: number, maxPx: number): string {
+  assertZoomHeadroom(minPx, maxPx);
+  const slope = (maxPx - minPx) / (FLUID_MAX_VW - FLUID_MIN_VW);
+  const interceptRem = (minPx - slope * FLUID_MIN_VW) / 16;
+  const vw = +(slope * 100).toFixed(4);
+  const round = (n: number) => +n.toFixed(4);
+  return `clamp(${round(minPx / 16)}rem, ${round(interceptRem)}rem + ${vw}vw, ${round((minPx * 2) / 16)}rem)`;
+}
+
+/** A step whose large-screen size is at or above its own zoom ceiling would be
+ *  clipped at wide viewports — a design bug and an accessibility one at once.
+ *  Fail the build rather than ship a size that silently renders too small. */
+function assertZoomHeadroom(minPx: number, maxPx: number): void {
+  if (maxPx > minPx * 2) {
+    throw new Error(
+      `fluid(${minPx}, ${maxPx}): the large size exceeds the 2x zoom ceiling ` +
+        `(${minPx * 2}px). Raise the min or lower the max — do not raise the ` +
+        `ceiling, which is what keeps text resizable to 200% (WCAG 1.4.4).`,
+    );
+  }
+}
 
 const config: Config = {
   content: [
@@ -92,9 +164,50 @@ const config: Config = {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+
+      /* ── Fluid type ────────────────────────────────────────────────────────
+         Added ALONGSIDE Tailwind's own scale, never replacing it: `text-sm`,
+         `text-lg` and friends are untouched, so nothing already built shifts.
+         Reach for `text-fluid-*` in new UI. The pairs are (size at 320px, size
+         at 1280px); each stays inside its 2x zoom ceiling — see fluid(). */
+      fontSize: {
+        "fluid-xs": [fluid(13, 14), { lineHeight: "1.5" }],
+        "fluid-sm": [fluid(14, 15), { lineHeight: "1.5" }],
+        "fluid-base": [fluid(16, 18), { lineHeight: "1.6" }],
+        "fluid-lg": [fluid(18, 21), { lineHeight: "1.5" }],
+        "fluid-xl": [fluid(21, 25), { lineHeight: "1.4" }],
+        "fluid-2xl": [fluid(25, 31), { lineHeight: "1.3" }],
+        "fluid-3xl": [fluid(30, 42), { lineHeight: "1.2" }],
+        "fluid-4xl": [fluid(35, 56), { lineHeight: "1.1" }],
+      },
+
+      /* ── Fluid spacing ─────────────────────────────────────────────────────
+         Usable anywhere Tailwind takes a spacing value — p-, m-, gap-, space-.
+         Same additive rule: the numeric scale (p-4, gap-2) still works. */
+      spacing: {
+        "fluid-3xs": fluid(4, 5),
+        "fluid-2xs": fluid(8, 10),
+        "fluid-xs": fluid(12, 16),
+        "fluid-sm": fluid(16, 21),
+        "fluid-md": fluid(24, 32),
+        "fluid-lg": fluid(32, 42),
+        "fluid-xl": fluid(48, 64),
+        "fluid-2xl": fluid(64, 96),
+      },
+
+      /* ── Named container sizes ─────────────────────────────────────────────
+         The plugin ships @sm…@7xl already. These name the two boundaries this
+         template actually reasons about, so a component says WHY it rearranges
+         rather than restating a magic number:
+           compact — below this a horizontal row of controls stops fitting
+           roomy   — at or above this there is room for a side-by-side layout */
+      containers: {
+        compact: "24rem", // 384px
+        roomy: "40rem", // 640px
+      },
     },
   },
-  plugins: [forms],
+  plugins: [forms, containerQueries],
 };
 
 export default config;
