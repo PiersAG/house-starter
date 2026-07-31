@@ -11,6 +11,30 @@
 // Self-contained: it carries its own centred max-w-2xl column and horizontal
 // padding so it lines up with the pages' `max-w-2xl p-4 sm:p-6` main element
 // and a layout can render it bare.
+//
+// ── THE WORKED EXAMPLE FOR THE RESPONSIVE FOUNDATION (card 2.3.15) ──────────
+// This is the copyable reference for the pattern in docs/responsive.md. Three
+// things to take from it:
+//
+//   1. THE COMPONENT DECLARES ITS OWN CONTAINER. `@container/appnav` on the
+//      <nav> means everything inside asks how much room THE NAV has, not how
+//      wide the window is. Drop this nav in a sidebar tomorrow and it adapts
+//      correctly with no edit — which is exactly what a `md:` class could not
+//      do, because `md:` is a claim about the window.
+//
+//   2. ONE BOUNDARY, BOTH ARRANGEMENTS, ONE COMPONENT. Below `compact` the
+//      links stack full-width; at `compact` and above they are a horizontal
+//      row. There is no second component, no mobile fork, and no JavaScript:
+//      the browser switches arrangements in CSS, so it is correct on the
+//      server's first paint and there is no hydration flash.
+//
+//   3. SIZES ARE FLUID. `text-fluid-sm` and `gap-fluid-3xs` interpolate; they
+//      do not snap at a breakpoint.
+//
+// INTERIM ARRANGEMENT, DELIBERATELY. The narrow form here is a plain stack.
+// Card 2.3.49 replaces it with a real bottom tab bar — at THIS boundary, in
+// THIS component. That is the point of the pattern: the rearrange has a home
+// to grow into, and no whole-screen layout fork was needed to get there.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -27,25 +51,33 @@ export function AppNav() {
   return (
     <nav
       aria-label="Primary"
-      className="mx-auto flex w-full max-w-2xl flex-wrap gap-1 border-b border-border px-4 pt-4 pb-2 sm:px-6"
+      className="@container/appnav mx-auto w-full max-w-2xl border-b border-border px-4 pt-4 pb-2 sm:px-6"
     >
-      {links.map(({ href, label }) => {
-        const active = pathname === href;
-        return (
-          <Link
-            key={href}
-            href={href}
-            aria-current={active ? "page" : undefined}
-            className={`min-h-11 rounded px-3 py-1.5 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
-              active
-                ? "bg-surface text-text-primary"
-                : "text-text-secondary hover:bg-surface hover:text-text-primary"
-            }`}
-          >
-            {label}
-          </Link>
-        );
-      })}
+      {/* Narrow: a full-width stack. `compact` and wider: a wrapping row.
+          The whole switch is these two lines. */}
+      <div className="flex flex-col gap-fluid-3xs @compact/appnav:flex-row @compact/appnav:flex-wrap @compact/appnav:gap-1">
+        {links.map(({ href, label }) => {
+          const active = pathname === href;
+          return (
+            <Link
+              key={href}
+              href={href}
+              aria-current={active ? "page" : undefined}
+              /* min-h-11 is the 44px touch target and holds in BOTH
+                 arrangements — a rearrange must never cost accessibility.
+                 flex/items-center keeps the label centred vertically now that
+                 the stacked form is a full-width block. */
+              className={`flex min-h-11 items-center rounded px-3 py-1.5 text-fluid-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                active
+                  ? "bg-surface text-text-primary"
+                  : "text-text-secondary hover:bg-surface hover:text-text-primary"
+              }`}
+            >
+              {label}
+            </Link>
+          );
+        })}
+      </div>
     </nav>
   );
 }

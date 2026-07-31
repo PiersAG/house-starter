@@ -26,10 +26,15 @@ export default async function DashboardLayout({
   if (session?.user?.id) {
     await enforcePaidPage(db, session.user.id);
   }
+  // `@container/page` makes this segment a container context, so any component
+  // rendered under /dashboard can size itself against the space the PAGE gives
+  // it rather than against the window (card 2.3.15, docs/responsive.md). It is
+  // a context only — it sets no width and changes no layout, so nothing that
+  // already renders here moves.
   return (
-    <>
+    <div className="@container/page">
       <AppNav />
       {children}
-    </>
+    </div>
   );
 }
