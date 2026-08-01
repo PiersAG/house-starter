@@ -172,10 +172,19 @@ for (const { label, width, height } of WIDTHS) {
           await page.goto(target.path);
 
           // Wait for the thing both pages have in common rather than a
-          // networkidle guess: if the nav is on screen, the segment layout has
-          // rendered and there is something real to measure.
+          // networkidle guess: if a nav destination is on screen, the segment
+          // layout has rendered and there is something real to measure.
+          //
+          // A LINK inside the nav, not the <nav> itself. In the bar
+          // arrangement the nav's only child is `fixed`, so it is out of flow
+          // and the <nav> element is left with a zero-height box — which
+          // Playwright correctly reports as not visible. Waiting on the
+          // element would fail at 320px and pass at 768px for a reason that
+          // has nothing to do with whether the page rendered.
           await expect(
-            page.getByRole("navigation", { name: "Primary" }),
+            page
+              .getByRole("navigation", { name: "Primary" })
+              .getByRole("link", { name: "Dashboard", exact: true }),
           ).toBeVisible();
 
           // ── GATE 1: the document does not scroll sideways. ───────────────
