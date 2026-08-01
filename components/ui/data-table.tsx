@@ -210,6 +210,25 @@ export function DataTable<TData, TValue>({
   const showMenu = columnMenu ?? narrow === "priority";
   const hideableColumns = table.getAllLeafColumns().filter((c) => c.getCanHide());
 
+  /**
+   * The scroll region's accessible name — deliberately NOT `caption`.
+   *
+   * The region has to be named, but it must not be named the same as whatever
+   * is around it. The idiomatic way to place a table on a page here is
+   * `<section aria-labelledby={headingId}>` with an `<h2>` naming the section —
+   * and that section is itself a landmark. Give the scroll region the same
+   * words and the page has two nested landmarks called "Your dogs", which is
+   * ambiguous exactly when landmarks are most useful: navigating by them.
+   *
+   * (Not hypothetical. K9Coach's dashboard does precisely this, and the two
+   * were indistinguishable until this name was made specific.)
+   *
+   * Saying what it IS also earns its keep on arrival: "Your dogs, scrollable,
+   * region" tells a screen-reader user what they have landed in and that it
+   * moves, which a bare repeat of the caption does not.
+   */
+  const scrollRegionLabel = `${caption}, scrollable`;
+
   return (
     // The container the whole thing measures itself against. Named, so a table
     // inside a card inside a page queries THIS box and not one of the others.
@@ -270,7 +289,7 @@ export function DataTable<TData, TValue>({
             // the edge are mouse-only (WCAG 2.1.1). `role="region"` + a name is
             // what makes that tab stop mean something when it is announced.
             role: "region",
-            "aria-label": caption,
+            "aria-label": scrollRegionLabel,
             tabIndex: 0,
             className:
               "rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",

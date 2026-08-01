@@ -157,9 +157,14 @@ the header association is lost unless every cell repeats its own label.
 
 Three things the component does that a hand-rolled table usually does not:
 
-- **The scroll container is focusable** (`tabIndex={0}`, `role="region"`, named
-  from `caption`). Columns past the edge of a mouse-only scroll box are
-  unreachable from a keyboard — WCAG 2.1.1.
+- **The scroll container is focusable** (`tabIndex={0}`, `role="region"`).
+  Columns past the edge of a mouse-only scroll box are unreachable from a
+  keyboard — WCAG 2.1.1. Its name is `"<caption>, scrollable"`, deliberately not
+  the caption alone: the normal way to place a table on a page is
+  `<section aria-labelledby={headingId}>`, which is itself a landmark, and two
+  nested landmarks with the same name are ambiguous precisely when landmarks are
+  useful. Saying what it is also tells a screen-reader user, on arrival, that
+  the thing they have landed in moves.
 - **A hidden column is hidden in the header and the body together.** Hiding one
   without the other shifts every row by a column, and the table then reports the
   wrong data while looking perfectly fine.

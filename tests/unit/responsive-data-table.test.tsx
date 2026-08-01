@@ -294,9 +294,29 @@ describe("it is still a table", () => {
   it("the scrolling element is reachable from the keyboard and named", () => {
     // Columns past the edge are otherwise mouse-only — WCAG 2.1.1.
     render(<DataTable columns={COLUMNS} data={ROWS} caption="Your dogs" />);
-    const region = screen.getByRole("region", { name: "Your dogs" });
+    const region = screen.getByRole("region", { name: /Your dogs/ });
     expect(region.getAttribute("tabindex")).toBe("0");
     expect(region.className).toContain("overflow-auto");
+  });
+
+  it("does not name the scroll region the same as the section around it", () => {
+    // The idiomatic way to place a table on a page here is
+    // `<section aria-labelledby={headingId}>` — which is itself a landmark. Two
+    // nested landmarks with identical names are ambiguous exactly when
+    // landmarks matter most: navigating by them. Found in CI on K9Coach's
+    // dashboard, where the two were indistinguishable.
+    render(
+      <section aria-labelledby="dogs-heading">
+        <h2 id="dogs-heading">Your dogs</h2>
+        <DataTable columns={COLUMNS} data={ROWS} caption="Your dogs" />
+      </section>,
+    );
+    // Both landmarks exist, and exactly one of them is the table's scroller.
+    expect(screen.getAllByRole("region")).toHaveLength(2);
+    const region = screen.getByRole("region", { name: "Your dogs, scrollable" });
+    expect(region.getAttribute("tabindex")).toBe("0");
+    // The table itself keeps the plain name — only the scroller is qualified.
+    expect(screen.getByRole("table", { name: "Your dogs" })).toBeTruthy();
   });
 
   it("pins the first column without pinning the rest", () => {
