@@ -122,10 +122,14 @@ describe("seeded set — token binding (card 2.3.2 handoff)", () => {
     }
   });
 
-  it("components/ui holds exactly the seeded set plus the pre-existing helpers", () => {
+  it("components/ui holds exactly the seeded set plus our own compositions", () => {
+    // OURS, not copied in: these are written here and audited as ordinary
+    // source, so they are outside the seeded-set rules above (which exist to
+    // catch what a re-seed from upstream would silently undo). `data-table` is
+    // a composition OVER the seeded `table` primitive — card 2.3.50.
+    const LOCAL = ["EmptyState", "LoadingSpinner", "data-table"];
     const files = readdirSync(UI_DIR).filter((f) => f.endsWith(".tsx")).map((f) => f.replace(/\.tsx$/, ""));
-    const expected = [...SEEDED, "EmptyState", "LoadingSpinner"].sort();
-    expect(files.sort()).toEqual(expected);
+    expect(files.sort()).toEqual([...SEEDED, ...LOCAL].sort());
   });
 });
 

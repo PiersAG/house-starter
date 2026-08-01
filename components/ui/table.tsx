@@ -9,7 +9,12 @@
  * Fetched:    2026-07-26 · Licence: MIT (shadcn/ui)
  *
  * LOCAL MODIFICATIONS:
- *   none — copied verbatim.
+ *   `Table` accepts `containerProps` (card 2.3.50). Upstream hard-codes the
+ *   scroll wrapper as a bare `<div>`, which leaves the one element that
+ *   actually scrolls unreachable from the keyboard: a table wider than its
+ *   container can be dragged with a mouse and by no other means, which fails
+ *   WCAG 2.1.1. Naming and focusing that div is only possible from outside, so
+ *   the prop exists. Everything else is verbatim.
  */
 
 import * as React from "react"
@@ -18,9 +23,15 @@ import { cn } from "@/lib/utils"
 
 const Table = React.forwardRef<
   HTMLTableElement,
-  React.HTMLAttributes<HTMLTableElement>
->(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
+  React.HTMLAttributes<HTMLTableElement> & {
+    /** Props for the scroll wrapper — see LOCAL MODIFICATIONS above. */
+    containerProps?: React.HTMLAttributes<HTMLDivElement> & { tabIndex?: number }
+  }
+>(({ className, containerProps, ...props }, ref) => (
+  <div
+    {...containerProps}
+    className={cn("relative w-full overflow-auto", containerProps?.className)}
+  >
     <table
       ref={ref}
       className={cn("w-full caption-bottom text-sm", className)}

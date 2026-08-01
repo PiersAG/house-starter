@@ -155,8 +155,26 @@ The narrow arrangement there is deliberately plain. Card 2.3.49 replaces it with
 a real bottom tab bar — at the same boundary, in the same component. That is the
 pattern working as intended: the rearrange has somewhere to grow.
 
+### The one component that cannot rearrange: a table
+
+A `<table>` has no narrow arrangement to switch to. Its columns are locked into
+a grid by table layout, so six of them at 360px do not wrap — they push the
+whole page sideways and every *other* component on the screen is then measured
+against a 600px document.
+
+So tables get a component rather than a convention:
+
+> **Tabular data → `components/ui/data-table.tsx`. Read `docs/data-tables.md`.
+> Never hand-roll a `<table>`.**
+
+It is the same rule as this page, applied where it is hardest: the two narrow
+behaviours (scroll with a pinned first column; hide ranked columns until there
+is room) are driven by container queries on the table's own container, chosen
+per table with one prop. Card 2.3.50.
+
 ## 5. Checklist for new UI
 
+- Tabular data? `DataTable` — never a hand-rolled `<table>`.
 - Reflowing inside a component? Use a container variant, not `md:`.
 - Sizing type or spacing? Use `text-fluid-*` / `fluid-*` steps.
 - Need a real rearrange? One boundary, one component, both arrangements.
