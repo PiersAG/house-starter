@@ -1,0 +1,16 @@
+Layout guardrail screenshot baselines — regeneration log.
+
+Editing this file and pushing runs .github/workflows/layout-baselines.yml
+against the branch you pushed, which regenerates the baselines ON THE CI RUNNER
+and commits the PNGs back to that branch. It is the trigger that works from any
+branch, including one cut before the workflow reached main; once the workflow is
+on main, `gh workflow run layout-baselines.yml --ref <branch> -f reason="..."`
+does the same thing without touching this file.
+
+Add a dated line saying WHY, newest last. An accepted baseline is an accepted
+layout — the line here and the image diff in the PR are the record of who
+accepted it.
+
+- 2026-08-01 — First generation. Card 2.3.51 adds the guardrail; /dashboard and
+  /account have no committed pictures yet, so CI is failing on missing
+  snapshots until this run produces them.

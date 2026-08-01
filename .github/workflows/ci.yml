@@ -175,6 +175,59 @@ jobs:
           npx playwright install --with-deps chromium
           npm run test:e2e
 
+      # LAYOUT REGRESSION GUARDRAIL (card 2.3.51) — BLOCKING.
+      #
+      # Locks in the layout run (container queries 2.3.15, responsive nav
+      # 2.3.49, responsive data table 2.3.50) so a later feature cannot
+      # reintroduce horizontal overflow or silently reshape a page. Two checks
+      # per page per width: the document must not scroll sideways (the hard
+      # gate, no baseline needed) and the page must still match its committed
+      # screenshot. Full rationale: docs/layout-guardrail.md.
+      #
+      # A SEPARATE STEP FROM THE SMOKE ABOVE, FOR ONE REASON: the pages worth
+      # guarding are behind sign-in, and this template's smoke step runs at
+      # APP_LIFECYCLE_STATE=LIVE_EVAL, under which a fresh CI user is 403'd off
+      # /dashboard (lib/live-eval.ts — LIVE_EVAL with no allowlist is
+      # fail-closed by design). LAUNCHED is "live-quiet: any authenticated user
+      # passes", which is the correct lifecycle for a check that drives the
+      # signed-in surfaces. Splitting the step leaves the smoke step's
+      # deliberate LIVE_EVAL posture untouched.
+      #
+      # THIS STEP FAILS ON A MISSING BASELINE, which is correct and is the
+      # first thing a new branch sees. Baselines are generated in CI, never
+      # locally — Playwright 1.60 installs no browser on the dev machine, and a
+      # baseline rendered on different fonts mismatches every run. Generate or
+      # refresh them by running the "Layout baselines" workflow against the
+      # branch (.github/workflows/layout-baselines.yml).
+      - name: Layout regression guardrail (overflow + visual baselines)
+        env:
+          AUTH_SECRET: ci-e2e-only-dummy-secret-not-used-anywhere-real
+          TENANCY_MODE: shared
+          DATABASE_URL: file:ci-layout.db
+          RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+          STRIPE_SECRET_KEY: sk_test_ci-e2e-only-dummy-not-a-real-key
+          STRIPE_WEBHOOK_SECRET: whsec_ci-e2e-only-dummy-not-a-real-secret
+          # See the block comment above — LAUNCHED, not LIVE_EVAL.
+          APP_LIFECYCLE_STATE: LAUNCHED
+          EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
+          EMAIL_SEND_MODE: log
+        run: |
+          npx playwright install chromium
+          npm run test:layout
+
+      # The screenshots the step above compared against, and the diffs it
+      # produced when they did not match. Without this, a baseline failure is a
+      # percentage in a log with no way to see WHAT moved.
+      - name: Upload layout guardrail report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-guardrail-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+
       # Fail on high-severity vulnerabilities in production dependencies.
       - name: Security audit
         run: npm audit --audit-level high --omit=dev
