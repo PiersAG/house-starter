@@ -78,6 +78,13 @@ const config: Config = {
     "./pages/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
     "./app/**/*.{ts,tsx}",
+    // `lib/` is scanned too (card 2.3.50). Class names now live there —
+    // lib/table/responsive-columns.ts holds the column-priority classes — and
+    // Tailwind only emits a class it has literally seen. Leave lib/ out and the
+    // rule is defined, imported, applied to the element, and produces no CSS:
+    // no error, no warning, the column just never comes back. A test pins this
+    // glob to that file so the two cannot drift apart.
+    "./lib/**/*.{ts,tsx}",
   ],
   theme: {
     extend: {
