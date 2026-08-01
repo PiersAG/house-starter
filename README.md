@@ -114,7 +114,9 @@ Every page and component must render correctly across the full breakpoint contra
 - **Content max-widths** cap sprawl at 1920px+. Use `max-w-sm`, `max-w-xl`, `max-w-2xl` on `<main>`.
 - **Fixed-width overlays are dangerous.** A `fixed w-80` element with right/left anchoring overflows at 320px. Use `inset-x-4 sm:w-80` or equivalent. See `components/support/SupportWidget.tsx` for the pattern.
 
-**Gate:** `npm run test:responsive` runs the E2E suite at all five widths with axe-core, no-horizontal-overflow, and touch-target checks. Ships **advisory** — failures are reported but do not fail the build. Flip to blocking with `RESPONSIVE_GATE=blocking npm run test:responsive`.
+**Advisory gate:** `npm run test:responsive` runs the E2E suite at all five widths with axe-core, no-horizontal-overflow, and touch-target checks. It ships **advisory** — failures are reported but do not fail the build, and **CI does not run it**. Flip to blocking with `RESPONSIVE_GATE=blocking npm run test:responsive`.
+
+**Blocking gate:** `npm run test:layout` — the layout guardrail. Two checks on `/dashboard` and `/account` at 320 / 768 / 1280: the document must not scroll sideways, and the page must still match a committed screenshot. This one runs in CI and **fails the build**. Baselines are generated in CI, never locally — see [docs/layout-guardrail.md](docs/layout-guardrail.md).
 
 ## CI gates (on every push and PR)
 
@@ -123,7 +125,9 @@ Every page and component must render correctly across the full breakpoint contra
 3. Unit tests with coverage (≥80% lines globally; 100% on `**/compliance/**` and `**/auth/**` when those directories exist)
 4. Playwright E2E with axe-core accessibility check (WCAG 2.2 AA)
 5. `npm audit --audit-level high`
-6. Responsive suite at 320 / 390 / 768 / 1280 / 1920 — **advisory** (reports; does not block). Flip with `RESPONSIVE_GATE=blocking`.
+6. Layout guardrail (`npm run test:layout`) — no horizontal overflow + committed screenshot baselines on `/dashboard` and `/account` at 320 / 768 / 1280. **Blocking.** See [docs/layout-guardrail.md](docs/layout-guardrail.md).
+
+The Spec C4 responsive suite at 320 / 390 / 768 / 1280 / 1920 is **advisory and is not run by CI** — it is a local command (`npm run test:responsive`). Card 2.3.51 made the overflow half of it blocking, on the two pages above, as the gate at item 6.
 
 ## Key commands
 
@@ -136,4 +140,5 @@ npm run test            # Vitest (unit tests)
 npm run test:coverage   # Vitest with coverage report
 npm run test:e2e        # Playwright E2E (desktop)
 npm run test:responsive # Multi-viewport advisory gate (320 / 390 / 768 / 1280 / 1920)
+npm run test:layout     # Layout guardrail — BLOCKING in CI (CI-generated baselines only)
 ```
