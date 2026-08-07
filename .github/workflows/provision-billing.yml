@@ -1,9 +1,18 @@
 name: Provision billing (Stripe price)
 # Thin caller — invokes app-business-core's reusable provision-app-billing.yml in
-# THIS app's secret context (secrets: inherit), so the Stripe product/price are
-# created in this app's OWN account (stripe-per-app-accounts) and the real price
-# id is stamped into config/billing.ts by a PR. Dispatch after this app's
+# THIS app's secret context, so the Stripe product/price are created in this
+# app's OWN account (stripe-per-app-accounts) and the real price id is stamped
+# into config/billing.ts by a PR. Dispatch after this app's
 # STRIPE_TEST_SECRET_KEY points at its own account. Test mode only.
+#
+# The `secrets:` map below is deliberately explicit and NOT `secrets: inherit`.
+# `inherit` hands the called workflow every secret in this repo — VERCEL_TOKEN,
+# TURSO_API_TOKEN, the lot — when it needs exactly two. These two are the only
+# `secrets.*` references in provision-app-billing.yml; `github.token` is supplied
+# automatically and is not passed here. If that workflow starts needing another
+# secret it must declare it under its `on.workflow_call.secrets:` and it must be
+# added here — a call that omits a required secret fails loudly, which is the
+# point. (semgrep yaml.github-actions.security.secrets-inherit.secrets-inherit)
 on:
   workflow_dispatch:
     inputs:
@@ -16,4 +25,6 @@ jobs:
     uses: PiersAG/app-business-core/.github/workflows/provision-app-billing.yml@main
     with:
       build_id: ${{ inputs.build_id }}
-    secrets: inherit
+    secrets:
+      REPO_WRITE_TOKEN: ${{ secrets.REPO_WRITE_TOKEN }}
+      STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
