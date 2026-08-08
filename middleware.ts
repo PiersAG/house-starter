@@ -14,6 +14,7 @@ import { NextResponse } from "next/server";
 import { authConfig } from "@/auth.config";
 import { decideAccess, currentLifecycleState } from "@/lib/live-eval";
 import { isPathDisabledByCapability } from "@/lib/capabilities/routes";
+import { isPathDisabledByBilling } from "@/lib/billing/routes";
 
 const { auth } = NextAuth(authConfig);
 
@@ -57,6 +58,19 @@ export default auth((req) => {
   // off capability looks identical to a route that was never built, to any
   // caller. A core/kernel path returns false here and falls through untouched.
   if (isPathDisabledByCapability(pathname)) {
+    const notFound = NextResponse.json({ error: "Not found." }, { status: 404 });
+    notFound.headers.set("Content-Security-Policy", csp);
+    return notFound;
+  }
+
+  // Subscription-billing ACTIVE switch (capability-model-spec §2.1). The
+  // subscription surface is KERNEL — it ships in every app — but an app whose
+  // commission declared NO SUBSCRIPTION has no price to charge against, so its
+  // billing routes must be INERT rather than live-but-unconfigured. Same
+  // treatment as an off capability: 404 before auth or anything else runs, so no
+  // request can reach a Stripe call. Active apps (the default) fall through
+  // untouched. Handlers repeat the check as defence in depth.
+  if (isPathDisabledByBilling(pathname)) {
     const notFound = NextResponse.json({ error: "Not found." }, { status: 404 });
     notFound.headers.set("Content-Security-Policy", csp);
     return notFound;

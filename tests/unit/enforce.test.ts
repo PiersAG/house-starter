@@ -4,6 +4,16 @@
 // underlying gate (which billing.test.ts already covers). No Stripe is called:
 // none of these rows carry a stripeCustomerId, so the portal resolver short-
 // circuits to null.
+//
+// POSTURE. Every assertion here describes the paywall of an app that SELLS a
+// subscription — subscriptionActive true (capability-model-spec §2.1). An app
+// whose commission declared no subscription has no paywall at all: enforce.ts
+// returns before the gate, because /reactivate is 404 in that state and a
+// redirect there would brick the product. That is a DIFFERENT contract, and it
+// is asserted in tests/unit/billing-both-states.test.ts, not weakened here.
+// The BLOCKED-state describes below therefore run only in the active posture —
+// the CI `billing-matrix` job runs this whole suite in both, so without the
+// guard the off leg would fail these for the right reason and the wrong test.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { drizzle } from "drizzle-orm/libsql";
@@ -16,6 +26,10 @@ import {
   enforcePaidApi,
   enforcePaidPage,
 } from "@/lib/billing/enforce";
+import { isSubscriptionBillingActive } from "@/lib/billing/routes";
+
+/** The live posture. See the POSTURE note at the top of this file. */
+const active = isSubscriptionBillingActive();
 
 const DAY = 86_400_000;
 const NOW = new Date("2026-07-21T12:00:00Z");
@@ -63,7 +77,7 @@ describe("paywall — ALLOWED subscription states (paidApiResponse → null)", (
   });
 });
 
-describe("paywall — BLOCKED states (paidApiResponse → 402 + portalUrl field)", () => {
+describe.skipIf(!active)("paywall — BLOCKED states (paidApiResponse → 402 + portalUrl field)", () => {
   async function assert402(): Promise<Record<string, unknown>> {
     const res = await paidApiResponse(db, userId, { now: NOW });
     expect(res).not.toBeNull();
@@ -105,7 +119,7 @@ describe("enforcePaidPage — redirect on deny, pass on allow", () => {
     await expect(enforcePaidPage(db, userId, { now: NOW })).resolves.toBeUndefined();
   });
 
-  it("unpaid → redirects (throws the Next redirect signal)", async () => {
+  it.skipIf(!active)("unpaid → redirects (throws the Next redirect signal)", async () => {
     await setSub({ status: "canceled" });
     await expect(enforcePaidPage(db, userId, { now: NOW })).rejects.toThrow();
   });

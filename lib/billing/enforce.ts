@@ -22,6 +22,7 @@ import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { requireActiveSubscription, stripePortalLink } from "@/lib/billing/gate";
 import { isGatedPath } from "@/config/billing";
+import { isSubscriptionBillingActive } from "@/lib/billing/routes";
 import type { AppDatabase } from "@/lib/users";
 
 /** Where a blocked page-route request is sent to reactivate/pay. OPEN surface. */
@@ -51,6 +52,13 @@ export async function paidApiResponse(
   userId: string,
   opts: EnforceOptions = {},
 ): Promise<NextResponse | null> {
+  // Per-app ACTIVE switch (capability-model-spec §2.1). An app whose commission
+  // declared no subscription cannot paywall anyone: there is no price to buy and
+  // /reactivate is 404. Returning null BEFORE the gate runs is what makes the
+  // paywall inert — and it returns before touching the db, so an inactive app
+  // reaches neither the subscription table nor Stripe.
+  if (!isSubscriptionBillingActive()) return null;
+
   const result = await requireActiveSubscription(db, userId, {
     now: opts.now,
     portalLink: portalResolver(opts.origin),
@@ -91,6 +99,12 @@ export async function enforcePaidPage(
   userId: string,
   opts: EnforceOptions = {},
 ): Promise<void> {
+  // Per-app ACTIVE switch — see paidApiResponse. This early return is
+  // LOAD-BEARING, not tidiness: /reactivate is 404 when the subscription is
+  // inactive, so a paywall that still fired would redirect every signed-in owner
+  // of a no-subscription app into a 404 and brick the product.
+  if (!isSubscriptionBillingActive()) return;
+
   const result = await requireActiveSubscription(db, userId, { now: opts.now });
   if (!result.allowed) redirect(REACTIVATE_PATH);
 }

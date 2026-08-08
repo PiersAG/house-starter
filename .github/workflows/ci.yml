@@ -323,3 +323,65 @@ jobs:
 
       - name: Unit suite (flag ${{ matrix.flag }} = ${{ matrix.state }})
         run: npm run test
+
+  # Subscription-billing both-states matrix (capability-model-spec §2.1 · the
+  # per-app ACTIVE switch). Separate from capability-matrix above because what is
+  # being flipped is NOT a capability: `subscription_billing` is KERNEL and stays
+  # built into every app in both legs. What varies is whether the app SELLS a
+  # subscription — a per-app commission decision (Route B), carried by
+  # config/billing.ts · subscriptionActive.
+  #
+  # WHY IT BLOCKS. The toggle-safety rule: "off" means present-but-provably-INERT
+  # and TESTED. A no-subscription app still ships every billing route, so the
+  # only thing standing between it and a live-but-unconfigured Stripe call is the
+  # off leg of this job. tests/unit/billing-both-states.test.ts is posture-aware
+  # and carries its own negative control, so the off leg fails if a billing route
+  # were live — it is not a test that passes because nothing was checked.
+  billing-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quoted for the same reason as capability-matrix: YAML 1.1 reads bare
+        # on/off as booleans, and set-flag.mjs wants the strings on|off.
+        state: ["on", "off"]
+    name: subscription_active = ${{ matrix.state }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Flip the per-app subscription switch (throwaway checkout)
+        run: node scripts/set-flag.mjs --flag subscription_active --state ${{ matrix.state }}
+
+      - name: Show resulting billing posture
+        run: |
+          echo "config/billing.ts posture for this leg:"
+          grep -E "subscriptionActive:" config/billing.ts
+          echo "config/kernel.ts (must stay ON in BOTH legs — the part is built in either way):"
+          grep -E "subscription_billing:" config/kernel.ts
+
+      - name: Type check (subscription_active ${{ matrix.state }})
+        run: npm run type-check
+
+      - name: Unit suite (subscription_active = ${{ matrix.state }})
+        run: npm run test
+
+      # The fail-closed price guard, run in the posture this leg represents. ON →
+      # the template rule (the stub must still be there). OFF → the inverted
+      # no-subscription rule (no real price may be present). Together these are
+      # the "no fake price" half of the toggle-safety rule.
+      - name: Billing price guard (posture-appropriate mode)
+        run: |
+          if [ "${{ matrix.state }}" = "off" ]; then
+            node scripts/check-billing-configured.mjs
+          else
+            node scripts/check-billing-configured.mjs --expect-stub
+          fi

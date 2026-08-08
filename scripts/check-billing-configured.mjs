@@ -19,6 +19,17 @@
 //
 // The house-starter CI selects the mode by repo identity (github.repository);
 // every generated app repo runs the default, fail-closed mode.
+//
+// THIRD STATE — subscriptionActive: false (capability-model-spec §2.1). An app
+// whose commission declared NO SUBSCRIPTION (Route B) never provisions a price,
+// so the default mode's "must carry a real price_…" rule does not apply to it.
+// The rule INVERTS instead, and is still fail-closed: an inactive app must carry
+// the stub and must NOT carry a real or invented price id. That is the "no fake
+// price" half of the toggle-safety rule made mechanical — the way a
+// no-subscription app would go wrong is someone hand-stubbing a nominal price to
+// get past this guard, and this is what refuses it. Inertness of the routes
+// themselves is asserted separately, by tests/unit/billing-both-states.test.ts
+// under the CI `billing-matrix` job.
 
 import { readFileSync } from "node:fs";
 
@@ -45,6 +56,22 @@ const block = text.match(/priceIds\s*:\s*\{([\s\S]*?)\}/);
 if (!block) {
   fail(`could not locate a priceIds record in ${CONFIG}.`);
 }
+// The per-app ACTIVE switch. Read as a literal from the same file rather than by
+// importing it — this script runs under plain node, before any build step, and
+// must not depend on the TS toolchain. Absent = the field has been deleted or
+// renamed, which is a loud failure: it is the switch the whole no-subscription
+// posture rests on, and a silently-missing switch would let this guard pass
+// vacuously for an app it should be gating.
+const activeMatch = text.match(/\bsubscriptionActive\s*:\s*(true|false)\s*,/);
+if (!activeMatch) {
+  fail(
+    `could not locate \`subscriptionActive: true|false\` in ${CONFIG}. It is the ` +
+      `per-app subscription ACTIVE switch (capability-model-spec §2.1) — this ` +
+      `guard cannot decide which rule applies without it.`,
+  );
+}
+const subscriptionActive = activeMatch[1] === "true";
+
 const values = [...block[1].matchAll(/["']([^"']+)["']/g)].map((m) => m[1]);
 const defaultMatch = block[1].match(/\bdefault\s*:\s*["']([^"']+)["']/);
 if (!defaultMatch) {
@@ -64,7 +91,41 @@ if (expectStub) {
   process.exit(0);
 }
 
-// App-repo mode: fail-closed.
+// App-repo mode, NO-SUBSCRIPTION posture: the rule inverts. This app declared no
+// subscription at commission, so it must carry the stub and no real price — the
+// opposite of the priced rule below, and equally fail-closed. A real price id
+// here means either the scaffold provisioned an app that declared none, or
+// someone hand-stubbed a price to satisfy the priced rule; both are the "fake
+// price" this guard exists to refuse.
+if (!subscriptionActive) {
+  const real = values.filter((v) => /^price_[A-Za-z0-9]+$/.test(v) && v !== STUB);
+  if (real.length > 0) {
+    fail(
+      `${CONFIG} has subscriptionActive: false (this app declared NO SUBSCRIPTION ` +
+        `at commission) but carries real Stripe price id(s): ` +
+        `${real.map((v) => `"${v}"`).join(", ")}. An app that sells nothing must ` +
+        `not carry a price. Either the commission decision is wrong (set a price ` +
+        `and flip subscriptionActive to true) or the price was added by hand — ` +
+        `never hand-stub a nominal price to get past this guard.`,
+    );
+  }
+  if (defaultId !== STUB) {
+    fail(
+      `${CONFIG} has subscriptionActive: false but priceIds.default is ` +
+        `"${defaultId}", not the untouched stub "${STUB}". A no-subscription app ` +
+        `leaves the template stub in place — the routes are inert, so the stub is ` +
+        `never read (asserted in tests/unit/billing-both-states.test.ts).`,
+    );
+  }
+  console.log(
+    `OK (no subscription): subscriptionActive is false and priceIds.default is ` +
+      `the untouched stub "${STUB}" — nothing to provision, no price to leak. ` +
+      `Route inertness is asserted by the billing-matrix both-states job.`,
+  );
+  process.exit(0);
+}
+
+// App-repo mode, PRICED posture: fail-closed.
 const stubbed = values.filter((v) => v === STUB || v.includes("_replace_me") || v.includes("stub"));
 if (stubbed.length > 0) {
   fail(
