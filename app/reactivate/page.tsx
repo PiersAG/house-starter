@@ -7,13 +7,21 @@
 // subscription (Stripe billing portal). Requires a session — an unauthenticated
 // visitor is sent to /login (auth is upstream; step 5 does not touch it).
 
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { isSubscriptionBillingActive } from "@/lib/billing/routes";
 import { ReactivateActions } from "@/app/reactivate/ReactivateActions";
 
 export const metadata = { title: "Reactivate your subscription" };
 
 export default async function ReactivatePage() {
+  // Defence in depth behind the edge middleware: an app whose commission
+  // declared no subscription has nothing to reactivate, so this page is ABSENT
+  // rather than a dead-end asking for money that cannot be taken. The paywall
+  // that redirects here is inert in the same state (lib/billing/enforce.ts), so
+  // no user can be routed into this 404.
+  if (!isSubscriptionBillingActive()) notFound();
+
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
 

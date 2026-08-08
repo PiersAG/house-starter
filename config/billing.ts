@@ -8,6 +8,9 @@
 //   3. Sets trialDays and the route prefixes that require an active
 //      subscription.
 //
+// …OR, for an app whose commission declared NO SUBSCRIPTION, it sets
+// `subscriptionActive: false` and creates nothing in Stripe (see that field).
+//
 // The template ships a STUB price id so template CI (which never talks to
 // Stripe) stays truthful — the shape is exercised, no real charge is possible.
 
@@ -50,6 +53,33 @@ export interface BillingConfig {
    * only ever decides which paths the paid-gate covers.
    */
   gatedRoutePrefixes: string[];
+  /**
+   * Whether THIS app sells a subscription. The per-app ACTIVE switch for the
+   * `subscription_billing` kernel part (capability-model-spec §2.1).
+   *
+   * BUILT-IN vs ACTIVE — the distinction this field exists to carry:
+   *   • BUILT IN is kernel and invariant: every app ships the subscription
+   *     surface (config/kernel.ts · `subscription_billing`, permanently on).
+   *     Nothing here removes code from the build.
+   *   • ACTIVE is per-app and is a COMMISSION decision (Route B): a build
+   *     either sets a subscription price OR declares "no subscription". A
+   *     personal tool or a disposable build declares no subscription, and the
+   *     scaffold sets this to false instead of inventing a price.
+   *
+   * true  (template default) — the billing surface is live and priceIds.default
+   *       must be a real Stripe price; the fail-closed CI guard
+   *       (scripts/check-billing-configured.mjs) enforces that.
+   * false — the billing surface is INERT: every path in BILLING_ROUTE_PREFIXES
+   *       (lib/billing/routes.ts) answers 404 at the edge AND in its own
+   *       handler, the paywall never engages, and no code path reaches Stripe.
+   *       The stub price id STAYS in place — an inactive app must NOT carry a
+   *       real or invented price, and the same CI guard enforces that too.
+   *
+   * OFF is a TESTED state, never an assumed one: tests/unit/billing-both-states
+   * .test.ts asserts the inert behaviour, and the CI `billing-matrix` job runs
+   * the suite with this field flipped BOTH ways.
+   */
+  subscriptionActive: boolean;
 }
 
 export const billingConfig: BillingConfig = {
@@ -64,6 +94,10 @@ export const billingConfig: BillingConfig = {
   statementDescriptor: null,
   trialDays: 14,
   gatedRoutePrefixes: [],
+  // DEFAULT ON. The scaffold flips this to false only for a build whose
+  // commission explicitly declared "no subscription"
+  // (agents/build/provision_stripe_price.py · stamp_subscription_inactive).
+  subscriptionActive: true,
 };
 
 /**

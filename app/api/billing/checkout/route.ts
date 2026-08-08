@@ -8,10 +8,18 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getStripe } from "@/lib/billing/stripe";
 import { billingConfig } from "@/config/billing";
+import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request): Promise<Response> {
+  // Defence in depth behind the edge middleware: an app whose commission
+  // declared no subscription answers 404 here BEFORE the session lookup and
+  // before any Stripe call, so no code path can reach checkout with the
+  // template's stub price.
+  const denied = requireSubscriptionBillingForPath(new URL(request.url).pathname);
+  if (denied) return denied;
+
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) {

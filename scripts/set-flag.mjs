@@ -12,6 +12,14 @@
 //
 //   • capability flags (payments, booking, comms) → rewrites config/capabilities.ts
 //   • kernel flags (auth, subscription_billing, settings, nav) → rewrites config/kernel.ts
+//   • the per-app switch `subscription_active` → rewrites config/billing.ts
+//
+// subscription_active is NOT a kernel flag and NOT a capability flag: it is the
+// per-app ACTIVE state of a kernel part (capability-model-spec §2.1). The kernel
+// part stays BUILT IN either way; this decides whether the app SELLS a
+// subscription. Unlike the kernel flags it IS written by a real build path — the
+// scaffold sets it false for a commission that declared no subscription — so
+// this flipper serves the both-states matrix, not a throwaway checkout only.
 //
 // The edit is a single-line, whitespace-tolerant boolean replacement inside the
 // relevant record literal. It asserts the flag exists and that the value
@@ -22,6 +30,15 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const CAPABILITY_FLAGS = new Set(["payments", "booking", "comms"]);
 const KERNEL_FLAGS = new Set(["auth", "subscription_billing", "settings", "nav"]);
+// Per-app ACTIVE switches: flag name → { file, record, key }. Each names a
+// boolean inside a config record, flipped by the same setInRecord rewrite.
+const PER_APP_SWITCHES = {
+  subscription_active: {
+    file: "config/billing.ts",
+    record: "billingConfig",
+    key: "subscriptionActive",
+  },
+};
 
 function parseArgs(argv) {
   const args = {};
@@ -43,11 +60,16 @@ if (state !== "on" && state !== "off") fail("missing/invalid --state (on|off)");
 
 const isKernel = KERNEL_FLAGS.has(flag);
 const isCapability = CAPABILITY_FLAGS.has(flag);
-if (!isKernel && !isCapability) {
-  fail(`unknown flag "${flag}" — not a kernel or capability flag`);
+const perApp = PER_APP_SWITCHES[flag] ?? null;
+if (!isKernel && !isCapability && !perApp) {
+  fail(`unknown flag "${flag}" — not a kernel, capability or per-app switch`);
 }
 
-const file = isKernel ? "config/kernel.ts" : "config/capabilities.ts";
+const file = perApp
+  ? perApp.file
+  : isKernel
+    ? "config/kernel.ts"
+    : "config/capabilities.ts";
 const desired = state === "on" ? "true" : "false";
 
 const src = readFileSync(file, "utf8");
@@ -79,9 +101,11 @@ function setInRecord(text, record, key, value) {
   };
 }
 
-const posture = isKernel
-  ? setInRecord(src, "enabledKernel", flag, desired)
-  : setInRecord(src, "enabledCapabilities", flag, desired);
+const posture = perApp
+  ? setInRecord(src, perApp.record, perApp.key, desired)
+  : isKernel
+    ? setInRecord(src, "enabledKernel", flag, desired)
+    : setInRecord(src, "enabledCapabilities", flag, desired);
 if (!posture) fail(`flag "${flag}" not found as a boolean entry in ${file}`);
 
 let next = posture.text;

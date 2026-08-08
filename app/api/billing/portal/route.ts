@@ -10,10 +10,16 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getStripe } from "@/lib/billing/stripe";
 import { getSubscriptionByUserId } from "@/lib/billing/subscriptions";
+import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request): Promise<Response> {
+  // Defence in depth behind the edge middleware — 404 before the session, the
+  // DB read or any Stripe call when this app sells no subscription.
+  const denied = requireSubscriptionBillingForPath(new URL(request.url).pathname);
+  if (denied) return denied;
+
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) {

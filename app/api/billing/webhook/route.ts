@@ -13,10 +13,18 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getStripe } from "@/lib/billing/stripe";
 import { handleStripeEvent } from "@/lib/billing/webhook";
+import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request): Promise<Response> {
+  // Defence in depth behind the edge middleware. An app that sells no
+  // subscription has no Stripe account sending it events; the receiver answers
+  // 404 rather than the "not configured" 500 below, which would otherwise
+  // advertise a webhook endpoint that exists but is broken.
+  const denied = requireSubscriptionBillingForPath(new URL(request.url).pathname);
+  if (denied) return denied;
+
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!secret) {
     // Deterministic misconfiguration — the deploy is contracted to inject this.
