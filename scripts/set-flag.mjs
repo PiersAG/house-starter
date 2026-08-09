@@ -81,9 +81,23 @@ const src = readFileSync(file, "utf8");
  * feature exist) — so a whole-file regex would silently rewrite whichever
  * happened to come first. Scoping to the named record makes the file's
  * declaration order stop being load-bearing.
+ *
+ * `record` and `key` are ESCAPED before interpolation. Neither is attacker-
+ * controlled — `key` is one of the seven allowlisted flag names or the
+ * hardcoded per-app switch key, rejected at startup otherwise, and every
+ * caller passes `record` as a string literal — so no flag name in existence
+ * contains a regex metacharacter and this changes no behaviour. It is here
+ * because CodeQL's `js/regex-injection` traces `key` back to `process.argv`
+ * and does not read `Set.has()` as a sanitising barrier, so the taint survives
+ * the allowlist and blocks the SAST gate (v0 SEC-exit check 2). Escaping is
+ * CodeQL's own documented remediation and it recognises the idiom. It is also
+ * simply correct: a future flag name with a `.` or `-` in it would otherwise
+ * match the wrong entry rather than fail loudly.
  */
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 function setInRecord(text, record, key, value) {
-  const open = new RegExp(`export const ${record}\\s*:[^=]*=\\s*\\{`);
+  const open = new RegExp(`export const ${escapeRe(record)}\\s*:[^=]*=\\s*\\{`);
   const opened = text.match(open);
   if (!opened) return null;
   const start = opened.index + opened[0].length;
@@ -91,7 +105,7 @@ function setInRecord(text, record, key, value) {
   if (end === -1) return null;
 
   const block = text.slice(start, end);
-  const re = new RegExp(`(\\n\\s*${key}\\s*:\\s*)(true|false)(\\s*,)`);
+  const re = new RegExp(`(\\n\\s*${escapeRe(key)}\\s*:\\s*)(true|false)(\\s*,)`);
   const m = block.match(re);
   if (!m) return null;
 
