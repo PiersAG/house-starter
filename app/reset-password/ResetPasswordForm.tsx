@@ -70,7 +70,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
       <button
         type="submit"
         disabled={pending}
-        className="min-h-11 w-full rounded bg-primary px-4 py-2 font-medium text-white disabled:opacity-60"
+        className="min-h-11 w-full rounded bg-primary px-4 py-2 font-medium text-primary-foreground disabled:opacity-60"
       >
         {pending ? "Saving…" : "Set new password"}
       </button>
