@@ -86,7 +86,7 @@ export function SupportWidget({ appId, defaultFrom = "", endpoint }: SupportWidg
         type="button"
         onClick={() => setStatus("open")}
         aria-label="Open support"
-        className="fixed bottom-4 right-4 z-50 min-h-11 min-w-11 rounded-full bg-blue-600 px-5 py-3 text-white shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 sm:bottom-6 sm:right-6"
+        className="fixed bottom-4 right-4 z-50 min-h-11 min-w-11 rounded-full bg-primary px-5 py-3 text-primary-foreground shadow-lg hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring sm:bottom-6 sm:right-6"
       >
         Support
       </button>
@@ -97,7 +97,7 @@ export function SupportWidget({ appId, defaultFrom = "", endpoint }: SupportWidg
     <div
       role="dialog"
       aria-label="Support"
-      className="fixed inset-x-4 bottom-4 z-50 rounded-xl border border-border bg-white p-4 shadow-xl sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-80"
+      className="fixed inset-x-4 bottom-4 z-50 rounded-xl border border-border bg-card p-4 shadow-xl sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-80"
     >
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-text-primary">Get support</h3>
@@ -131,7 +131,7 @@ export function SupportWidget({ appId, defaultFrom = "", endpoint }: SupportWidg
           <button
             type="button"
             onClick={() => setStatus("open")}
-            className="mt-2 text-xs text-blue-600 underline"
+            className="mt-2 text-xs text-link underline"
           >
             Send another message
           </button>
@@ -160,14 +160,14 @@ export function SupportWidget({ appId, defaultFrom = "", endpoint }: SupportWidg
             />
           </label>
           {error && (
-            <p role="alert" className="text-xs text-red-600">
+            <p role="alert" className="text-xs text-destructive">
               {error}
             </p>
           )}
           <button
             type="submit"
             disabled={status === "sending"}
-            className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-blue-300"
+            className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:bg-primary/40"
           >
             {status === "sending" ? "Sending…" : "Send"}
           </button>
