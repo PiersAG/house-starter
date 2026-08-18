@@ -155,15 +155,19 @@ jobs:
           # Declared deploy-injected in .env.contract → the boot validator
           # requires them. Throwaway/non-gating values for CI only:
           #   • STRIPE_SECRET_KEY: unused by the template today; a dummy string.
-          #   • APP_LIFECYCLE_STATE: LIVE_EVAL matches the current effective
-          #     default (an unset value already resolves to LIVE_EVAL) so E2E
-          #     behaviour is unchanged; the smoke suite hits only public routes.
+          #   • APP_LIFECYCLE_STATE: LAUNCHED ("live-quiet: any authenticated
+          #     user passes", lib/live-eval.ts). LIVE_EVAL — the effective
+          #     default for an unset value — is fail-closed on an empty
+          #     allowlist, so any signed-in page a downstream app's e2e suite
+          #     drives is 403'd with reason "live-eval-empty-allowlist". CI
+          #     never sets an allowlist. LAUNCHED is the same posture the
+          #     layout-gate step below already runs at, for the same reason.
           STRIPE_SECRET_KEY: sk_test_ci-e2e-only-dummy-not-a-real-key
           # STRIPE_WEBHOOK_SECRET: declared deploy-injected in .env.contract →
           # the boot validator requires it. Unused by the smoke suite (no real
           # webhook is delivered); a dummy string satisfies the presence check.
           STRIPE_WEBHOOK_SECRET: whsec_ci-e2e-only-dummy-not-a-real-secret
-          APP_LIFECYCLE_STATE: LIVE_EVAL
+          APP_LIFECYCLE_STATE: LAUNCHED
           # EMAIL_PROVIDER_API_KEY (secret) + EMAIL_SEND_MODE (fixed) are
           # declared deploy-injected in .env.contract → the boot validator
           # requires them. EMAIL_SEND_MODE=log means no real mail is ever sent
@@ -184,14 +188,11 @@ jobs:
       # gate, no baseline needed) and the page must still match its committed
       # screenshot. Full rationale: docs/layout-guardrail.md.
       #
-      # A SEPARATE STEP FROM THE SMOKE ABOVE, FOR ONE REASON: the pages worth
-      # guarding are behind sign-in, and this template's smoke step runs at
-      # APP_LIFECYCLE_STATE=LIVE_EVAL, under which a fresh CI user is 403'd off
-      # /dashboard (lib/live-eval.ts — LIVE_EVAL with no allowlist is
-      # fail-closed by design). LAUNCHED is "live-quiet: any authenticated user
-      # passes", which is the correct lifecycle for a check that drives the
-      # signed-in surfaces. Splitting the step leaves the smoke step's
-      # deliberate LIVE_EVAL posture untouched.
+      # A SEPARATE STEP FROM THE SMOKE ABOVE, because it owns its own database
+      # and its own baseline-vs-diff artefact upload. Both steps now run at
+      # APP_LIFECYCLE_STATE=LAUNCHED — "live-quiet: any authenticated user
+      # passes" (lib/live-eval.ts) — which is the correct lifecycle for any
+      # check that drives the signed-in surfaces.
       #
       # THIS STEP FAILS ON A MISSING BASELINE, which is correct and is the
       # first thing a new branch sees. Baselines are generated in CI, never
