@@ -240,6 +240,123 @@ describe("design tokens — opacity modifiers emit real CSS", () => {
   });
 });
 
+// ── Entry directives (the regression that cost a build) ────────────────
+
+/**
+ * Compile the app's REAL entry stylesheet over `markup`.
+ *
+ * This is deliberately NOT buildCss() above. That helper feeds Tailwind a
+ * synthetic "@tailwind utilities;" input, so it proves the CONFIG is right
+ * while saying nothing about whether app/globals.css ever invokes it — and
+ * that is exactly the blind spot these tests exist to close. Every assertion
+ * in this file passed against a globals.css that had been overwritten with a
+ * bare :root block and no directives at all.
+ */
+async function buildFromGlobals(markup: string): Promise<string> {
+  const result = await postcss([
+    tailwindcss({
+      ...(config as Config),
+      content: [{ raw: markup, extension: "html" }],
+    }),
+  ]).process(css, { from: undefined });
+  return result.css;
+}
+
+/** WCAG 2.2 SC 2.5.8 target-size (minimum), in CSS px. */
+const TARGET_SIZE_MIN_PX = 24;
+
+/**
+ * The sizing utilities /login's interactive targets rely on to clear that
+ * floor, as [class, the property it must set]. Sourced from app/login/
+ * LoginForm.tsx: the submit button (min-h-11), the show/hide-password toggle
+ * (h-8 w-8) and the remember-me checkbox (h-6 w-6, exactly on the floor).
+ */
+const TARGET_SIZING: ReadonlyArray<readonly [string, string]> = [
+  ["min-h-11", "min-height"],
+  ["h-8", "height"],
+  ["w-8", "width"],
+  ["h-6", "height"],
+  ["w-6", "width"],
+];
+
+/** "2.75rem" -> 44. Returns NaN for anything not a rem/px length. */
+function lengthToPx(value: string): number {
+  const m = /^([\d.]+)(rem|px)$/.exec(value.trim());
+  if (!m) return NaN;
+  return m[2] === "rem" ? parseFloat(m[1]) * 16 : parseFloat(m[1]);
+}
+
+describe("design tokens — globals.css actually invokes Tailwind", () => {
+  /**
+   * WHY THIS IS NOT PARANOIA: agents/build-init.py overwrites app/globals.css
+   * with build-design.py's output for every generated app. An artefact
+   * generated before that emitter learned to write the directives produces a
+   * stylesheet with tokens but no utilities. Nothing errors. Tailwind emits no
+   * h-*, w-*, min-h-*, px-* or w-full rule at all, every control collapses to
+   * its intrinsic unstyled size, and the first thing that notices is the axe
+   * target-size assertion in tests/e2e/smoke.spec.ts — which reports a
+   * 56.8x21px submit button and reads as a design bug, not a build one.
+   * K9Coach v0 burned its entire UI-phase budget on that misreading.
+   */
+  it("declares the three @tailwind entry directives", () => {
+    for (const layer of ["base", "components", "utilities"]) {
+      expect(
+        new RegExp(`^@tailwind\\s+${layer};`, "m").test(css),
+        `app/globals.css is missing "@tailwind ${layer};" — without it Tailwind ` +
+          `emits no ${layer} CSS and every utility class silently does nothing`,
+      ).toBe(true);
+    }
+  });
+
+  it("puts them ahead of any custom rule, so custom CSS layers on top", () => {
+    const firstRule = withoutComments.search(/^[^@\s][^{]*\{/m);
+    const lastDirective = withoutComments.lastIndexOf("@tailwind");
+    expect(
+      lastDirective,
+      "no @tailwind directive found",
+    ).toBeGreaterThanOrEqual(0);
+    if (firstRule !== -1) {
+      expect(
+        lastDirective,
+        "a custom rule precedes the @tailwind directives; Tailwind's output " +
+          "would then override it instead of the other way round",
+      ).toBeLessThan(firstRule);
+    }
+  });
+
+  it.each(TARGET_SIZING)(
+    "%s emits a real rule and clears the 24px target-size floor",
+    async (cls, property) => {
+      const out = await buildFromGlobals(`<div class="${cls}"></div>`);
+      const rule = new RegExp(
+        `\\.${cls}\\s*\\{\\s*${property}:\\s*([^;]+);`,
+      ).exec(out);
+      expect(
+        rule,
+        `.${cls} emitted NO CSS from the app's own globals.css — the control ` +
+          `it sizes will fall back to its intrinsic size and fail axe target-size`,
+      ).not.toBeNull();
+      const px = lengthToPx(rule![1]);
+      expect(
+        px,
+        `.${cls} sets ${property}: ${rule![1]} (${px}px), below the ` +
+          `${TARGET_SIZE_MIN_PX}px WCAG 2.2 target-size floor`,
+      ).toBeGreaterThanOrEqual(TARGET_SIZE_MIN_PX);
+    },
+  );
+
+  it("the login form's own markup still carries those sizing classes", () => {
+    const form = readFileSync(resolve(ROOT, "app/login/LoginForm.tsx"), "utf8");
+    for (const [cls] of TARGET_SIZING) {
+      expect(
+        new RegExp(`\\b${cls}\\b`).test(form),
+        `LoginForm.tsx no longer uses ${cls}; either the target shrank below ` +
+          `the 24px floor or this contract needs updating alongside it`,
+      ).toBe(true);
+    }
+  });
+});
+
 // ── Measured accessibility ──────────────────────────────────────────────────
 
 describe("design tokens — WCAG contrast, computed from the live values", () => {
