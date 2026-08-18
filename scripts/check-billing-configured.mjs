@@ -1,5 +1,13 @@
 #!/usr/bin/env node
-// Fail-closed billing-price guard (root fix for the stub-price checkout 500).
+// Fail-closed billing-config guard: the price id AND the per-app identity
+// (root fix for the stub-price checkout 500, extended 2026-08-18 to the appId).
+//
+// TWO stubs, checked separately and by name. `priceIds.default` fails LOUDLY —
+// the stub 500s the first Subscribe click. `appId` fails SILENTLY — Stripe
+// accepts any metadata string, so an app ships and bills with every Checkout
+// Session and Subscription tagged "app_stub_replace_me" and nothing ever errors.
+// Both are stamped at scaffold by provision_stripe_price.py; both are backstopped
+// here, each with its own message so a failure names the field that is unstamped.
 //
 // config/billing.ts ships a STUB price id ("price_stub_replace_me") in the
 // house-starter template — deliberately, so template CI stays truthful without
@@ -34,6 +42,15 @@
 import { readFileSync } from "node:fs";
 
 const STUB = "price_stub_replace_me";
+// The per-app identity stub. LIVE, not decorative: app/api/billing/checkout
+// /route.ts reads billingConfig.appId and writes it to metadata.app_id on the
+// Checkout Session AND the Subscription. Unlike the price stub it fails
+// SILENTLY — Stripe accepts any metadata string — so an app can ship, sell, and
+// bill with every Stripe object tagged "app_stub_replace_me" and nothing 500s.
+// Provisioning stamps it from the app slug (provision_stripe_price.py ·
+// stamp_billing_config); this is the CI backstop, checked BY NAME so a failure
+// says which field is unstamped.
+const APP_ID_STUB = "app_stub_replace_me";
 const CONFIG = "config/billing.ts";
 const expectStub = process.argv.includes("--expect-stub");
 
@@ -72,6 +89,22 @@ if (!activeMatch) {
 }
 const subscriptionActive = activeMatch[1] === "true";
 
+// The per-app identity, read from the same file as a literal (same reason as
+// subscriptionActive: this script runs under plain node, before any build step).
+// Absent = the field has been deleted or renamed, which is a loud failure in
+// every mode — the checkout route reads it at runtime and would not compile
+// without it, and a silently-missing identity is exactly what this guard exists
+// to catch.
+const appIdMatch = text.match(/\bappId\s*:\s*["']([^"']*)["']/);
+if (!appIdMatch) {
+  fail(
+    `could not locate an \`appId: "…"\` value in ${CONFIG}. It is the per-app ` +
+      `identity sent to Stripe as metadata.app_id on every Checkout Session and ` +
+      `Subscription (app/api/billing/checkout/route.ts).`,
+  );
+}
+const appId = appIdMatch[1];
+
 const values = [...block[1].matchAll(/["']([^"']+)["']/g)].map((m) => m[1]);
 const defaultMatch = block[1].match(/\bdefault\s*:\s*["']([^"']+)["']/);
 if (!defaultMatch) {
@@ -87,7 +120,18 @@ if (expectStub) {
         `template — every generated app inherits it.`,
     );
   }
-  console.log(`OK (template): priceIds.default is the stub "${STUB}" as expected.`);
+  if (appId !== APP_ID_STUB) {
+    fail(
+      `template guard: expected appId to be the stub "${APP_ID_STUB}", but found ` +
+        `"${appId}". A real app identity must never be hardcoded into the ` +
+        `template — every generated app would inherit it and tag its Stripe ` +
+        `objects with another app's id.`,
+    );
+  }
+  console.log(
+    `OK (template): priceIds.default is the stub "${STUB}" and appId is the stub ` +
+      `"${APP_ID_STUB}", as expected.`,
+  );
   process.exit(0);
 }
 
@@ -117,6 +161,10 @@ if (!subscriptionActive) {
         `never read (asserted in tests/unit/billing-both-states.test.ts).`,
     );
   }
+  // appId is deliberately NOT required here. This app provisions nothing and its
+  // billing routes answer 404, so the identity is never sent to Stripe — there is
+  // no unstamped-appId hazard to guard against in this posture, and demanding a
+  // real one would be a guard with no failure mode behind it.
   console.log(
     `OK (no subscription): subscriptionActive is false and priceIds.default is ` +
       `the untouched stub "${STUB}" — nothing to provision, no price to leak. ` +
@@ -141,4 +189,21 @@ if (!/^price_[A-Za-z0-9]+$/.test(defaultId)) {
       `Refusing to ship an app whose checkout price is not a real Stripe price.`,
   );
 }
-console.log(`OK: priceIds.default is a real Stripe price id ("${defaultId}"); no stubs present.`);
+// The appId, checked SEPARATELY and BY NAME. It fails silently where the price
+// fails loudly, so it needs its own message: reporting an unstamped appId as a
+// price problem is what cost three wrong diagnoses of the K9Coach scaffold
+// failure (2026-08-18).
+if (appId === APP_ID_STUB || appId.includes("_replace_me") || appId.trim() === "") {
+  fail(
+    `unresolved stub appId in ${CONFIG}: "${appId}". This is the appId field, ` +
+      `NOT the price id. It is sent to Stripe as metadata.app_id on every ` +
+      `Checkout Session and Subscription, so shipping the stub does not 500 — it ` +
+      `silently tags this app's revenue with a placeholder identity. Run ` +
+      `provisioning (provision-app-billing.yml / provision_stripe_price.py), ` +
+      `which stamps it from the app slug.`,
+  );
+}
+console.log(
+  `OK: priceIds.default is a real Stripe price id ("${defaultId}") and appId is ` +
+    `"${appId}"; no stubs present.`,
+);
