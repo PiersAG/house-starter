@@ -48,3 +48,8 @@ ci-e2e.db-*
 # Any other libSQL/SQLite file created by a local run or test (e.g. boot-check.db).
 *.db
 *.db-*
+
+# Build-loop artefacts: the last-green sentinel, the SEC.24 isolation report,
+# and the ephemeral tenant databases the isolation attack is seeded into.
+# Orchestrator scratch, never source.
+/.build/
