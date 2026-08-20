@@ -13,7 +13,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { catalogDb } from "@/lib/catalog";
 import { requireCapabilityForSettingKey } from "@/lib/capabilities/guard";
 import {
   validateOwnerWrite,
@@ -79,9 +79,9 @@ export async function PUT(
   }
 
   if (scope === "client") {
-    await setClientValue(db, key, userId, validation.value);
+    await setClientValue(catalogDb, key, userId, validation.value);
   } else {
-    await setOwnerValue(db, key, validation.value);
+    await setOwnerValue(catalogDb, key, validation.value);
   }
   return NextResponse.json({ ok: true, key, scope });
 }
@@ -113,8 +113,8 @@ export async function DELETE(
 
   const removed =
     scope === "client"
-      ? await deleteValue(db, key, "client", userId)
-      : await deleteValue(db, key, "owner");
+      ? await deleteValue(catalogDb, key, "client", userId)
+      : await deleteValue(catalogDb, key, "owner");
 
   return NextResponse.json({ ok: true, key, scope, reverted: removed });
 }

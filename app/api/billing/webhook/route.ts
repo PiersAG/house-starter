@@ -10,7 +10,7 @@
 
 import type Stripe from "stripe";
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { catalogDb } from "@/lib/catalog";
 import { getStripe } from "@/lib/billing/stripe";
 import { handleStripeEvent } from "@/lib/billing/webhook";
 import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
@@ -50,6 +50,6 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Invalid signature." }, { status: 400 });
   }
 
-  await handleStripeEvent(db, event);
+  await handleStripeEvent(catalogDb, event);
   return NextResponse.json({ received: true });
 }

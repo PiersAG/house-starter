@@ -23,17 +23,41 @@ Both modes assert that anonymous requests to protected data routes receive a
 | File                    | Runs today                                                      | Notes                                                                                                                                       |
 | ----------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `anon.spec.ts`          | ✓                                                               | Anonymous access to protected routes → redirect / 401. Real behaviour of the shipped app-shell.                                             |
-| `per-tenant.spec.ts`    | skipped unless `TENANT_DB_URL_TENANT_A` and `_TENANT_B` are set | Real seeded attack: migrates + seeds each tenant, then attacks from four directions. Routes are discovered from `app/`, not listed by hand. |
+| `per-tenant.spec.ts`    | skipped unless `TENANT_DB_URL_TENANT_A` and `_TENANT_B` are set | Real seeded attack: migrates + seeds each tenant and the catalog, signs in over HTTP, then attacks from five directions. Routes are discovered from `app/`, not listed by hand. |
 | `shared.spec.ts`        | skipped unless `TENANCY_MODE=shared`                            | Same shape for shared-mode apps.                                                                                                            |
 | `tests/unit/db.test.ts` | ✓ (Vitest)                                                      | Factory fail-closed proof — the fallback trap the spec calls out.                                                                           |
 
+## How the two databases are arranged
+
+Per-tenant apps run on **two kinds of database**, and the attack only means
+something if the harness reproduces both:
+
+- the **catalog** — one per app, resolved from `CATALOG_DATABASE_URL` (falling
+  back to `DATABASE_URL`). Holds accounts, sessions, billing, the settings
+  registry and the `tenants` routing table. This is what login authenticates
+  against, which is what makes a per-tenant sign-in possible at all.
+- one **tenant database** per customer, whose URL is a row in `tenants`.
+
+The two `TENANT_DB_URL_TENANT_*` variables are the harness's INPUT: the spec
+uses them to register two tenants in the catalog, exactly as
+`lib/tenant/provisioner.ts` does at sign-up. They are not a resolution path of
+their own — `getDb(tenantId)` reads the catalog and nothing else.
+
 ## Fallback trap
 
-The spec calls out one specific failure mode: with `TENANT_DB_URL_<tenantId>`
-unset **but `DATABASE_URL` set**, the app must fail closed rather than silently
-serve the misconfigured tenant from the shared URL. That mechanism is guarded
-in `lib/db.ts` and pinned by `tests/unit/db.test.ts` — the E2E specs do not
-re-verify the same mechanism.
+The spec calls out one specific failure mode: a tenant that is **not registered
+in the catalog** while `DATABASE_URL` is set must fail closed, rather than
+silently serving that tenant from the shared URL. Guarded in `lib/db.ts`,
+pinned by `tests/unit/db.test.ts`, and re-mounted over the real seam by
+`per-tenant.spec.ts`'s fifth leg.
+
+## The positive control
+
+The HTTP leg asserts a POSITIVE before it asserts any negative: signed in as
+tenant A, `GET /api/tenant` must return **200 carrying tenant A's own
+sentinel**. Without it, an app whose data routes all returned 500 would leak
+nothing and pass — proving only that nothing works. The negative assertions are
+worth exactly as much as that positive one.
 
 ## Builder handoff
 
@@ -57,15 +81,29 @@ The build loop supplies the whole envelope:
    (`agents/build/isolation_floor.py`) converts a skipped attack into a build
    failure for any app that declares it holds customer data.
 
-## Known gap — the tenancy seam is declared but not built
+## The seam this attacks
 
-`per-tenant.spec.ts`'s HTTP leg ("no data route returns another tenant's rows to
-an authenticated tenant-A user") **fails on the template as it stands, by
-design**. It cannot sign in, because no app code in this template ever calls
-`getDb(tenantId)`: every module imports the shared-mode `db` export from
-`lib/db.ts`, which throws in per-tenant mode, and no session carries a tenant
-identifier. ADR-023 Mechanism describes that seam; it has not been built. The
-failure is the honest signal — isolation over HTTP is UNPROVEN, which is not the
-same as proven safe — and it stays until the seam lands. The other four legs
-(seeding, the resolver attack, identifier tampering, and the DATABASE_URL
-fallback trap) pass today.
+The HTTP leg used to fail on the template by design: no app code called
+`getDb(tenantId)`, every module imported the shared-mode `db` export (which
+throws in per-tenant mode), and no session carried a tenant — so a per-tenant app
+could not sign anyone in and isolation over HTTP was UNPROVEN.
+
+That seam is now built:
+
+- `lib/catalog.ts` — the control-plane handle. Identity, sessions, billing,
+  settings and the tenant registry.
+- `lib/auth.ts` — authenticates against the catalog and resolves the account's
+  tenant BEFORE issuing a session; the tenant id is a JWT claim.
+- `lib/tenant-context.ts` — `getTenantDb()`, the one way app code asks for data.
+  The tenant comes from the session, never from the caller.
+- `lib/db.ts` — `getDb(tenantId)` resolves that tenant's database URL from the
+  catalog. A `file:` URL and a `libsql://` URL are indistinguishable to it,
+  which is why two local files here test the same routing production performs
+  against two Turso databases.
+- `lib/tenant/provisioner.ts` — creates a customer's database at sign-up: one
+  libSQL file locally and in CI, one real Turso database in a deployed
+  environment, never silently the former in place of the latter.
+
+`app/api/tenant/route.ts` is the template's one app-data route and the target of
+the positive control above. A builder's own routes are discovered and attacked
+alongside it.

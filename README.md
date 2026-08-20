@@ -32,21 +32,57 @@ These are conditional — do not add until the app needs them:
 | Terms, Privacy, Cookie pages | `app/privacy/`, `app/terms/` | Legal profile varies by app |
 | Signup page | `app/signup/` | Schema and validation are app-specific |
 | Protected route patterns | `auth.config.ts` → `authorized()` callback | Routes are app-specific |
-| DB schema | `lib/db/schema.ts` | Schema is app-specific |
+| DB schema | `lib/schema.ts` + `TENANT_MIGRATION_SQL` in `lib/migrate.ts` | Domain tables are app-specific |
 | Error tracking (Sentry) | `sentry.config.ts`, `app/global-error.tsx` | Configured at MVP boundary |
+
+### Tenancy: two databases, one seam (ADR-023)
+
+The factory default is `per_tenant`. An app then runs on:
+
+- **one catalog database** — `CATALOG_DATABASE_URL`, falling back to
+  `DATABASE_URL`. Accounts, sessions, billing, the settings registry, and the
+  `tenants` routing table. Login authenticates here, which is what lets a
+  per-tenant app resolve a tenant from a credential.
+- **one data database per tenant** — created at sign-up, its URL held in
+  `tenants`. Holds only that customer's rows.
+
+Writing app code against it:
+
+```ts
+// A page, server action or route handler — the tenant comes from the session.
+import { getTenantDb } from "@/lib/tenant-context";
+
+const db = await getTenantDb();
+const rows = await db.select().from(dogs).all();
+```
+
+There is no `where tenantId = …` to remember: another customer's rows are not
+filtered out, they are not in the database being queried. Control-plane reads
+(accounts, subscriptions, settings) use `catalogDb` from `@/lib/catalog`
+instead. The bare `db` export in `lib/db.ts` is a tripwire — it throws in
+per-tenant mode and nothing should import it.
+
+New domain tables go in `lib/schema.ts` and their DDL in
+`TENANT_MIGRATION_SQL` (`lib/migrate.ts`), which is what the provisioner applies
+to each new tenant database and what the fan-out below applies to existing ones.
+
+Provisioning is by environment: one libSQL file per tenant under
+`TENANT_DB_DIR` locally and in CI, and a real Turso database per tenant in any
+deployed environment. A deployed app never silently falls back to files — see
+`lib/tenant/provisioner.ts`.
 
 ### Tenant migration fan-out (per-tenant apps only)
 
 After a schema change lands, the tenancy migration fan-out applies the new schema
-across every tenant database in one run. Tenant DBs follow the naming convention
-`<app_slug>-<tenant_id>` in Turso, and the platform database list is the source of
-truth (no registry file). Operator runbook:
+across every tenant database in one run. The app's own catalog is the source of
+truth for which tenants exist — the same registry `getDb(tenantId)` routes
+through — so file-provisioned and Turso-provisioned tenants are both covered.
+Operator runbook:
 
 ```bash
-# One-time per environment
-export TURSO_API_TOKEN=...    # Turso platform token
-export TURSO_ORG=...           # Turso organisation slug
-export APP_SLUG=<slug>         # this app's slug — matches Turso DB name prefix
+# One-time per environment: point at the app's catalog
+export CATALOG_DATABASE_URL=...        # or rely on DATABASE_URL
+export CATALOG_DATABASE_AUTH_TOKEN=... # for a remote catalog
 
 # Dry-run to preview targets (no writes)
 npm run db:migrate:all-tenants -- --dry-run
@@ -57,7 +93,9 @@ npm run db:migrate:all-tenants
 # Re-run a single failed tenant (idempotent — safe)
 npm run db:migrate:all-tenants -- --tenant <tenant_id>
 
-# Verify every tenant has point-in-time restore enabled (Stage 0 backup gate)
+# Verify every tenant has point-in-time restore enabled (Stage 0 backup gate).
+# This one talks to the Turso platform API directly (PITR is a Turso concept),
+# so it still needs TURSO_API_TOKEN / TURSO_ORG / APP_SLUG.
 npm run db:verify-tenant-backups
 ```
 
@@ -65,7 +103,9 @@ Refuses to run when `TENANCY_MODE=shared` — shared apps have one database and 
 `npm run db:migrate` (drizzle-kit). Reports are written to
 `migration-report-<timestamp>.json` and `pitr-report-<timestamp>.json` in the
 current working directory. Spec: `wiki/specs/tenancy-migration-fanout.md` in
-app-business-core; ADR-023 records the naming convention.
+app-business-core; ADR-023 records the model. Tenant databases are still NAMED
+`<app-slug>-<tenant-id>` in Turso, which is how `db:verify-tenant-backups`
+enumerates them.
 
 ## Stack
 

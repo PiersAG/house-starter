@@ -10,7 +10,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import { catalogDb } from "@/lib/catalog";
 import { requestPasswordReset } from "@/lib/password-reset";
 import { clientKeyFromHeaders, getRateLimiter } from "@/lib/rate-limit";
 
@@ -58,7 +58,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const origin = new URL(request.url).origin;
-  await requestPasswordReset(db, parsed.data.email, { baseUrl: origin });
+  await requestPasswordReset(catalogDb, parsed.data.email, { baseUrl: origin });
 
   return NextResponse.json(GENERIC_RESPONSE);
 }

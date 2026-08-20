@@ -7,7 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { catalogDb } from "@/lib/catalog";
 import { getStripe } from "@/lib/billing/stripe";
 import { getSubscriptionByUserId } from "@/lib/billing/subscriptions";
 import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
@@ -29,7 +29,7 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const sub = await getSubscriptionByUserId(db, userId);
+  const sub = await getSubscriptionByUserId(catalogDb, userId);
   if (!sub?.stripeCustomerId) {
     return NextResponse.json(
       { error: "No billing account found for this user." },

@@ -9,6 +9,25 @@
 // client is async and works identically against a local file (file:local.db)
 // or a remote libSQL/Turso URL — the only difference between dev and prod is
 // the DATABASE_URL value.
+//
+// TWO ROLES, ONE MIGRATION PATH (ADR-023 per_tenant)
+// --------------------------------------------------
+// The DDL is split by the database a table belongs to:
+//
+//   CATALOG_MIGRATION_SQL — the control plane. Identity, sessions, billing and
+//     the tenant registry: everything needed to authenticate and bill a caller
+//     BEFORE a tenant database is opened. Applied to CATALOG_DATABASE_URL.
+//
+//   TENANT_MIGRATION_SQL — the data plane. One tenant's own rows. Applied to
+//     each tenant database by the provisioner at sign-up, and to every existing
+//     tenant by scripts/migrate-all-tenants.ts.
+//
+//   MIGRATION_SQL — both, concatenated. This is what `migrate()` applies by
+//     default, so shared-mode apps (one database holding everything) and the
+//     preview single-database deploy keep working unchanged.
+//
+// There is still exactly ONE migration mechanism; `role` only selects which
+// half of the same idempotent DDL runs.
 
 import { createClient, type Client } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
@@ -17,15 +36,28 @@ import { seedOwnerAccount } from "@/lib/owner-seed";
 import type { AppDatabase } from "@/lib/users";
 
 /**
- * Idempotent DDL that brings an empty SQLite database up to the current schema.
- * Kept in sync with lib/schema.ts. `IF NOT EXISTS` makes re-running a no-op.
+ * Idempotent DDL for the CATALOG (control-plane) database. Kept in sync with
+ * lib/schema.ts. `IF NOT EXISTS` makes re-running a no-op.
+ *
+ * `tenants` comes first: it is the routing table every sign-in resolves against,
+ * and `users.tenant_id` is the mapping from a credential to a database.
  */
-export const MIGRATION_SQL = `
+export const CATALOG_MIGRATION_SQL = `
+CREATE TABLE IF NOT EXISTS tenants (
+  id TEXT PRIMARY KEY NOT NULL,
+  db_url TEXT NOT NULL,
+  db_auth_token TEXT,
+  provisioner TEXT,
+  label TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   name TEXT,
+  tenant_id TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
@@ -121,6 +153,33 @@ CREATE TABLE IF NOT EXISTS access_grants (
 `;
 
 /**
+ * Idempotent DDL for a TENANT (data-plane) database — one customer's own rows.
+ *
+ * `tenant_meta` is the template's only app-data table. A builder adding a domain
+ * model (dogs, clients, sessions) adds those CREATE TABLE statements here, and
+ * they land in every tenant database through the same provisioner and the same
+ * fan-out, with no second migration mechanism.
+ *
+ * Nothing in here references a catalog table: a tenant database must be
+ * migratable and queryable knowing only its own URL.
+ */
+export const TENANT_MIGRATION_SQL = `
+CREATE TABLE IF NOT EXISTS tenant_meta (
+  id TEXT PRIMARY KEY NOT NULL,
+  tenant_id TEXT NOT NULL UNIQUE,
+  label TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+`;
+
+/**
+ * Both halves. What `migrate()` applies by default, so a shared-mode app (one
+ * database holding everything) and the single-database preview deploy are
+ * unaffected by the split.
+ */
+export const MIGRATION_SQL = CATALOG_MIGRATION_SQL + TENANT_MIGRATION_SQL;
+
+/**
  * Resolve a libSQL connection URL. Defaults to an in-memory database when no
  * URL is supplied, which keeps the CLI runnable in any environment. A bare
  * filesystem path is normalised to a `file:` URL (libSQL requires the scheme).
@@ -211,8 +270,8 @@ function declaredColumns(sql: string): Map<string, { name: string; def: string }
  * existing table; if one somehow is, the ALTER throws — a loud failure is
  * correct, and strictly better than the silent drift that caused digest 456544406.
  */
-async function reconcileColumns(client: Client): Promise<void> {
-  for (const [table, cols] of declaredColumns(MIGRATION_SQL)) {
+async function reconcileColumns(client: Client, sql: string): Promise<void> {
+  for (const [table, cols] of declaredColumns(sql)) {
     const info = await client.execute(`PRAGMA table_info(${table});`);
     if (info.rows.length === 0) continue; // fresh — CREATE TABLE already built it in full
     const existing = new Set(info.rows.map((r) => String((r as Record<string, unknown>).name)));
@@ -224,25 +283,54 @@ async function reconcileColumns(client: Client): Promise<void> {
 }
 
 /**
+ * Which half of the schema a migration run applies.
+ *
+ *   "catalog" — control plane only (identity, billing, tenant registry).
+ *   "tenant"  — one tenant's data plane only.
+ *   "all"     — both. The default, so every existing caller is unchanged.
+ */
+export type MigrationRole = "catalog" | "tenant" | "all";
+
+/** The DDL for a role. */
+function sqlForRole(role: MigrationRole): string {
+  if (role === "catalog") return CATALOG_MIGRATION_SQL;
+  if (role === "tenant") return TENANT_MIGRATION_SQL;
+  return MIGRATION_SQL;
+}
+
+/**
  * Apply every migration to the given client. Safe to run repeatedly.
  * Uses executeMultiple so the whole DDL script runs as one batch.
+ *
+ * `role` selects catalog / tenant / both (default both). The seeds below are
+ * CATALOG seeds — the settings catalogue and the factory owner account are both
+ * control-plane rows — so a `role: "tenant"` run applies DDL and seeds nothing.
+ * A tenant database must never be handed an owner account: identity lives in
+ * exactly one place.
  */
-export async function runMigrations(client: Client): Promise<void> {
+export async function runMigrations(
+  client: Client,
+  { role = "all" }: { role?: MigrationRole } = {},
+): Promise<void> {
   await client.execute("PRAGMA foreign_keys = ON;");
-  await client.executeMultiple(MIGRATION_SQL);
+  await client.executeMultiple(sqlForRole(role));
   // Retrofit any column the schema gained after a persistent DB was created —
   // CREATE TABLE IF NOT EXISTS cannot do this, and a missing column is a runtime
   // crash (digest 456544406: subscriptions.past_due_at). Derived from
   // MIGRATION_SQL, so it can never drift from the schema.
-  await reconcileColumns(client);
+  await reconcileColumns(client, sqlForRole(role));
+  if (role === "tenant") return;
   // Seed the settings catalogue from the merged registry — part of the one
   // true migration path so every migrated DB carries the current definitions
   // (settings-registry-spec §4). Idempotent upsert; safe to run repeatedly.
   await seedSettingDefinitions(client);
   // Seed the factory owner account + owner grant when OWNER_EMAIL is configured
-  // (v0-owner-account-seed). On the same migration path so every tenant DB
-  // inherits it. Strictly idempotent (account absent -> create + grant; present
-  // -> no-op); a no-op when OWNER_EMAIL is unset (dev/CI).
+  // (v0-owner-account-seed). On the same migration path so the app's catalog
+  // carries its owner account. Strictly idempotent (account absent -> create +
+  // grant; present -> no-op); a no-op when OWNER_EMAIL is unset (dev/CI). The
+  // owner's own tenant database is provisioned lazily at their first sign-in
+  // (lib/tenant/provisioner.ts), not here — a migration must not make network
+  // calls to a database platform.
   await seedOwnerAccount(drizzle(client) as AppDatabase, process.env.OWNER_EMAIL);
 }
 
@@ -259,11 +347,31 @@ export async function runMigrations(client: Client): Promise<void> {
 export async function migrate(
   url: string | undefined = process.env.DATABASE_URL,
   authToken?: string,
+  { role = "all" }: { role?: MigrationRole } = {},
 ): Promise<void> {
   const client = createMigrationDatabase(url, authToken);
   try {
-    await runMigrations(client);
+    await runMigrations(client, { role });
   } finally {
     client.close();
   }
+}
+
+/** Bring the CATALOG (control-plane) database up to schema. */
+export async function migrateCatalog(
+  url: string | undefined,
+  authToken?: string,
+): Promise<void> {
+  await migrate(url, authToken, { role: "catalog" });
+}
+
+/**
+ * Bring ONE TENANT's data database up to schema. Called by the provisioner the
+ * moment a tenant database is created, and by the fan-out for existing tenants.
+ */
+export async function migrateTenant(
+  url: string | undefined,
+  authToken?: string,
+): Promise<void> {
+  await migrate(url, authToken, { role: "tenant" });
 }

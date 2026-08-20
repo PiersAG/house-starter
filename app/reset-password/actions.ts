@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { db } from "@/lib/db";
+import { catalogDb } from "@/lib/catalog";
 import { PasswordResetError, resetPassword } from "@/lib/password-reset";
 
 export type ResetPasswordState = { error?: string } | null;
@@ -21,7 +21,7 @@ export async function resetPasswordAction(
   }
 
   try {
-    await resetPassword(db, token, password);
+    await resetPassword(catalogDb, token, password);
   } catch (error) {
     if (error instanceof PasswordResetError) {
       return { error: error.message };

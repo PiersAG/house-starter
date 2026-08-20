@@ -9,11 +9,16 @@
 //
 // Resolution is resilient by design — this runs in the root layout's
 // generateMetadata, on every request including anonymous/error paths, so it
-// must never throw. Any failure (settings capability off, DB unavailable,
-// per-tenant mode where the shared `db` export is unreachable, or simply no
-// value set) resolves to the neutral fallback.
+// must never throw. Any failure (settings capability off, catalog unavailable,
+// or simply no value set) resolves to the neutral fallback.
+//
+// It reads the CATALOG, not a tenant database, and that is deliberate: the app's
+// name belongs to the APP, and this runs on the login page and the marketing
+// pages where there is no session and therefore no tenant. A per-tenant app
+// whose title depended on tenant data would be titleless to every visitor who
+// had not signed in yet.
 
-import { db } from "@/lib/db";
+import { catalogDb } from "@/lib/catalog";
 import { resolveSetting } from "@/lib/settings/resolver";
 
 /**
@@ -28,7 +33,7 @@ export const APP_NAME_FALLBACK = "App";
  */
 export async function getAppName(): Promise<string> {
   try {
-    const { value } = await resolveSetting(db, "core.app_name");
+    const { value } = await resolveSetting(catalogDb, "core.app_name");
     if (typeof value === "string" && value.trim().length > 0) {
       return value.trim();
     }

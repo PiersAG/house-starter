@@ -7,7 +7,7 @@
 
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { catalogDb } from "@/lib/catalog";
 import { buildClientSettingsView } from "@/lib/settings/service";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SettingControl } from "@/app/dashboard/settings/SettingControl";
@@ -18,7 +18,7 @@ export default async function AccountPage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
 
-  const view = await buildClientSettingsView(db, session.user.id);
+  const view = await buildClientSettingsView(catalogDb, session.user.id);
   const isEmpty = view.length === 0;
 
   return (

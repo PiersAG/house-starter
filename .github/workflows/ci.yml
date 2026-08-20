@@ -145,9 +145,19 @@ jobs:
           # Dummy JWT-signing secret for this CI browser session only.
           AUTH_SECRET: ci-e2e-only-dummy-secret-not-used-anywhere-real
           # Local SQLite file (the scaffold's dev fallback), created on the
-          # runner and discarded with it. Shared tenancy mode matches how the
-          # template app wires lib/auth.ts to the shared db export.
-          TENANCY_MODE: shared
+          # runner and discarded with it.
+          #
+          # PER-TENANT, which is the factory default (ADR-023) and therefore the
+          # mode this suite has to run in: the smoke suite drives sign-up and
+          # sign-in, and in per-tenant mode those go through the whole routing
+          # seam — authenticate against the catalog, provision the new account's
+          # own database, carry the tenant on the session. This step used to run
+          # `shared` because the template could not sign anyone in per-tenant;
+          # that is the gap the seam closed, and running the default here is what
+          # stops it reopening. DATABASE_URL is the catalog; tenant databases are
+          # provisioned as files under .build/tenants (no VERCEL_ENV on the
+          # runner, so lib/tenant/provisioner.ts selects the file adapter).
+          TENANCY_MODE: per_tenant
           DATABASE_URL: file:ci-e2e.db
           # Explicit safe-environment flag (ADR-015): in-memory rate limiting
           # is acceptable only here, where nothing real is reachable.
@@ -189,7 +199,9 @@ jobs:
       # screenshot. Full rationale: docs/layout-guardrail.md.
       #
       # A SEPARATE STEP FROM THE SMOKE ABOVE, because it owns its own database
-      # and its own baseline-vs-diff artefact upload. Both steps now run at
+      # and its own baseline-vs-diff artefact upload. It stays on `shared`
+      # deliberately: this is a pixel gate, tenancy changes nothing it looks at,
+      # and re-pointing it would risk baseline churn for no added coverage. Both steps now run at
       # APP_LIFECYCLE_STATE=LAUNCHED — "live-quiet: any authenticated user
       # passes" (lib/live-eval.ts) — which is the correct lifecycle for any
       # check that drives the signed-in surfaces.
