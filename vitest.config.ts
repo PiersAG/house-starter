@@ -55,6 +55,24 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // The other two halves of the ADR-023 routing seam. lib/db.ts decides
+        // WHICH database; lib/catalog.ts decides where identity is read from,
+        // and lib/tenant-context.ts decides whether this request has a tenant at
+        // all. An uncovered branch in either is an untested answer to "whose
+        // data is this?", which is the same class of gap as an uncovered branch
+        // in the resolver itself.
+        "**/lib/catalog.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/tenant-context.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
       },
     },
   },

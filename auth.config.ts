@@ -58,6 +58,11 @@ export const authConfig: NextAuthConfig = {
       // and crashes existing sessions — the FlightLog production incident.
       if (user?.id) {
         token.id = user.id;
+        // Carried here too so the two jwt callbacks stay interchangeable: this
+        // one is what the Edge middleware runs, and a token shape that differed
+        // between the two would make the tenant claim appear and disappear
+        // depending on which runtime last touched the cookie.
+        token.tenantId = (user as { tenantId?: string }).tenantId;
         token.rememberMe = (user as { rememberMe?: boolean }).rememberMe ?? false;
         token.maxAge = token.rememberMe ? THIRTY_DAY_SECONDS : DAY_SECONDS;
       }
@@ -66,6 +71,7 @@ export const authConfig: NextAuthConfig = {
     session({ session, token }) {
       const id = (token.id ?? token.sub) as string | undefined;
       if (id) session.user.id = id;
+      if (token.tenantId) session.user.tenantId = token.tenantId as string;
       return session;
     },
   },

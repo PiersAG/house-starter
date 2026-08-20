@@ -5,12 +5,19 @@
 //   2. the REAL POST /api/auth/signup handler — a new account gets both a user
 //      AND a trial, so the dashboard is reachable immediately (not paywalled).
 //
-// The db singleton and the rate limiter are mocked (route layer); the trial
-// helper tests pass their db explicitly and are unaffected by the db mock.
+// The catalog singleton and the rate limiter are mocked (route layer); the trial
+// helper tests pass their db explicitly and are unaffected by the catalog mock.
+// Tenant provisioning is NOT mocked — the signup paths must really create the
+// new owner's database and register it, so these tests assert that too.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { drizzle } from "drizzle-orm/libsql";
+import { eq } from "drizzle-orm";
 import type { Client } from "@libsql/client";
+import { tenants, users as usersTable } from "@/lib/schema";
 import { createMigrationDatabase, runMigrations } from "@/lib/migrate";
 import { createUser, getUserByEmail, type AppDatabase } from "@/lib/users";
 import { setOwnerValue } from "@/lib/settings/values";
@@ -24,13 +31,30 @@ import { startTrialForNewOwner } from "@/lib/billing/trial";
 const DAY = 86_400_000;
 const NOW = new Date("2026-07-21T12:00:00Z");
 
+// Provisioned tenant databases are real files; keep them out of the repo.
+let tenantDir: string;
+beforeAll(() => {
+  tenantDir = mkdtempSync(join(tmpdir(), "house-starter-signup-tenants-"));
+  process.env.TENANT_PROVISIONER = "file";
+  process.env.TENANT_DB_DIR = tenantDir;
+});
+afterAll(() => {
+  delete process.env.TENANT_PROVISIONER;
+  delete process.env.TENANT_DB_DIR;
+  rmSync(tenantDir, { recursive: true, force: true });
+});
+
 // Route-layer mocks. The trial-helper describe below passes its db explicitly,
-// so this db mock only matters for the signup-route describe.
+// so this catalog mock only matters for the signup describes. Both the
+// convenience proxy and the accessor are provided, because the provisioner uses
+// the accessor and must write its tenant registration into the SAME database
+// the route reads accounts from.
 const holder = vi.hoisted(() => ({ db: null as unknown }));
-vi.mock("@/lib/db", () => ({
-  get db() {
+vi.mock("@/lib/catalog", () => ({
+  get catalogDb() {
     return holder.db;
   },
+  getCatalogDb: () => holder.db,
 }));
 vi.mock("@/lib/rate-limit", () => ({
   getRateLimiter: () => ({ hit: async () => ({ allowed: true }) }),
@@ -125,6 +149,22 @@ describe("POST /api/auth/signup — new owner is trialed, not instantly paywalle
 
     const gate = await requireActiveSubscription(db, body.id);
     expect(gate.allowed).toBe(true);
+
+    // ADR-023: the account now has a tenant, and that tenant is registered in
+    // the catalog. Without this the new owner would sign in to nothing.
+    const [account] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.id, body.id))
+      .all();
+    expect(account.tenantId).toBeTruthy();
+    const registered = await db
+      .select()
+      .from(tenants)
+      .where(eq(tenants.id, account.tenantId!))
+      .all();
+    expect(registered).toHaveLength(1);
+    expect(registered[0].provisioner).toBe("file");
   });
 });
 
@@ -155,6 +195,7 @@ describe("signupAction (the UI signup path) — new owner is trialed", () => {
 
     const user = await getUserByEmail(db, "action@owner.test");
     expect(user).toBeTruthy();
+    expect(user!.tenantId).toBeTruthy();
     const sub = await getSubscriptionByUserId(db, user!.id);
     expect(sub?.trialEndsAt).toBeTruthy();
     expect((await requireActiveSubscription(db, user!.id)).allowed).toBe(true);

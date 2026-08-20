@@ -13,7 +13,7 @@
 
 import type { ReactNode } from "react";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { catalogDb } from "@/lib/catalog";
 import { enforcePaidPage } from "@/lib/billing/enforce";
 import { AppNav } from "@/components/AppNav";
 
@@ -24,7 +24,7 @@ export default async function DashboardLayout({
 }) {
   const session = await auth();
   if (session?.user?.id) {
-    await enforcePaidPage(db, session.user.id);
+    await enforcePaidPage(catalogDb, session.user.id);
   }
   // `@container/page` makes this segment a container context, so any component
   // rendered under /dashboard can size itself against the space the PAGE gives

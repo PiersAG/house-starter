@@ -4,6 +4,16 @@
 //
 // EXTENSION POINT: replace the stub authorize() with a real DB lookup using your schema.
 //
+// TENANT ROUTING (ADR-023). authorize() runs against the CATALOG — the shared
+// control-plane database that holds identity, sessions and billing. That is what
+// makes per-tenant login possible at all: the credential is what tells us which
+// tenant to open, so the credential cannot live in the tenant's own database.
+// On success the account's tenant is resolved (and provisioned if this account
+// has never had one), and the tenant id is put on the JWT. Every later request
+// reads it from the session, never from the caller — see lib/tenant-context.ts.
+// A sign-in that cannot resolve a tenant FAILS: no session is issued, rather
+// than one that would later fall back to some default database.
+//
 // The `callbacks` block below FULLY REPLACES authConfig.callbacks in the
 // NextAuth spread (a `callbacks` key overwrites, it does not merge). It must
 // therefore reproduce authConfig's remember-me session-length logic AND add
@@ -16,7 +26,10 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 import { authConfig } from "@/auth.config";
-import { db } from "@/lib/db";
+import { catalogDb } from "@/lib/catalog";
+import { getTenancyMode } from "@/lib/db";
+import { ensureTenantForUser } from "@/lib/tenant/provisioner";
+import { SHARED_TENANT_ID } from "@/lib/tenant-context";
 import { getUserByEmail } from "@/lib/users";
 import { verifyPassword } from "@/lib/password";
 import {
@@ -46,7 +59,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
 
-        const user = await getUserByEmail(db, parsed.data.email);
+        const user = await getUserByEmail(catalogDb, parsed.data.email);
         if (!user) return null;
 
         const valid = await verifyPassword(
@@ -55,11 +68,22 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         );
         if (!valid) return null;
 
+        // Resolve the tenant BEFORE the session exists. In per-tenant mode this
+        // provisions one on first use (the seeded owner account has none), so an
+        // account can always reach its own data. A failure here is a failed
+        // sign-in — deliberately, since a session without a tenant could only
+        // ever be served the wrong database or none.
+        const tenantId =
+          getTenancyMode() === "shared"
+            ? SHARED_TENANT_ID
+            : await ensureTenantForUser(user.id, { label: user.email });
+
         return {
           id: user.id,
           email: user.email,
           name: user.name ?? undefined,
           rememberMe: parsed.data.rememberMe === "on",
+          tenantId,
         };
       },
     }),
@@ -77,6 +101,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       // length AND the revocation identifiers here.
       if (user?.id) {
         token.id = user.id;
+        // The tenant claim — the whole point of the sign-in pass in per-tenant
+        // mode. Everything downstream reads it from here.
+        token.tenantId = (user as { tenantId?: string }).tenantId;
         const rememberMe = (user as { rememberMe?: boolean }).rememberMe ?? false;
         token.rememberMe = rememberMe;
         token.maxAge = rememberMe ? THIRTY_DAY_SECONDS : DAY_SECONDS;
@@ -90,7 +117,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       const now = Math.floor(Date.now() / 1000);
       return handleTokenRenewal(
         token,
-        (jti) => isSessionRevoked(db, jti),
+        (jti) => isSessionRevoked(catalogDb, jti),
         now,
       );
     },
@@ -98,6 +125,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     session({ session, token }) {
       const id = (token.id ?? token.sub) as string | undefined;
       if (id) session.user.id = id;
+      // The tenant claim, surfaced for lib/tenant-context.ts. Absent on a
+      // session minted before this claim existed — requireTenantId() then
+      // refuses the request rather than guessing a database.
+      if (token.tenantId) {
+        session.user.tenantId = token.tenantId as string;
+      }
       // Expose sessionId so a signOut action can write the revocation record.
       if (token.sessionId) {
         session.user.sessionId = token.sessionId as string;

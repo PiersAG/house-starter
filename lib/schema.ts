@@ -3,6 +3,27 @@
 // Pure table definitions only — importing this module has NO side effects
 // (it never opens a database connection or runs a migration at load time).
 // Application code and the migration logic both import these definitions.
+//
+// TWO DATABASES, ONE SCHEMA MODULE (ADR-023 per_tenant)
+// -----------------------------------------------------
+// The tables below are split across two databases at MIGRATION time
+// (lib/migrate.ts owns the split; this module only declares shapes):
+//
+//   CATALOG / control plane — one shared database per app, CATALOG_DATABASE_URL.
+//     tenants, users, revoked_sessions, subscriptions, stripe_events,
+//     password_reset_tokens, access_grants, setting_definitions,
+//     setting_values, error_events.
+//     Everything needed to IDENTIFY and BILL a caller, and to route them to
+//     their tenant, BEFORE any tenant database is opened. Queried through
+//     `catalogDb` / `getCatalogDb()` in lib/catalog.ts.
+//
+//   TENANT / data plane — one database per tenant, URL held in `tenants`.
+//     tenant_meta, plus every app-data table the builder adds.
+//     Queried through `getDb(tenantId)` in lib/db.ts, with the tenant taken
+//     from the session (lib/tenant-context.ts) and never from the caller.
+//
+// In TENANCY_MODE=shared the two collapse onto DATABASE_URL and every table
+// lives in one database — the split is a routing fact, not a schema fork.
 
 import { sql } from "drizzle-orm";
 import {
@@ -13,13 +34,63 @@ import {
 } from "drizzle-orm/sqlite-core";
 
 /**
- * Passwords are never stored in plain text — only an Argon2id/bcrypt hash.
+ * CATALOG. The tenant registry — the routing table login resolves against.
+ *
+ * One row per tenant (in this factory's product model, one per customer-owner:
+ * the trainer, the instructor, the clinic). `dbUrl` is that tenant's OWN data
+ * database, written by the provisioner at sign-up (lib/tenant/provisioner.ts).
+ *
+ * `dbUrl` is stored as an opaque libSQL URL and is NEVER parsed or branched on:
+ * `file:/var/data/t_ab12.db` and `libsql://app-t_ab12-org.turso.io` take the
+ * identical code path through lib/db.ts::getDb. That property is what lets the
+ * isolation harness prove production's routing using two local files.
+ *
+ * `dbAuthToken` is the per-database credential a remote libSQL URL needs and a
+ * `file:` URL ignores. It is a CREDENTIAL AT REST in this table — the catalog
+ * database is therefore as sensitive as the tenant databases it points at.
+ */
+export const tenants = sqliteTable("tenants", {
+  /** Tenant id — must match lib/db.ts's TENANT_ID_PATTERN, [A-Za-z0-9_]{1,64}. */
+  id: text("id").primaryKey(),
+  /** libSQL URL of this tenant's data database. Opaque; never parsed. */
+  dbUrl: text("db_url").notNull(),
+  /** Per-database auth token for remote URLs; null for `file:` URLs. */
+  dbAuthToken: text("db_auth_token"),
+  /** Which adapter created it — "file" | "turso". Diagnostics only. */
+  provisioner: text("provisioner"),
+  /** Human label (usually the owner's email) — for the CEO, not for routing. */
+  label: text("label"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export type Tenant = typeof tenants.$inferSelect;
+export type NewTenant = typeof tenants.$inferInsert;
+
+/**
+ * CATALOG. Passwords are never stored in plain text — only an Argon2id/bcrypt hash.
+ *
+ * `tenantId` is the login→tenant mapping: authentication resolves it here and
+ * puts it on the session, so no app-data query ever has to guess. Nullable in
+ * DDL only because SQLite cannot ALTER TABLE ADD a NOT NULL column onto an
+ * existing table; at runtime a per-tenant sign-in with a null tenantId fails
+ * closed rather than falling back to any default database.
  */
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   name: text("name"),
+  /**
+   * The tenant this account belongs to — FK to tenants.id. See above.
+   *
+   * Deliberately UNINDEXED: it is read from an already-fetched user row and is
+   * never a query predicate. An index here would also have to be created in the
+   * same DDL batch that adds the column, which SQLite cannot do on an existing
+   * table — the schema-drift reconciler adds the column afterwards.
+   */
+  tenantId: text("tenant_id"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -251,3 +322,32 @@ export const accessGrants = sqliteTable("access_grants", {
 
 export type AccessGrant = typeof accessGrants.$inferSelect;
 export type NewAccessGrant = typeof accessGrants.$inferInsert;
+
+/**
+ * TENANT DATA PLANE. The one row a tenant database carries about itself.
+ *
+ * Written by the provisioner immediately after a tenant database is migrated,
+ * so a database that exists but was never provisioned is distinguishable from
+ * one that was. It is the template's only app-data table: house-starter ships
+ * no domain model, and without a single real tenant-side table the per-tenant
+ * isolation attack would have nothing to plant a sentinel in and nothing to
+ * read back over HTTP. A builder adding `dogs`, `clients` or `sessions` adds
+ * them alongside this one and they are attacked the same way.
+ *
+ * It deliberately lives in the TENANT database and not the catalog: `label` is
+ * the workspace's own name, and reading it is the shortest honest path that
+ * exercises getDb(tenantId) end to end.
+ */
+export const tenantMeta = sqliteTable("tenant_meta", {
+  id: text("id").primaryKey(),
+  /** The tenant this database belongs to. Matches tenants.id in the catalog. */
+  tenantId: text("tenant_id").notNull().unique(),
+  /** Workspace display name. */
+  label: text("label"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export type TenantMeta = typeof tenantMeta.$inferSelect;
+export type NewTenantMeta = typeof tenantMeta.$inferInsert;

@@ -6,7 +6,7 @@
 
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { catalogDb } from "@/lib/catalog";
 import { buildOwnerSettingsView } from "@/lib/settings/service";
 import { SettingControl } from "./SettingControl";
 
@@ -23,7 +23,7 @@ export default async function SettingsPage() {
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const view = await buildOwnerSettingsView(db);
+  const view = await buildOwnerSettingsView(catalogDb);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col p-4 sm:p-6">
