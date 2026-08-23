@@ -68,7 +68,7 @@ const SENTINEL_B = "SENTINEL-TENANT-B-b7e14d";
 
 const A_EMAIL = "tenant-a-a3f92c@isolation.test";
 const B_EMAIL = "tenant-b-b7e14d@isolation.test";
-const PASSWORD = "isolation-attack-pw-8xK2";
+const PASSWORD = "isolation-example-fixture-pw-xK2";
 
 /** Open a raw libSQL client against one database. */
 function clientFor(url: string, authToken?: string) {
