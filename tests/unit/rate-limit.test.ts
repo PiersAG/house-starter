@@ -204,6 +204,70 @@ describe("createRateLimitStore — environment selection rules", () => {
     expect(store).toBeInstanceOf(InMemoryRateLimitStore);
   });
 
+  // THE HOLE THIS CLOSES. The stand-in was documented as safe-environment-only
+  // and nothing enforced it, while safe-env-deploy injects the flag into every
+  // preview — and the preview is the surface real users reach. So the deployed
+  // app was rate-limiting on a per-instance counter that resets on every cold
+  // start: not a slower limit, no limit.
+  it.each(["production", "preview", "development"])(
+    "REFUSES the in-memory stand-in on a deployed instance (VERCEL_ENV=%s)",
+    (vercelEnv) => {
+      expect(() =>
+        createRateLimitStore(
+          { RATE_LIMIT_ALLOW_IN_MEMORY: "true", VERCEL_ENV: vercelEnv },
+          noopFetch,
+        ),
+      ).toThrowError(/cannot be honoured on a deployed instance/);
+    },
+  );
+
+  it("names both variables the operator must set when it refuses", () => {
+    // A refusal a reader cannot act on is an outage with extra steps.
+    expect(() =>
+      createRateLimitStore(
+        { RATE_LIMIT_ALLOW_IN_MEMORY: "true", VERCEL_ENV: "preview" },
+        noopFetch,
+      ),
+    ).toThrowError(/RATE_LIMIT_STORE_URL and RATE_LIMIT_STORE_TOKEN/);
+  });
+
+  it("PREVIEW is refused too — the preview IS the live app (CEO decision, strict)", () => {
+    // Recorded as its own case because the alternative (exempt previews) was
+    // explicitly considered and rejected: the deployed K9Coach is a preview, so
+    // a preview exemption would have left the live app exactly where it was.
+    expect(() =>
+      createRateLimitStore(
+        { RATE_LIMIT_ALLOW_IN_MEMORY: "true", VERCEL_ENV: "preview" },
+        noopFetch,
+      ),
+    ).toThrowError();
+  });
+
+  it("a deployed instance WITH a shared store is fine — the store is the point, not the environment", () => {
+    const store = createRateLimitStore(
+      {
+        RATE_LIMIT_STORE_URL: "https://redis.test",
+        RATE_LIMIT_STORE_TOKEN: "t",
+        VERCEL_ENV: "production",
+      },
+      noopFetch,
+    );
+    expect(store).not.toBeInstanceOf(InMemoryRateLimitStore);
+  });
+
+  it("an empty or whitespace VERCEL_ENV is NOT a deployed instance", () => {
+    // Presence is the signal, so an empty string must not read as deployed —
+    // that would break local dev the moment anything exported the name blank.
+    for (const vercelEnv of ["", "   "]) {
+      expect(
+        createRateLimitStore(
+          { RATE_LIMIT_ALLOW_IN_MEMORY: "true", VERCEL_ENV: vercelEnv },
+          noopFetch,
+        ),
+      ).toBeInstanceOf(InMemoryRateLimitStore);
+    }
+  });
+
   it("fails loudly when nothing is configured — never a silent in-memory default", () => {
     expect(() => createRateLimitStore({}, noopFetch)).toThrowError(
       /Rate limiting is not configured[\s\S]*RATE_LIMIT_STORE_URL/,
@@ -240,21 +304,47 @@ describe("getRateLimiter — process-wide singleton", () => {
   });
 });
 
-describe("clientKeyFromHeaders", () => {
-  it("uses the first x-forwarded-for entry", () => {
-    const headers = new Headers({ "x-forwarded-for": " 203.0.113.9 , 10.0.0.1" });
-    expect(clientKeyFromHeaders(headers)).toBe("203.0.113.9");
-  });
-
-  it("falls back to x-real-ip when the forwarded list is unusable", () => {
+describe("clientKeyFromHeaders — the key must not be caller-controlled", () => {
+  it("prefers x-real-ip, which the proxy sets and does not forward from the client", () => {
     const headers = new Headers({
-      "x-forwarded-for": " ,10.0.0.1",
+      "x-forwarded-for": "1.2.3.4",
       "x-real-ip": "198.51.100.7",
     });
     expect(clientKeyFromHeaders(headers)).toBe("198.51.100.7");
   });
 
+  it("takes the RIGHT-MOST x-forwarded-for hop, not the left-most (finding 6)", () => {
+    // The left-most entry is whatever the CLIENT sent. On a host whose proxy
+    // APPENDS rather than overwrites, taking it lets a caller mint a fresh key
+    // per request and spend a fresh budget — a limiter keyed on a value the
+    // limited party chooses is not a limiter. The right-most hop is the one
+    // appended by the nearest trusted proxy, which a caller cannot forge.
+    const headers = new Headers({
+      "x-forwarded-for": "203.0.113.9, 10.0.0.1, 198.51.100.7",
+    });
+    expect(clientKeyFromHeaders(headers)).toBe("198.51.100.7");
+  });
+
+  it("a forged left-most entry does not change the key", () => {
+    const real = new Headers({ "x-forwarded-for": "198.51.100.7" });
+    const forged = new Headers({
+      "x-forwarded-for": "evil-spoof-1, 198.51.100.7",
+    });
+    expect(clientKeyFromHeaders(forged)).toBe(clientKeyFromHeaders(real));
+  });
+
+  it("skips blank hops rather than keying on an empty string", () => {
+    const headers = new Headers({ "x-forwarded-for": "10.0.0.1, ,  " });
+    expect(clientKeyFromHeaders(headers)).toBe("10.0.0.1");
+  });
+
   it("returns 'unknown' when no client header is present", () => {
     expect(clientKeyFromHeaders(new Headers())).toBe("unknown");
+  });
+
+  it("returns 'unknown' when every forwarded hop is blank", () => {
+    expect(clientKeyFromHeaders(new Headers({ "x-forwarded-for": " , , " }))).toBe(
+      "unknown",
+    );
   });
 });

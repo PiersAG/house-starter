@@ -10,9 +10,26 @@
 //      This is the production / shipped default.
 //   2. Otherwise, RATE_LIMIT_ALLOW_IN_MEMORY="true" (the explicit
 //      safe-environment flag) -> in-memory stand-in. ONLY for the safe/test
-//      build environment where nothing real is reachable (ADR-015).
+//      build environment where nothing real is reachable (ADR-015) — and now
+//      ONLY where VERCEL_ENV is unset. See below.
 //   3. Neither set -> FAIL LOUDLY at startup, naming the missing variable.
 //      We never silently fall back to in-memory as a default.
+//
+// THE HOLE THIS CLOSES. Rule 2 was written for "the safe/test build
+// environment", and this file's own header said so — but nothing enforced it.
+// safe-env-deploy.yml injects RATE_LIMIT_ALLOW_IN_MEMORY=true into every
+// preview, and a safe-env preview is the surface real users reach (production
+// promotion is a manual CEO step that does not exist yet). So the deployed app
+// was running its rate limits on a per-instance counter that resets on every
+// cold start — which on serverless hosting is not a slow limit, it is
+// effectively no limit, while reading in the code as protection.
+//
+// The escape hatch is now keyed on VERCEL_ENV, the same signal
+// lib/tenant/provisioner.ts::selectProvisionerName already treats as THE test
+// for "this is a deployed environment". Deployed and no shared store = refuse to
+// serve. That is deliberately fail-CLOSED and it applies to previews too,
+// because the preview IS the live app (CEO decision, 2026-08-24). Local dev, CI
+// and the isolation harness set no VERCEL_ENV and are unaffected.
 //
 // This module is pure logic with injectable dependencies (clock, fetch) so it
 // is unit-tested directly. Nothing here runs at module load time.
@@ -139,6 +156,13 @@ export type RateLimitEnv = {
   RATE_LIMIT_STORE_URL?: string;
   RATE_LIMIT_STORE_TOKEN?: string;
   RATE_LIMIT_ALLOW_IN_MEMORY?: string;
+  /**
+   * Set by the platform on every deployed instance ("production" | "preview" |
+   * "development"). Its PRESENCE, not its value, is the signal: any value means
+   * a deployed instance, which may not run on the in-memory stand-in. Absent
+   * locally, in CI, and in the isolation harness.
+   */
+  VERCEL_ENV?: string;
 };
 
 /**
@@ -163,7 +187,23 @@ export function createRateLimitStore(
     return new RedisRestRateLimitStore(url, token, fetchImpl);
   }
 
+  const deployed = (env.VERCEL_ENV ?? "").trim().length > 0;
+
   if (env.RATE_LIMIT_ALLOW_IN_MEMORY === "true") {
+    if (deployed) {
+      // The stand-in is refused HERE, not merely discouraged in a comment. A
+      // deployed instance that fell back to it would report rate limiting as
+      // working while enforcing nothing across instances.
+      throw new Error(
+        "RATE_LIMIT_STORE_URL is not set, and RATE_LIMIT_ALLOW_IN_MEMORY=true " +
+          `cannot be honoured on a deployed instance (VERCEL_ENV=${env.VERCEL_ENV}). ` +
+          "The in-memory counter is per-instance and resets on every cold " +
+          "start, so on serverless hosting it is not a slower limit — it is no " +
+          "limit. Set RATE_LIMIT_STORE_URL and RATE_LIMIT_STORE_TOKEN to a " +
+          "shared store (an Upstash-compatible Redis REST endpoint). Refusing " +
+          "to serve with rate limiting that does not hold.",
+      );
+    }
     return new InMemoryRateLimitStore();
   }
 
@@ -201,12 +241,39 @@ export function resetRateLimiterForTests(): void {
  */
 export type HeadersLike = { get(name: string): string | null };
 
-/** Derive a best-effort client identifier from request headers. */
+/**
+ * Derive a best-effort client identifier from request headers.
+ *
+ * ORDER MATTERS, AND IT CHANGED (finding 6). This used to take the LEFT-MOST
+ * `x-forwarded-for` entry. That entry is whatever the CLIENT sent: a proxy that
+ * APPENDS (rather than overwrites) leaves an attacker-chosen value sitting in
+ * front of the real one, so every request could carry a fresh "IP" and spend a
+ * fresh budget — a rate limiter keyed on a value the rate-limited party picks is
+ * not a rate limiter. Vercel normalises the header today, which is why this was
+ * not exploitable there; it is wrong on any host that does not, and the app is
+ * not entitled to assume its host.
+ *
+ * So: `x-real-ip` first (single-valued, set by the proxy, not forwarded from the
+ * client), then the RIGHT-MOST `x-forwarded-for` entry — the hop appended by the
+ * closest trusted proxy, and the only entry a caller further out cannot forge.
+ *
+ * Both surfaces get the SAME key: the widened `HeadersLike` parameter means the
+ * JSON routes (a real `Headers`) and the server actions (ReadonlyHeaders from
+ * `next/headers`, lib/auth-rate-limit.ts) share one derivation, so an attacker
+ * cannot spend a separate budget by switching surface.
+ */
 export function clientKeyFromHeaders(headers: HeadersLike): string {
+  const realIp = headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
+
   const forwarded = headers.get("x-forwarded-for");
   if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+    const hops = forwarded
+      .split(",")
+      .map((hop) => hop.trim())
+      .filter((hop) => hop.length > 0);
+    const nearest = hops[hops.length - 1];
+    if (nearest) return nearest;
   }
-  return headers.get("x-real-ip")?.trim() || "unknown";
+  return "unknown";
 }
