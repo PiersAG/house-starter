@@ -91,6 +91,10 @@ export const billingSettings: SettingDefinition[] = [
     // window, read live by the paid-gate. It stays resolvable even when the
     // client-payments capability is off. See config/kernel.ts.
     requiresFlag: "subscription_billing",
+    // OPERATOR key, for the same reason as the trial length below: how long a
+    // lapsed customer keeps access after a failed payment is this business's
+    // credit policy, not a customer preference.
+    operatorOnly: true,
   },
   {
     // Step 6: the auto-trial length. On signup a trial subscription is created
@@ -99,7 +103,15 @@ export const billingSettings: SettingDefinition[] = [
     // would let a signed-in owner extend their own free trial indefinitely, so
     // it carries ownerEditable:false exactly like the grace window above.
     // Read via getSetting — no literal in the trial code.
+    //
+    // operatorOnly COMPLETES that lock rather than repeating it. ownerEditable
+    // false says "no customer may override the factory value" — it closed the
+    // paywall bypass, and it also froze the number: the only way to run a 30-day
+    // promotion was a code change and a deploy. operatorOnly makes it SETTABLE
+    // again, from the control plane only (scripts/set-operator-setting.ts), with
+    // no app route, no server action and no role that reaches it.
     key: "billing.trial_period_days",
+    operatorOnly: true,
     capability: "billing",
     functionalGroup: "Subscription access",
     label: "Free trial length (days)",

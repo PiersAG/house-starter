@@ -83,7 +83,11 @@ export async function requireActiveSubscription(
   // webhook-stamped pastDueAt; updatedAt is a defensive fallback for a legacy row
   // that predates the column.
   if (sub?.status === "past_due") {
-    const graceDays = await getSetting<number>(db, GRACE_DAYS_KEY);
+    // `db` here IS the catalog — subscriptions and grants are control-plane
+    // rows. The grace window is an OPERATOR key (this business's credit policy,
+    // not a customer preference), so it resolves from the operator value then
+    // the factory default and no tenant database is consulted for it.
+    const graceDays = await getSetting<number>({ catalog: db }, GRACE_DAYS_KEY);
     const anchor = sub.pastDueAt ?? sub.updatedAt;
     const boundary = anchor.getTime() + graceDays * DAY_MS;
     if (now.getTime() < boundary) {

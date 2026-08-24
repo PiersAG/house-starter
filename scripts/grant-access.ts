@@ -9,13 +9,22 @@
 //   tsx scripts/grant-access.ts revoke --email qa@x
 //   tsx scripts/grant-access.ts list        # who currently has access without paying, and why
 //
-// Targets the app's primary DB via DATABASE_URL (+ DATABASE_AUTH_TOKEN). Set the
-// owner's own account with `--type owner` (no --expires → never expires).
+// Targets the CATALOG via lib/catalog.ts::resolveCatalog — CATALOG_DATABASE_URL
+// when set, DATABASE_URL otherwise. It used to read DATABASE_URL directly, which
+// was correct in shared mode and silently wrong in per-tenant mode: `users`,
+// `subscriptions` and `access_grants` are all control-plane tables (ADR-023), so
+// on a per-tenant app whose catalog is a separate database this script would
+// connect to a tenant's data database and report "no such user" for an account
+// that plainly exists. Same resolution the app itself uses, so the CLI and the
+// runtime can no longer disagree about which database holds accounts.
+//
+// Set the owner's own account with `--type owner` (no --expires → never expires).
 // Excluded from coverage (scripts/ is outside the coverage include), like
 // scripts/migrate.ts.
 
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
+import { resolveCatalog } from "../lib/catalog";
 import { getUserByEmail, getUserById, type AppDatabase } from "../lib/users";
 import {
   grantAccess,
@@ -31,10 +40,11 @@ function flag(name: string): string | undefined {
 }
 
 function connect(): AppDatabase {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("grant-access: DATABASE_URL is required (the app's primary database).");
+  // resolveCatalog throws, by name, when neither variable is set — the same
+  // error the app gives, rather than a second wording to recognise.
+  const { url, authToken } = resolveCatalog();
   const remote = /^(libsql|https?|wss?):/i.test(url);
-  const client = createClient({ url, authToken: remote ? process.env.DATABASE_AUTH_TOKEN : undefined });
+  const client = createClient({ url, authToken: remote ? authToken : undefined });
   return drizzle(client) as AppDatabase;
 }
 

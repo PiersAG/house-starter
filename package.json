@@ -20,6 +20,7 @@
     "test:responsive": "playwright test --project=responsive-320-small-phone --project=responsive-390-phone --project=responsive-768-tablet --project=responsive-1280-laptop --project=responsive-1920-desktop",
     "test:layout": "playwright test --project=layout-guardrail",
     "test:layout:update": "playwright test --project=layout-guardrail --update-snapshots",
+    "operator:setting": "tsx scripts/set-operator-setting.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:all-tenants": "tsx scripts/migrate-all-tenants.ts",

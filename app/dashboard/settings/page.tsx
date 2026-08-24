@@ -7,6 +7,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { catalogDb } from "@/lib/catalog";
+import { getTenantDb } from "@/lib/tenant-context";
 import { buildOwnerSettingsView } from "@/lib/settings/service";
 import { SettingControl } from "./SettingControl";
 
@@ -23,7 +24,14 @@ export default async function SettingsPage() {
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const view = await buildOwnerSettingsView(catalogDb);
+  // Both planes: this tenant's chosen values live in its own database, the
+  // app-wide operator values in the catalog. Operator keys are not rendered here
+  // at all (visibleDefinitions omits them) — the catalog handle is what lets a
+  // per-tenant key still show an operator-set default it has not overridden.
+  const view = await buildOwnerSettingsView({
+    tenant: await getTenantDb(),
+    catalog: catalogDb,
+  });
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col p-4 sm:p-6">

@@ -12,11 +12,14 @@
 // must never throw. Any failure (settings capability off, catalog unavailable,
 // or simply no value set) resolves to the neutral fallback.
 //
-// It reads the CATALOG, not a tenant database, and that is deliberate: the app's
-// name belongs to the APP, and this runs on the login page and the marketing
-// pages where there is no session and therefore no tenant. A per-tenant app
-// whose title depended on tenant data would be titleless to every visitor who
-// had not signed in yet.
+// It reads the CATALOG ONLY — no tenant database is passed, and that is
+// deliberate twice over. Mechanically: this runs on the login page and the
+// marketing pages where there is no session and therefore no tenant, so a
+// per-tenant app whose title depended on tenant data would be titleless to every
+// visitor who had not signed in yet. Structurally: `core.app_name` is an
+// OPERATOR key (operatorOnly, see lib/settings/core.settings.ts). One app is one
+// brand. The resolver skips the tenant plane for such a key regardless, so this
+// call site and that classification agree rather than merely coexist.
 
 import { catalogDb } from "@/lib/catalog";
 import { resolveSetting } from "@/lib/settings/resolver";
@@ -28,12 +31,12 @@ import { resolveSetting } from "@/lib/settings/resolver";
 export const APP_NAME_FALLBACK = "App";
 
 /**
- * The effective app display name: the owner-set `core.app_name` if present and
- * non-empty, otherwise {@link APP_NAME_FALLBACK}. Never throws.
+ * The effective app display name: the operator-set `core.app_name` if present
+ * and non-empty, otherwise {@link APP_NAME_FALLBACK}. Never throws.
  */
 export async function getAppName(): Promise<string> {
   try {
-    const { value } = await resolveSetting(catalogDb, "core.app_name");
+    const { value } = await resolveSetting({ catalog: catalogDb }, "core.app_name");
     if (typeof value === "string" && value.trim().length > 0) {
       return value.trim();
     }

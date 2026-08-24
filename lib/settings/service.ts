@@ -9,8 +9,7 @@
 import { ALL_DEFINITIONS } from "@/lib/settings/registry";
 import { resolveSetting } from "@/lib/settings/resolver";
 import { isCapabilityEnabled } from "@/lib/capabilities/flags";
-import type { AppDatabase } from "@/lib/users";
-import type { SettingDefinition, SettingSource } from "@/lib/settings/types";
+import type { SettingDefinition, SettingSource, SettingsStores } from "@/lib/settings/types";
 
 export interface EffectiveSetting {
   key: string;
@@ -43,10 +42,18 @@ export interface CapabilityView {
  * Definitions visible given the current flags. `clientScoped` selects which
  * half of the registry to return: the owner page passes false (owner-facing
  * settings), the client account view passes true (per-client preferences).
+ *
+ * OPERATOR KEYS ARE ABSENT FROM BOTH. They are not rendered read-only and not
+ * shown greyed out — a control the customer cannot use is still a control they
+ * can see and ask about, and more importantly a rendered field is a field some
+ * later change wires up. Trial length, the app's name and its mail identity
+ * belong to whoever runs the service; the app's own screens are not where they
+ * are set. See lib/settings/operator.ts.
  */
 export function visibleDefinitions(clientScoped: boolean): SettingDefinition[] {
   return ALL_DEFINITIONS.filter(
     (def) =>
+      def.operatorOnly !== true &&
       isCapabilityEnabled(def.requiresFlag) &&
       (def.clientScoped === true) === clientScoped,
   );
@@ -72,11 +79,11 @@ function group(settings: EffectiveSetting[]): CapabilityView[] {
 }
 
 async function toEffective(
-  db: AppDatabase,
+  stores: SettingsStores,
   def: SettingDefinition,
   clientId?: string,
 ): Promise<EffectiveSetting> {
-  const { value, source } = await resolveSetting(db, def.key, { clientId });
+  const { value, source } = await resolveSetting(stores, def.key, { clientId });
   return {
     key: def.key,
     capability: def.capability,
@@ -98,10 +105,10 @@ async function toEffective(
  * at owner scope, grouped by capability → functional group.
  */
 export async function buildOwnerSettingsView(
-  db: AppDatabase,
+  stores: SettingsStores,
 ): Promise<CapabilityView[]> {
   const defs = visibleDefinitions(false);
-  const effective = await Promise.all(defs.map((def) => toEffective(db, def)));
+  const effective = await Promise.all(defs.map((def) => toEffective(stores, def)));
   return group(effective);
 }
 
@@ -110,12 +117,12 @@ export async function buildOwnerSettingsView(
  * for this client (their preference wins where set), grouped.
  */
 export async function buildClientSettingsView(
-  db: AppDatabase,
+  stores: SettingsStores,
   clientId: string,
 ): Promise<CapabilityView[]> {
   const defs = visibleDefinitions(true);
   const effective = await Promise.all(
-    defs.map((def) => toEffective(db, def, clientId)),
+    defs.map((def) => toEffective(stores, def, clientId)),
   );
   return group(effective);
 }

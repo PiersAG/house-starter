@@ -27,6 +27,7 @@ import {
 } from "@/lib/billing/subscriptions";
 import { requireActiveSubscription } from "@/lib/billing/gate";
 import { startTrialForNewOwner } from "@/lib/billing/trial";
+import { setOperatorValue } from "@/lib/settings/operator";
 
 const DAY = 86_400_000;
 const NOW = new Date("2026-07-21T12:00:00Z");
@@ -101,11 +102,25 @@ describe("startTrialForNewOwner", () => {
     expect(gate.allowed).toBe(true);
   });
 
-  it("respects the owner-configured trial length (registry key)", async () => {
-    await setOwnerValue(db, "billing.trial_period_days", 30);
+  it("respects the OPERATOR-configured trial length (registry key)", async () => {
+    // Operator, not owner. Trial length is a control-plane value now — a length
+    // a signed-in owner could write is a self-serve paywall bypass, which is
+    // what it was. It is still SETTABLE without a deploy, from the CLI only.
+    await setOperatorValue(db, "billing.trial_period_days", 30);
     await startTrialForNewOwner(db, userId, { now: NOW });
     const sub = await getSubscriptionByUserId(db, userId);
     expect(sub?.trialEndsAt?.getTime()).toBe(NOW.getTime() + 30 * DAY);
+  });
+
+  it("IGNORES a trial length planted in the tenant plane — the paywall bypass", async () => {
+    // The regression test for the finding. setOwnerValue is the primitive
+    // beneath the API validator that refuses operator keys, so this stands in
+    // for a caller that has already defeated every app-level guard. A ten-year
+    // trial must still not happen.
+    await setOwnerValue(db, "billing.trial_period_days", 3650);
+    await startTrialForNewOwner(db, userId, { now: NOW });
+    const sub = await getSubscriptionByUserId(db, userId);
+    expect(sub?.trialEndsAt?.getTime()).toBe(NOW.getTime() + 14 * DAY);
   });
 
   it("EXPIRES — after trialEndsAt the step-5 gate blocks", async () => {
