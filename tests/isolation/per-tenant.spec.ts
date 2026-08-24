@@ -5,20 +5,36 @@
 // Two tenants get their own database. Each is migrated with the app's own
 // tenant-migration path and seeded with its own uniquely named rows. Identity
 // for BOTH lives in the shared catalog, which is what makes a per-tenant login
-// possible at all. The attack then tries, from five directions, to reach tenant
+// possible at all. The attack then tries, from six directions, to reach tenant
 // B's rows while holding tenant A's identity:
 //
 //   1. at the storage layer   — is each database actually separate?
 //   2. at the resolver        — does getDb(tenantId) hand over the right one?
-//   3. over HTTP              — signed in as tenant A, does any data route leak?
-//   4. by tampering           — can the caller name the tenant themselves?
-//   5. by removing a route    — does an unregistered tenant fall back to a
+//   3. over HTTP, reading     — signed in as tenant A, does any data route leak?
+//   4. over HTTP, WRITING     — signed in as tenant A, can a write reach tenant
+//                               B's database, or land in a row every tenant
+//                               shares?
+//   5. by tampering           — can the caller name the tenant themselves?
+//   6. by removing a route    — does an unregistered tenant fall back to a
 //                               shared DATABASE_URL sitting right there?
 //
-// A pass means all five were tried and blocked. Test 3 additionally asserts a
-// POSITIVE: tenant A must be able to read its OWN sentinel over HTTP. Without
-// that, an app whose data routes all returned 500 would "leak nothing" and pass
+// A pass means all six were tried and blocked. Tests 3 and 4 additionally assert
+// a POSITIVE: tenant A must be able to read its OWN sentinel over HTTP, and an
+// accepted write must be observed landing in tenant A's OWN database. Without
+// those, an app whose data routes all returned 500 would "leak nothing" and pass
 // while proving nothing — the failure mode this spec's previous life had.
+//
+// WHY THE WRITE LEG EXISTS (added by SEC.41)
+// -----------------------------------------
+// Legs 1-3 and 5-6 are all READS, and route discovery used to drop every
+// `[dynamic]` segment — so `/api/settings/[key]` was never attacked at all and
+// no cross-tenant WRITE was ever attempted. A real cross-tenant write defect
+// (settings written to one shared catalog row visible to every tenant) therefore
+// passed this gate green. Leg 4 closes that: it writes a unique sentinel as
+// tenant A, then reads the DATABASES back and asks where the sentinel actually
+// landed. It needs no knowledge of what the app stores — a write that reaches
+// tenant B's database, or that lands in a shared control-plane row carrying no
+// attribution to tenant A, fails it whatever the app is.
 //
 // The route list is DISCOVERED from the app's own `app/` directory, not typed
 // into a constant here. A hand-maintained list is a list someone forgets to
@@ -65,6 +81,26 @@ test.skip(
 // leak rather than a coincidence.
 const SENTINEL_A = "SENTINEL-TENANT-A-a3f92c";
 const SENTINEL_B = "SENTINEL-TENANT-B-b7e14d";
+
+// Write-leg canaries. One per SOURCE of the record id the write was aimed at, so
+// the post-write database dumps say not just "a write landed" but "the write
+// aimed at THAT tenant's id landed HERE".
+//
+//   own    — the id came out of tenant A's own database (the caller's own record)
+//   cross  — the id came out of tenant B's database (the cross-tenant attack)
+//   shared — the id came out of the shared catalog, or was fabricated
+const WRITE_SENTINELS = {
+  own: "SENTINEL-WRITE-OWN-9c41ab",
+  cross: "SENTINEL-WRITE-CROSS-5d70fe",
+  shared: "SENTINEL-WRITE-SHARED-2b83cd",
+} as const;
+
+type WriteSource = keyof typeof WRITE_SENTINELS;
+
+/** Verbs the write leg tries. DELETE is deliberately absent: it carries no
+ *  sentinel, so "where did it land" — the whole question this leg asks — has no
+ *  answer for it. Cross-tenant deletion is its own gap, not this one. */
+const WRITE_METHODS = ["POST", "PUT", "PATCH"] as const;
 
 const A_EMAIL = "tenant-a-a3f92c@isolation.test";
 const B_EMAIL = "tenant-b-b7e14d@isolation.test";
@@ -127,23 +163,42 @@ async function seedTenant(
   });
 }
 
-/** Every row of every table in a database, as one searchable string. */
-async function dump(url: string, authToken?: string): Promise<string> {
+/** One row of one table, kept with its table name and its columns intact. */
+type DumpRow = { table: string; row: Record<string, unknown> };
+
+/**
+ * Every row of every table in a database.
+ *
+ * Structured rather than stringified because the write leg has to ask two
+ * questions a flat blob cannot answer: which COLUMN a value came from (to pick a
+ * plausible substitution for a `[dynamic]` route segment), and whether the row a
+ * sentinel landed in carries any attribution to the tenant that wrote it.
+ */
+async function dumpRows(url: string, authToken?: string): Promise<DumpRow[]> {
   const client = clientFor(url, authToken);
   try {
     const tables = await client.execute(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     );
-    const chunks: string[] = [];
-    for (const row of tables.rows) {
-      const name = String(row.name);
+    const rows: DumpRow[] = [];
+    for (const t of tables.rows) {
+      const name = String(t.name);
       const contents = await client.execute(`SELECT * FROM "${name}"`);
-      for (const r of contents.rows) chunks.push(JSON.stringify(r));
+      for (const r of contents.rows) {
+        rows.push({ table: name, row: r as unknown as Record<string, unknown> });
+      }
     }
-    return chunks.join("\n");
+    return rows;
   } finally {
     client.close();
   }
+}
+
+/** Every row of every table in a database, as one searchable string. */
+async function dump(url: string, authToken?: string): Promise<string> {
+  return (await dumpRows(url, authToken))
+    .map(({ row }) => JSON.stringify(row))
+    .join("\n");
 }
 
 /**
@@ -162,19 +217,36 @@ const PUBLIC_PREFIXES = [
   "/api/health", // deliberately unauthenticated liveness probe
 ];
 
+/** A route as discovered from the source tree, with its shape preserved. */
+type DiscoveredRoute = {
+  /** URL path, `[dynamic]` segments left in place: `/api/settings/[key]`. */
+  path: string;
+  /** Parameter names, in path order: `["key"]`. Empty for a static route. */
+  params: string[];
+  /** `route.ts` is an API handler; `page.tsx` is a page. */
+  kind: "api" | "page";
+};
+
 /**
  * Discover the app's authenticated data routes by walking `app/`.
  *
  * Next.js App Router: a directory holding `page.tsx` is a page route and one
  * holding `route.ts` is an API route; `(group)` and `@slot` directories are not
- * URL segments. `[dynamic]` segments are skipped — there is no honest value to
- * substitute for another tenant's record id, and a guessed one would test a 404
- * rather than an authorization boundary.
+ * URL segments.
+ *
+ * `[dynamic]` segments are KEPT, with their parameter names, rather than dropped
+ * (SEC.41). Dropping them was defended as "there is no honest value to substitute
+ * for another tenant's record id" — but there is: the id the OTHER TENANT'S OWN
+ * DATABASE says it holds. Substituting a guess would indeed only test a 404;
+ * substituting tenant B's real id tests the authorization boundary exactly. So
+ * the parameter names travel with the route and the caller supplies values (see
+ * `candidatesFor`). Silently skipping them meant `/api/settings/[key]` — the
+ * route that carried a real cross-tenant write defect — was never attacked.
  */
-function discoverRoutes(appDir: string): string[] {
-  const found: string[] = [];
+function discoverRoutes(appDir: string): DiscoveredRoute[] {
+  const found: DiscoveredRoute[] = [];
 
-  function walk(dir: string, urlPath: string) {
+  function walk(dir: string, urlPath: string, params: string[]) {
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -182,31 +254,67 @@ function discoverRoutes(appDir: string): string[] {
       return;
     }
     const names = entries.map((e) => e.name);
-    if (names.includes("page.tsx") || names.includes("route.ts")) {
-      found.push(urlPath === "" ? "/" : urlPath);
+    const isApi = names.includes("route.ts");
+    if (names.includes("page.tsx") || isApi) {
+      found.push({
+        path: urlPath === "" ? "/" : urlPath,
+        params: [...params],
+        kind: isApi ? "api" : "page",
+      });
     }
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const name = entry.name;
-      if (name.startsWith("_") || name.startsWith("[")) continue;
+      if (name.startsWith("_")) continue;
+      const isDynamic = name.startsWith("[");
       const segment =
-        name.startsWith("(") || name.startsWith("@") ? "" : `/${name}`;
-      walk(join(dir, name), urlPath + segment);
+        !isDynamic && (name.startsWith("(") || name.startsWith("@"))
+          ? ""
+          : `/${name}`;
+      // `[id]`, `[...slug]` and `[[...slug]]` all name one parameter.
+      const param = isDynamic
+        ? name.replace(/^\[+\.{0,3}/, "").replace(/\]+$/, "")
+        : null;
+      walk(
+        join(dir, name),
+        urlPath + segment,
+        param ? [...params, param] : params,
+      );
     }
   }
 
-  walk(appDir, "");
+  walk(appDir, "", []);
 
   return found
-    .filter((route) => route !== "/")
+    .filter((route) => route.path !== "/")
     .filter(
       (route) =>
-        !PUBLIC_PREFIXES.some((p) => route === p || route.startsWith(`${p}/`)),
+        !PUBLIC_PREFIXES.some(
+          (p) => route.path === p || route.path.startsWith(`${p}/`),
+        ),
     )
-    .sort();
+    .sort((a, b) => a.path.localeCompare(b.path));
 }
 
-const DATA_ROUTES = discoverRoutes(join(process.cwd(), "app"));
+const ALL_ROUTES = discoverRoutes(join(process.cwd(), "app"));
+
+/**
+ * The read/tamper legs navigate to routes with a browser, so they take the
+ * STATIC routes only — a URL still carrying a literal `[key]` segment is not a
+ * URL. This is byte-for-byte the list those legs attacked before SEC.41; the
+ * dynamic routes are new surface for the write leg, not a change to theirs.
+ */
+const DATA_ROUTES = ALL_ROUTES.filter((r) => r.params.length === 0).map(
+  (r) => r.path,
+);
+
+/**
+ * Write targets: API handlers only. A page route accepts a POST too (that is
+ * what a server action is), but only carrying an action id the framework mints
+ * at build time, which no test can synthesise — so a POST at a page proves
+ * nothing. Server-action throttling and authorization are covered elsewhere.
+ */
+const WRITE_ROUTES = ALL_ROUTES.filter((r) => r.kind === "api");
 
 /** The one route that reads tenant data and returns it — the positive control. */
 const TENANT_DATA_ROUTE = "/api/tenant";
@@ -219,6 +327,75 @@ async function loginAs(page: Page, email: string): Promise<boolean> {
   await page.getByRole("button", { name: /sign in|log in/i }).click();
   await page.waitForLoadState("networkidle");
   return !new URL(page.url()).pathname.startsWith("/login");
+}
+
+/**
+ * Plausible values for one `[dynamic]` route parameter, harvested from a real
+ * database dump.
+ *
+ * The app is not asked what its ids look like and this file does not guess:
+ * every candidate is a value the database actually holds. A column whose NAME
+ * matches the parameter is the strongest match (`[key]` → `setting_definitions.key`),
+ * then the id-shaped columns. Values that would need URL-encoding are dropped —
+ * an encoded probe tests the router, not the authorization boundary.
+ */
+function candidatesFor(rows: DumpRow[], param: string, limit = 3): string[] {
+  const exact: string[] = [];
+  const idish: string[] = [];
+
+  for (const { row } of rows) {
+    for (const [column, value] of Object.entries(row)) {
+      if (typeof value !== "string") continue;
+      if (!value || value.length > 96) continue;
+      if (!/^[A-Za-z0-9._~-]+$/.test(value)) continue;
+      if (column === param) exact.push(value);
+      else if (column === "id" || column === "key" || column === "slug" || column.endsWith("_id")) {
+        idish.push(value);
+      }
+    }
+  }
+
+  return [...new Set([...exact, ...idish])].slice(0, limit);
+}
+
+/**
+ * Concrete URLs for one discovered route, substituting each parameter from one
+ * source's candidate pool. A static route yields itself.
+ */
+function urlsFor(route: DiscoveredRoute, pool: string[], fallback: string): string[] {
+  if (route.params.length === 0) return [route.path];
+  const values = pool.length > 0 ? pool : [fallback];
+  return [
+    ...new Set(
+      values.map((value) =>
+        route.params.reduce(
+          (path, param) =>
+            path.replace(
+              new RegExp(`\\[+\\.{0,3}${param}\\]+`),
+              encodeURIComponent(value),
+            ),
+          route.path,
+        ),
+      ),
+    ),
+  ];
+}
+
+/**
+ * A request body carrying the sentinel under the field names apps actually use.
+ * Best-effort by design: a body an app rejects costs one 400 and proves nothing,
+ * while a body it ACCEPTS is exactly what the leg needs. The positive control is
+ * what stops "everything was rejected" reading as a pass.
+ */
+function writeBody(sentinel: string): Record<string, string> {
+  return {
+    value: sentinel,
+    name: sentinel,
+    label: sentinel,
+    title: sentinel,
+    notes: sentinel,
+    description: sentinel,
+  };
 }
 
 test.describe("per-tenant data isolation", () => {
@@ -364,6 +541,139 @@ test.describe("per-tenant data isolation", () => {
         B_EMAIL,
       );
     }
+  });
+
+  test("a cross-tenant WRITE is refused, and an accepted write lands in the caller's own database", async ({
+    page,
+  }) => {
+    // THE LEG THAT WAS MISSING. Everything above reads. This one writes, and
+    // then looks at the databases themselves rather than at what the app said —
+    // the app reporting `{ok: true}` is not evidence about which database the
+    // row went into, and the defect this catches reported exactly that.
+    expect(
+      WRITE_ROUTES.length,
+      "no API routes were discovered under app/ — there is nothing to attempt a " +
+        "write against, so cross-tenant writes are UNPROVEN. Either this app has " +
+        'no API layer (declare "tenancy": "none" in build-state.json) or route ' +
+        "discovery is broken.",
+    ).toBeGreaterThan(0);
+
+    const catalog = resolveCatalog();
+
+    // Candidate record ids come from the databases themselves, per source. The
+    // `cross` pool is the attack: real ids that belong to tenant B, aimed at
+    // routes tenant A is allowed to call.
+    const pools: Record<WriteSource, DumpRow[]> = {
+      own: await dumpRows(URL_A!),
+      cross: await dumpRows(URL_B!),
+      shared: await dumpRows(catalog.url, catalog.authToken),
+    };
+
+    const signedIn = await loginAs(page, A_EMAIL);
+    expect(
+      signedIn,
+      `could not sign in as tenant A (${A_EMAIL}) — the cross-tenant WRITE ` +
+        "attack cannot be mounted, so isolation is UNPROVEN, which is not the " +
+        "same as proven safe.",
+    ).toBe(true);
+
+    const attempts: { url: string; method: string; source: WriteSource; status: number }[] = [];
+
+    for (const route of WRITE_ROUTES) {
+      for (const source of ["own", "cross", "shared"] as const) {
+        const sentinel = WRITE_SENTINELS[source];
+        const urls = urlsFor(
+          route,
+          route.params.flatMap((param) => candidatesFor(pools[source], param)),
+          `isolation-probe-${source}`,
+        );
+        // A static route is the caller's own scope by definition — attempting it
+        // once, as `own`, is the whole of it.
+        if (route.params.length === 0 && source !== "own") continue;
+
+        for (const url of urls) {
+          for (const method of WRITE_METHODS) {
+            const response = await page.request.fetch(url, {
+              method,
+              data: writeBody(sentinel),
+              headers: { "content-type": "application/json" },
+              failOnStatusCode: false,
+              timeout: 15_000,
+            });
+            attempts.push({ url, method, source, status: response.status() });
+          }
+        }
+      }
+    }
+
+    const afterA = await dumpRows(URL_A!);
+    const afterB = await dumpRows(URL_B!);
+    const afterCatalog = await dumpRows(catalog.url, catalog.authToken);
+    const textOf = (rows: DumpRow[]) =>
+      rows.map(({ row }) => JSON.stringify(row)).join("\n");
+    const accepted = attempts.filter((a) => a.status >= 200 && a.status < 300);
+
+    // (a) NOTHING tenant A wrote may appear in tenant B's database — whatever id
+    //     it was aimed at, whatever the app answered.
+    const textB = textOf(afterB);
+    for (const [source, sentinel] of Object.entries(WRITE_SENTINELS)) {
+      expect(
+        textB,
+        `a write issued by tenant A (aimed at a ${source}-sourced id) landed in ` +
+          "tenant B's DATABASE. This is a cross-tenant write: one customer " +
+          "modified another customer's data.",
+      ).not.toContain(sentinel);
+    }
+
+    // (b) A write may legitimately touch the shared catalog — that is where
+    //     control-plane rows live — but only in a row that is ATTRIBUTED to the
+    //     tenant that wrote it. A sentinel sitting in a catalog row that names
+    //     no tenant and no user is a value every tenant of this app now shares,
+    //     which is a cross-tenant write with extra steps. This is precisely the
+    //     shape of the settings defect: one `(key, scope, client_id)` row, no
+    //     tenant column, written by whoever asked last.
+    const attribution = [TENANT_A, `user-${TENANT_A}`, A_EMAIL];
+    const strayed = afterCatalog
+      .filter(({ row }) => {
+        const text = JSON.stringify(row);
+        return (
+          Object.values(WRITE_SENTINELS).some((s) => text.includes(s)) &&
+          !attribution.some((id) => text.includes(id))
+        );
+      })
+      .map(({ table, row }) => `${table}: ${JSON.stringify(row)}`);
+    expect(
+      strayed,
+      "a write issued by tenant A landed in the SHARED CATALOG in a row that " +
+        "carries no attribution to tenant A — so every other tenant reads the " +
+        "value tenant A just set. App data belongs in the tenant database " +
+        "(ADR-023); a control-plane row must name the tenant or user it is for.",
+    ).toEqual([]);
+
+    // (c) POSITIVE CONTROL. Without this, an app that answered every write with
+    //     a 500 would satisfy (a) and (b) perfectly and prove nothing — the same
+    //     vacuity the read leg's positive control exists to stop. The write path
+    //     has to be shown WORKING before "no leak" means anything.
+    expect(
+      accepted.length,
+      "not one write attempt was accepted, so the leak checks above passed " +
+        "vacuously. Either the app exposes no writable API route (its writes go " +
+        "through server actions, which carry a build-time action id no test can " +
+        "synthesise — give the write path an API route, or declare " +
+        '"tenancy": "none"), or every write is failing for an unrelated reason. ' +
+        `Attempts: ${attempts.map((a) => `${a.method} ${a.url} → ${a.status}`).join(", ")}`,
+    ).toBeGreaterThan(0);
+
+    const textA = textOf(afterA);
+    const landed = accepted.filter((a) => textA.includes(WRITE_SENTINELS[a.source]));
+    expect(
+      landed.length,
+      "a write was ACCEPTED (2xx) but its value is nowhere in tenant A's own " +
+        "database — so the app is writing app data somewhere other than the " +
+        "caller's tenant database. Check where the accepted route's write went: " +
+        "the shared catalog is the usual answer, and it is the wrong one. " +
+        `Accepted: ${accepted.map((a) => `${a.method} ${a.url} → ${a.status}`).join(", ")}`,
+    ).toBeGreaterThan(0);
   });
 
   test("tampered tenant identifiers are rejected, not normalised", async ({
