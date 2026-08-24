@@ -12,7 +12,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { catalogDb } from "@/lib/catalog";
 import { requestPasswordReset } from "@/lib/password-reset";
-import { clientKeyFromHeaders, getRateLimiter } from "@/lib/rate-limit";
+import { AUTH_RATE_LIMITS, checkAuthRateLimit } from "@/lib/auth-rate-limit";
+import { canonicalBaseUrl, type AppUrlEnv } from "@/lib/app-url";
 
 export const runtime = "nodejs";
 
@@ -20,17 +21,15 @@ const forgotPasswordSchema = z.object({
   email: z.string().email("Enter a valid email address."),
 });
 
-const FORGOT_RATE_LIMIT = { limit: 5, windowSeconds: 60 };
-
 // The one response users see whether or not the address is registered.
 const GENERIC_RESPONSE = {
   message: "If an account exists for that email, a password-reset link is on its way.",
 };
 
 export async function POST(request: Request): Promise<Response> {
-  const rate = await getRateLimiter().hit(
-    `forgot-password:${clientKeyFromHeaders(request.headers)}`,
-    FORGOT_RATE_LIMIT,
+  const rate = await checkAuthRateLimit(
+    AUTH_RATE_LIMITS.forgotPassword,
+    request.headers,
   );
   if (!rate.allowed) {
     return NextResponse.json(
@@ -57,8 +56,14 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const origin = new URL(request.url).origin;
-  await requestPasswordReset(catalogDb, parsed.data.email, { baseUrl: origin });
+  // NOT `new URL(request.url).origin` — that is the caller's Host header, and a
+  // forged one mints a REAL reset token inside a link pointing at the attacker.
+  // See lib/app-url.ts.
+  const baseUrl = canonicalBaseUrl(
+    process.env as AppUrlEnv,
+    new URL(request.url).origin,
+  );
+  await requestPasswordReset(catalogDb, parsed.data.email, { baseUrl });
 
   return NextResponse.json(GENERIC_RESPONSE);
 }

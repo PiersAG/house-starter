@@ -43,6 +43,25 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // The auth-throttling seam (SEC.42). lib/rate-limit.ts decides HOW a
+        // limit is counted; this decides WHICH surfaces are limited and whether
+        // a surface and its API twin share one budget. An uncovered branch here
+        // is an unlimited door.
+        "**/lib/auth-rate-limit.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        // Where links the app SENDS OUT get their domain. An uncovered branch
+        // is a path that could fall back to the caller's Host header, which is
+        // how a password-reset link ends up pointing at an attacker.
+        "**/lib/app-url.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
         "**/lib/users.ts": {
           lines: 100,
           statements: 100,

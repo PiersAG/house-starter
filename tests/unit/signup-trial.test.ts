@@ -63,6 +63,13 @@ vi.mock("@/lib/rate-limit", () => ({
 // Mock @/lib/auth so importing the signup server action does not load auth.config
 // (which throws at import without AUTH_SECRET); signIn resolves without redirecting.
 vi.mock("@/lib/auth", () => ({ signIn: vi.fn(async () => {}) }));
+// The signup SERVER ACTION is throttled now (SEC.42), and a server action takes
+// the client key from next/headers — which has no store outside a real request.
+// Supplying one is what a unit test of a server action has to do; the throttle
+// itself is tested in tests/unit/auth-rate-limit.test.ts.
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ "x-forwarded-for": "203.0.113.7" }),
+}));
 
 // Imported after the mocks are registered.
 import { POST as signupRoute } from "@/app/api/auth/signup/route";

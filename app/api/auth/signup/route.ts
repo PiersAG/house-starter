@@ -10,7 +10,7 @@ import { catalogDb } from "@/lib/catalog";
 import { registerUser, RegistrationError } from "@/lib/users";
 import { startTrialForNewOwner } from "@/lib/billing/trial";
 import { ensureTenantForUser } from "@/lib/tenant/provisioner";
-import { clientKeyFromHeaders, getRateLimiter } from "@/lib/rate-limit";
+import { AUTH_RATE_LIMITS, checkAuthRateLimit } from "@/lib/auth-rate-limit";
 
 export const runtime = "nodejs";
 
@@ -20,18 +20,15 @@ const signupSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
 });
 
-// Auth endpoints are rate-limited (quality baseline items 4 and 11). The store
-// is the shared-store adapter by default; see lib/rate-limit.ts.
-// Default signup rate limit. The VALUE is the lever each app tunes — the EXISTENCE of
-// rate-limiting is required by the quality baseline. 5/60s defeats trivial automation
-// while remaining permissive for legitimate retries; apps with genuine high-volume signup
-// (e.g. enterprise bulk-onboarding) raise this value in their build.
-const SIGNUP_RATE_LIMIT = { limit: 5, windowSeconds: 60 };
+// Auth endpoints are rate-limited (quality baseline items 4 and 11). The limits
+// and the buckets live in lib/auth-rate-limit.ts — ONE definition shared with
+// the signup SERVER ACTION, which posts to the same bucket. Two definitions
+// would drift, and two buckets would hand an attacker two budgets.
 
 export async function POST(request: Request): Promise<Response> {
-  const rate = await getRateLimiter().hit(
-    `signup:${clientKeyFromHeaders(request.headers)}`,
-    SIGNUP_RATE_LIMIT,
+  const rate = await checkAuthRateLimit(
+    AUTH_RATE_LIMITS.signup,
+    request.headers,
   );
   if (!rate.allowed) {
     return NextResponse.json(
@@ -58,6 +55,28 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message ?? "Invalid signup details." },
       { status: 400 },
+    );
+  }
+
+  // The tighter provisioning ceiling — see lib/auth-rate-limit.ts. Checked
+  // after validation so a malformed request cannot spend the budget, and before
+  // registration because this route (unlike the server action) reports failure
+  // as a status code the caller can retry cleanly.
+  const provisionRate = await checkAuthRateLimit(
+    AUTH_RATE_LIMITS.signupProvision,
+    request.headers,
+  );
+  if (!provisionRate.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Too many new workspaces have been created from this network. " +
+          "Please try again later.",
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(provisionRate.retryAfterSeconds) },
+      },
     );
   }
 
