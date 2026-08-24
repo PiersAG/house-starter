@@ -95,8 +95,10 @@ export const billingSettings: SettingDefinition[] = [
   {
     // Step 6: the auto-trial length. On signup a trial subscription is created
     // for this many days (lib/billing/trial.ts) so a new owner is not instantly
-    // paywalled. Owner-configurable (unlike the grace window) — hence no
-    // ownerEditable:false. Read via getSetting — no literal in the trial code.
+    // paywalled. Factory policy, NOT owner-configurable: an app-side write here
+    // would let a signed-in owner extend their own free trial indefinitely, so
+    // it carries ownerEditable:false exactly like the grace window above.
+    // Read via getSetting — no literal in the trial code.
     key: "billing.trial_period_days",
     capability: "billing",
     functionalGroup: "Subscription access",
@@ -106,6 +108,7 @@ export const billingSettings: SettingDefinition[] = [
     valueType: "integer",
     factoryDefault: 14,
     bounds: { min: 0, max: 365 },
+    ownerEditable: false,
     // KERNEL (subscription_billing) so it always resolves, like the grace window.
     requiresFlag: "subscription_billing",
   },
