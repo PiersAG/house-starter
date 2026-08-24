@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   name TEXT,
   tenant_id TEXT,
+  role TEXT NOT NULL DEFAULT 'owner',
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
@@ -114,18 +115,22 @@ CREATE TABLE IF NOT EXISTS setting_definitions (
   bounds TEXT,
   owner_editable INTEGER NOT NULL DEFAULT 1,
   client_scoped INTEGER NOT NULL DEFAULT 0,
-  requires_flag TEXT
+  requires_flag TEXT,
+  -- 1 = an operator/CEO control, absent from every app screen and refused by
+  -- every app write path. Constant default, so reconcileColumns can add it to an
+  -- existing catalog. Descriptive only: enforcement is in code
+  -- (lib/settings/{resolver,validation,service}.ts), never read from this row.
+  operator_only INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS setting_definitions_capability_idx ON setting_definitions(capability);
 
-CREATE TABLE IF NOT EXISTS setting_values (
-  key TEXT NOT NULL REFERENCES setting_definitions(key),
-  scope TEXT NOT NULL CHECK (scope IN ('owner','client')),
-  client_id TEXT NOT NULL DEFAULT '',
+-- Operator/CEO values. Control plane: no app route writes this table; the only
+-- writer is scripts/set-operator-setting.ts. See lib/schema.ts.
+CREATE TABLE IF NOT EXISTS operator_setting_values (
+  key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL,
-  updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-  PRIMARY KEY (key, scope, client_id)
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE TABLE IF NOT EXISTS error_events (
@@ -169,6 +174,21 @@ CREATE TABLE IF NOT EXISTS tenant_meta (
   tenant_id TEXT NOT NULL UNIQUE,
   label TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+-- Per-tenant chosen values. Moved here from the catalog: this is where
+-- settings-registry-spec §3 always put it, and a catalog copy is one global row
+-- every tenant shares. No REFERENCES setting_definitions(key) — that catalogue
+-- stays in the catalog, and a cross-database FK fails on every insert under
+-- PRAGMA foreign_keys = ON. Unknown keys are refused by
+-- lib/settings/validation.ts before any write.
+CREATE TABLE IF NOT EXISTS setting_values (
+  key TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK (scope IN ('owner','client')),
+  client_id TEXT NOT NULL DEFAULT '',
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (key, scope, client_id)
 );
 `;
 
@@ -228,13 +248,33 @@ function splitTopLevel(body: string): string[] {
 }
 
 /**
+ * Strip `-- …` line comments, for PARSING only — never for execution.
+ *
+ * The reconciler below reads a column's declaration text and replays it as
+ * `ALTER TABLE … ADD COLUMN <name> <def>`. A `--` comment sitting inside a
+ * CREATE TABLE body is not a column, but the splitter had no notion of comments,
+ * so it became one: the comment text was emitted as a column name and the ALTER
+ * failed with "incomplete input" — a migration that dies on every database,
+ * caused by writing a comment. That is a trap laid for the next person to
+ * document a column, so it is closed here rather than by not writing comments.
+ *
+ * Deliberately naive (no string-literal awareness): this DDL contains no string
+ * literal holding `--`, and the result is used ONLY to decide which columns to
+ * add. The DDL that actually executes is never passed through here.
+ */
+function stripSqlComments(sql: string): string {
+  return sql.replace(/--[^\n]*/g, "");
+}
+
+/**
  * The column definitions declared per table in `MIGRATION_SQL` — the single
  * source of truth. Parsed (not hand-listed) so the reconciler below can never
  * drift from the schema: a column added to a CREATE TABLE is picked up here
  * automatically. Table-level constraints (PRIMARY KEY(...), UNIQUE(...), etc.)
  * are skipped — only real columns are returned, as { name, def }.
  */
-function declaredColumns(sql: string): Map<string, { name: string; def: string }[]> {
+function declaredColumns(input: string): Map<string, { name: string; def: string }[]> {
+  const sql = stripSqlComments(input);
   const tables = new Map<string, { name: string; def: string }[]>();
   const re = /CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(([\s\S]*?)\)\s*;/g;
   let m: RegExpExecArray | null;

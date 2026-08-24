@@ -136,13 +136,15 @@ describe("capability both-states — settings read/write/seed inertness (step 3,
       if (on) {
         // READ resolves (factory default); WRITE is accepted (values layer does
         // not type-check — that is the API validator's job, tested elsewhere).
-        await expect(resolveSetting(db, sample)).resolves.toBeDefined();
+        await expect(
+          resolveSetting({ tenant: db, catalog: db }, sample),
+        ).resolves.toBeDefined();
         await expect(setOwnerValue(db, sample, "x")).resolves.toBeUndefined();
       } else {
         // READ and WRITE both refuse — the key is absent, not merely hidden.
-        await expect(resolveSetting(db, sample)).rejects.toBeInstanceOf(
-          CapabilityDisabledError,
-        );
+        await expect(
+          resolveSetting({ tenant: db, catalog: db }, sample),
+        ).rejects.toBeInstanceOf(CapabilityDisabledError);
         await expect(setOwnerValue(db, sample, "x")).rejects.toBeInstanceOf(
           CapabilityDisabledError,
         );
@@ -274,14 +276,36 @@ describe("kernel switches — declared, hidden, and ON (incl. auth, step 6)", ()
 });
 
 describe("kernel invariant — subscription_billing carries the grace setting", () => {
-  it("billing.subscription_grace_days visibility tracks the subscription_billing kernel flag", () => {
-    const graceVisible = visibleKeys().has("billing.subscription_grace_days");
-    // In a real build the kernel flag is on and the setting is visible. Inside a
-    // throwaway checkout that flipped it off, both go false together — proving it
-    // is a real switch, not unconditional behaviour.
-    expect(graceVisible).toBe(enabledKernel.subscription_billing === true);
-    expect(isFlagEnabled("subscription_billing")).toBe(
-      enabledKernel.subscription_billing === true,
-    );
+  // This used to assert UI VISIBILITY tracked the kernel flag. It cannot any
+  // more, and should not: billing.subscription_grace_days is an OPERATOR key, so
+  // it is absent from every settings screen at every flag posture — the whole
+  // point being that a customer must not see, let alone set, how long they keep
+  // access after not paying. The invariant the test was really protecting is
+  // that the kernel flag is a REAL switch over that key, not decoration, and
+  // resolvability is where that now shows.
+  let client: Client;
+  let db: AppDatabase;
+  beforeEach(async () => {
+    client = createMigrationDatabase(":memory:");
+    await runMigrations(client);
+    db = drizzle(client) as AppDatabase;
+  });
+  afterEach(() => client.close());
+
+  it("billing.subscription_grace_days RESOLVES iff the subscription_billing kernel flag is on", async () => {
+    const on = enabledKernel.subscription_billing === true;
+    expect(isFlagEnabled("subscription_billing")).toBe(on);
+
+    const read = resolveSetting({ tenant: db, catalog: db }, "billing.subscription_grace_days");
+    if (on) {
+      await expect(read).resolves.toBeDefined();
+    } else {
+      // Absent, not merely hidden — the same posture every off capability has.
+      await expect(read).rejects.toBeInstanceOf(CapabilityDisabledError);
+    }
+  });
+
+  it("is never rendered on a settings screen, at either flag posture", () => {
+    expect(visibleKeys().has("billing.subscription_grace_days")).toBe(false);
   });
 });

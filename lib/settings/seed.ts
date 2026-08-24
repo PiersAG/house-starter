@@ -16,8 +16,9 @@ import type { SettingDefinition } from "@/lib/settings/types";
 const UPSERT_SQL = `
 INSERT INTO setting_definitions (
   key, capability, functional_group, label, description, value_type,
-  enum_values, factory_default, bounds, owner_editable, client_scoped, requires_flag
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  enum_values, factory_default, bounds, owner_editable, client_scoped, requires_flag,
+  operator_only
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET
   capability = excluded.capability,
   functional_group = excluded.functional_group,
@@ -29,7 +30,8 @@ ON CONFLICT(key) DO UPDATE SET
   bounds = excluded.bounds,
   owner_editable = excluded.owner_editable,
   client_scoped = excluded.client_scoped,
-  requires_flag = excluded.requires_flag;
+  requires_flag = excluded.requires_flag,
+  operator_only = excluded.operator_only;
 `;
 
 function argsFor(def: SettingDefinition): InValue[] {
@@ -46,6 +48,7 @@ function argsFor(def: SettingDefinition): InValue[] {
     def.ownerEditable === false ? 0 : 1,
     def.clientScoped === true ? 1 : 0,
     def.requiresFlag ?? null,
+    def.operatorOnly === true ? 1 : 0,
   ];
 }
 

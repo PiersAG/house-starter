@@ -3,18 +3,33 @@
 // guard is actually wired in — a write to a key whose capability is OFF is 404'd
 // before auth, before validation, before any DB touch.
 //
-// Auth and the value store are mocked so the handler runs without a live session
-// or database: the 404 path returns before either is used, and the allowed path
-// only needs the (pure) validator plus a no-op writer. The test is FLAG-AWARE,
-// so it passes in every leg of the CI both-states matrix.
+// Auth, the tenant handle and the value store are mocked so the handler runs
+// without a live session or database: the 404 path returns before any is used,
+// and the allowed path only needs the (pure) validator plus a no-op writer. The
+// test is FLAG-AWARE, so it passes in every leg of the CI both-states matrix.
+//
+// The session carries `role: "owner"` because owner-scope writes now require it
+// (lib/authz.ts) — see the explicit non-owner leg at the bottom, which is the
+// assertion that this is a real check and not scenery.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { enabledCapabilities } from "@/config/capabilities";
 
 // Authenticated owner for every call — so a 404 can only come from the
 // capability guard, never from a missing session.
-vi.mock("@/lib/auth", () => ({
-  auth: vi.fn(async () => ({ user: { id: "owner-1" } })),
+const session = vi.hoisted(() => ({
+  auth: vi.fn(async (): Promise<unknown> => ({
+    user: { id: "owner-1", tenantId: "tenant-1", role: "owner" },
+  })),
+}));
+vi.mock("@/lib/auth", () => session);
+
+// The handler now writes the TENANT database (finding 1), so it resolves a
+// tenant handle. Mocked to a sentinel: what matters here is that the writer is
+// called, and tests/unit/settings-planes.test.ts proves WHICH database receives
+// it against three real ones.
+vi.mock("@/lib/tenant-context", () => ({
+  getTenantDb: vi.fn(async () => ({}) as never),
 }));
 
 // No-op the value store: the allowed path must not need a real database.
@@ -69,17 +84,57 @@ describe("PUT /api/settings/[key] — capability guard (R2)", () => {
     }
   });
 
-  it("core.app_name is always writable (no capability flag)", async () => {
-    const res = await PUT(...putReq("core.app_name", "My App"));
+  it("core.client_self_registration is always writable (no capability flag)", async () => {
+    // A CORE key with no flag AND no operator claim — the per-tenant case. It
+    // used to be core.app_name here; that key is an operator control now (one
+    // app, one brand, read on anonymous requests where there is no tenant), so
+    // it belongs in the refusal test below rather than this one.
+    const res = await PUT(...putReq("core.client_self_registration", true));
     expect(res.status).toBe(200);
     expect(setOwnerValue).toHaveBeenCalledOnce();
   });
 
+  it("an OPERATOR key is refused 422 and never reaches the writer", async () => {
+    // The API-layer half of finding 1: a hand-rolled PUT that never went near
+    // the settings page still cannot write a control-plane value. 422 (not 404)
+    // because the key exists and the capability is on — the caller is simply
+    // not the party who sets it.
+    for (const key of ["core.app_name", "billing.trial_period_days"]) {
+      const res = await PUT(...putReq(key, key === "core.app_name" ? "Pwned" : 3650));
+      expect(res.status, `${key} was not refused`).toBe(422);
+    }
+    expect(setOwnerValue).not.toHaveBeenCalled();
+  });
+
   it("billing.subscription_grace_days is kernel (subscription_billing) — never 404s on the guard", async () => {
-    // ownerEditable:false → the write is rejected 422 by validation, but it must
-    // get PAST the capability guard (kernel flag is always on), i.e. NOT 404.
+    // operatorOnly → the write is rejected 422 by validation, but it must get
+    // PAST the capability guard (kernel flag is always on), i.e. NOT 404.
     const res = await PUT(...putReq("billing.subscription_grace_days", 5));
     expect(res.status).not.toBe(404);
+  });
+
+  it("a caller who is NOT the tenant owner is refused 403 and never reaches the writer", async () => {
+    // Proves the role check is load-bearing. Today one account = one tenant so
+    // every real caller is an owner and this leg is the only thing exercising
+    // the refusal — which is exactly why it is written now, rather than being
+    // discovered missing when sub-users arrive.
+    session.auth.mockResolvedValueOnce({
+      user: { id: "assistant-1", tenantId: "tenant-1", role: "assistant" },
+    });
+    const res = await PUT(...putReq("core.client_self_registration", true));
+    expect(res.status).toBe(403);
+    expect(setOwnerValue).not.toHaveBeenCalled();
+  });
+
+  it("a session minted BEFORE the role claim existed is refused, not assumed to be the owner", async () => {
+    // Fail-closed direction: absent role → re-authenticate, never "assume the
+    // most privileged value".
+    session.auth.mockResolvedValueOnce({
+      user: { id: "owner-1", tenantId: "tenant-1" },
+    });
+    const res = await PUT(...putReq("core.client_self_registration", true));
+    expect(res.status).toBe(403);
+    expect(setOwnerValue).not.toHaveBeenCalled();
   });
 
   it("an unknown key is 404 from validation, not the guard (guard passes it through)", async () => {

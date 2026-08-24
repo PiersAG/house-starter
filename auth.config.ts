@@ -63,6 +63,7 @@ export const authConfig: NextAuthConfig = {
         // between the two would make the tenant claim appear and disappear
         // depending on which runtime last touched the cookie.
         token.tenantId = (user as { tenantId?: string }).tenantId;
+        token.role = (user as { role?: string }).role;
         token.rememberMe = (user as { rememberMe?: boolean }).rememberMe ?? false;
         token.maxAge = token.rememberMe ? THIRTY_DAY_SECONDS : DAY_SECONDS;
       }
@@ -72,6 +73,7 @@ export const authConfig: NextAuthConfig = {
       const id = (token.id ?? token.sub) as string | undefined;
       if (id) session.user.id = id;
       if (token.tenantId) session.user.tenantId = token.tenantId as string;
+      if (token.role) session.user.role = token.role as string;
       return session;
     },
   },

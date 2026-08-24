@@ -24,6 +24,7 @@ import { requireActiveSubscription } from "@/lib/billing/gate";
 import { handleStripeEvent } from "@/lib/billing/webhook";
 import { getStripe, __resetStripeForTests } from "@/lib/billing/stripe";
 import { setOwnerValue } from "@/lib/settings/values";
+import { setOperatorValue } from "@/lib/settings/operator";
 
 const DAY_MS = 86_400_000;
 
@@ -340,11 +341,27 @@ describe("gate — grace window (past_due)", () => {
   it("reads the grace length from the registry, not a literal", async () => {
     const userId = await seedUser();
     await pastDueSub(userId);
-    // Shorten grace to 2 days via a stored owner value. If the gate read a
+    // Shorten grace to 2 days via a stored OPERATOR value. If the gate read a
     // literal 7 it would still allow at day 3; honouring the override proves it
     // resolves billing.subscription_grace_days through getSetting.
-    await setOwnerValue(db, "billing.subscription_grace_days", 2);
+    //
+    // Operator scope, not owner: how long a lapsed customer keeps access after a
+    // failed payment is this business's credit policy, so it moved to the
+    // control plane with the trial length. An owner-scope row is now ignored for
+    // this key — see the tenant-plane leg below.
+    await setOperatorValue(db, "billing.subscription_grace_days", 2);
     const now = new Date(PAST_DUE_AT.getTime() + 3 * DAY_MS);
+    expect((await requireActiveSubscription(db, userId, { now })).allowed).toBe(false);
+  });
+
+  it("IGNORES a grace length planted in the tenant plane", async () => {
+    // A customer who could extend their own grace window has extended their own
+    // access after not paying. setOwnerValue stands in for a caller that has
+    // already got past the API validator; the gate must not read it.
+    const userId = await seedUser();
+    await pastDueSub(userId);
+    await setOwnerValue(db, "billing.subscription_grace_days", 3650);
+    const now = new Date(PAST_DUE_AT.getTime() + 8 * DAY_MS);
     expect((await requireActiveSubscription(db, userId, { now })).allowed).toBe(false);
   });
 });

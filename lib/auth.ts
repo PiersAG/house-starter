@@ -103,6 +103,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           name: user.name ?? undefined,
           rememberMe: parsed.data.rememberMe === "on",
           tenantId,
+          // The role claim, read from the catalog user row. Column default is
+          // 'owner' and today one account = one tenant, so every caller is one;
+          // the claim exists so the owner-only writes are already marked when
+          // sub-users arrive. See lib/authz.ts.
+          role: user.role,
         };
       },
     }),
@@ -123,6 +128,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // The tenant claim — the whole point of the sign-in pass in per-tenant
         // mode. Everything downstream reads it from here.
         token.tenantId = (user as { tenantId?: string }).tenantId;
+        // Carried alongside the tenant claim, and for the same reason: the two
+        // jwt callbacks (here and in auth.config.ts, which the Edge middleware
+        // runs) must mint the same token shape, or a claim would appear and
+        // disappear depending on which runtime last touched the cookie.
+        token.role = (user as { role?: string }).role;
         const rememberMe = (user as { rememberMe?: boolean }).rememberMe ?? false;
         token.rememberMe = rememberMe;
         token.maxAge = rememberMe ? THIRTY_DAY_SECONDS : DAY_SECONDS;
@@ -149,6 +159,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       // refuses the request rather than guessing a database.
       if (token.tenantId) {
         session.user.tenantId = token.tenantId as string;
+      }
+      // Absent on a pre-claim session — lib/authz.ts then refuses rather than
+      // assuming ownership.
+      if (token.role) {
+        session.user.role = token.role as string;
       }
       // Expose sessionId so a signOut action can write the revocation record.
       if (token.sessionId) {

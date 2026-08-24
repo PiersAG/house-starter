@@ -3,9 +3,13 @@
 // owner out of their own app. Giving every new owner a trial on signup fixes
 // that, using the WP1 gate as-is (no gate change).
 //
-// The trial length is a settings-registry key — owner-configurable, factory
-// default 14 days, kernel/subscription_billing-flagged so it always resolves —
-// read via getSetting, never a literal here.
+// The trial length is a settings-registry key — an OPERATOR key, factory default
+// 14 days, kernel/subscription_billing-flagged so it always resolves — read via
+// getSetting, never a literal here. Operator, not owner-configurable: a trial
+// length a signed-in owner could write is a self-serve paywall bypass, which is
+// exactly what it was. It resolves from the control plane (operator value, then
+// factory) and no tenant database is consulted for it — hence the catalog-only
+// store below rather than a tenant handle this code has no business holding.
 //
 // NOT in scope (a separate lifecycle card): card collection, a read-only-on-
 // expiry state, a retention countdown, deletion. On expiry the step-5 hard gate
@@ -49,7 +53,9 @@ export async function startTrialForNewOwner(
   const existing = await getSubscriptionByUserId(db, userId);
   if (existing) return;
 
-  const days = await getSetting<number>(db, TRIAL_DAYS_KEY);
+  // `db` here IS the catalog — subscriptions are control-plane rows, and both
+  // call sites (the signup action and its API twin) pass catalogDb.
+  const days = await getSetting<number>({ catalog: db }, TRIAL_DAYS_KEY);
   const now = opts.now ?? new Date();
   const trialEndsAt = new Date(now.getTime() + days * DAY_MS);
 

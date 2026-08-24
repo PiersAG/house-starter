@@ -31,6 +31,25 @@ export default defineConfig({
       // There are deliberately NO blanket global thresholds: the rest of the
       // report is informational and must stay truthful, not aspirational.
       thresholds: {
+        // The tenant-role decision (finding 1). An uncovered branch here is a
+        // path where "signed in" silently becomes "allowed" — the exact shape of
+        // the defect this file was written to close.
+        "**/lib/authz.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        // The control plane's read/write primitives. An uncovered branch is a
+        // path by which an operator value is read from, or written to, the wrong
+        // database — and an operator value in a tenant database is invisible to
+        // the app that is supposed to obey it.
+        "**/lib/settings/operator.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
         "**/lib/password.ts": {
           lines: 100,
           statements: 100,

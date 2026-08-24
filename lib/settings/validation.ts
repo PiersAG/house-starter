@@ -11,6 +11,7 @@ import { getDefinition } from "@/lib/settings/registry";
 export type ValidationCode =
   | "unknown_key"
   | "not_owner_editable"
+  | "operator_only"
   | "wrong_type"
   | "out_of_bounds"
   | "not_an_allowed_option";
@@ -112,14 +113,31 @@ function checkBounds(def: SettingDefinition, value: number): ValidationResult {
 }
 
 /**
+ * The message every refused operator-key write carries. Deliberately says WHO
+ * owns the control rather than "forbidden": the caller is not doing anything
+ * wrong, they are asking the wrong party.
+ */
+const OPERATOR_ONLY_MESSAGE = (label: string) =>
+  `${label} is set by the people who run this service, not from inside the app.`;
+
+/**
  * Full validation for an OWNER write to `key`: unknown-key rejection,
- * owner_editable enforcement, then value validation. The single entry point the
- * API route uses for a PUT.
+ * operator-key rejection, owner_editable enforcement, then value validation.
+ * The single entry point the API route uses for a PUT.
+ *
+ * The operatorOnly arm is a BACKSTOP, not the control. An operator key is
+ * absent from every generated view (lib/settings/service.ts) and is not read
+ * from the tenant plane at all (lib/settings/resolver.ts) — this refuses the
+ * hand-rolled PUT that skips the UI. The actual guarantee is that no app route
+ * writes operator_setting_values; see lib/settings/operator.ts.
  */
 export function validateOwnerWrite(key: string, value: unknown): ValidationResult {
   const def = getDefinition(key);
   if (!def) {
     return fail("unknown_key", `Unknown setting "${key}".`);
+  }
+  if (def.operatorOnly === true) {
+    return fail("operator_only", OPERATOR_ONLY_MESSAGE(def.label));
   }
   if (def.ownerEditable === false) {
     return fail(
@@ -138,6 +156,12 @@ export function validateClientWrite(key: string, value: unknown): ValidationResu
   const def = getDefinition(key);
   if (!def) {
     return fail("unknown_key", `Unknown setting "${key}".`);
+  }
+  // Checked before the client-scoped test so an operator key gets the accurate
+  // refusal rather than "not a per-client preference", which is true but is not
+  // the reason.
+  if (def.operatorOnly === true) {
+    return fail("operator_only", OPERATOR_ONLY_MESSAGE(def.label));
   }
   if (def.clientScoped !== true) {
     return fail(

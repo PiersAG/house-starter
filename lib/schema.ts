@@ -91,10 +91,26 @@ export const users = sqliteTable("users", {
    * table — the schema-drift reconciler adds the column afterwards.
    */
   tenantId: text("tenant_id"),
+  /**
+   * The account's role WITHIN its tenant. Additive column with a constant
+   * default, so lib/migrate.ts::reconcileColumns can add it to an existing
+   * catalog (the mechanism built for subscriptions.past_due_at).
+   *
+   * Deliberately minimal. Today one account = one tenant, so this guards
+   * nothing yet: it is the SEAM in place BEFORE sub-users exist, not a role
+   * hierarchy. There is no permission matrix and no admin UI, and no value of
+   * this column reaches operator/CEO controls — those live in
+   * `operator_setting_values`, which no app route writes at all.
+   */
+  role: text("role").notNull().default("owner"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
 });
+
+/** The roles an account can hold inside its own tenant. */
+export const USER_ROLES = ["owner"] as const;
+export type UserRole = (typeof USER_ROLES)[number];
 
 /**
  * Server-side session revocation records (CEO ruling 2026-07-15).
@@ -222,11 +238,43 @@ export const settingDefinitions = sqliteTable("setting_definitions", {
     .default(false),
   /** Capability feature flag; the UI hides the row when the flag is off. */
   requiresFlag: text("requires_flag"),
+  /**
+   * 0/1 — true means an OPERATOR/CEO control: absent from every settings screen
+   * and refused by every app write path, settable only from the control plane
+   * (see operatorSettingValues below).
+   *
+   * DESCRIPTIVE, NOT ENFORCING. Enforcement reads the code definition
+   * (lib/settings/{resolver,validation,service}.ts), never this row — a
+   * privilege boundary that could be lifted by an UPDATE on a table the app can
+   * reach would not be one. This column exists so the catalogue table describes
+   * the same world the code does.
+   */
+  operatorOnly: integer("operator_only", { mode: "boolean" })
+    .notNull()
+    .default(false),
 });
 
 /**
- * Per-tenant chosen values (settings-registry-spec §3). Absence at a level
- * falls through to the level above; the resolver never copies a value down.
+ * TENANT PLANE. Per-tenant chosen values (settings-registry-spec §3). Absence at
+ * a level falls through to the level above; the resolver never copies a value
+ * down.
+ *
+ * THIS TABLE LIVES IN THE TENANT DATABASE, not the catalog. That is what §3 of
+ * the spec always said ("Schema (tenant DB + shared seed)", `-- Per-tenant
+ * values`); the implementation put it in the catalog when the ADR-023 split
+ * landed, presumably because `setting_definitions` had to be there for the
+ * migration seed and the two tables travelled together. The consequence was a
+ * table with no tenant column whose owner rows are `(key, 'owner', '')` — ONE
+ * global row, written by whichever signed-in account asked last, read by every
+ * tenant. Moving it here removes the class rather than patching it: there is no
+ * tenant column to add and no `where tenant_id = ?` to forget, because another
+ * customer's row is not filtered out, it is not in the database being queried.
+ *
+ * The `REFERENCES setting_definitions(key)` FK is GONE, and had to be: the
+ * definitions catalogue stays in the catalog database, and a cross-database
+ * foreign key fails on every insert under `PRAGMA foreign_keys = ON`. Unknown
+ * keys are rejected by lib/settings/validation.ts before any write instead —
+ * at the API layer, which is where the spec puts that check anyway.
  *
  * SQLite adaptation of the spec's `PRIMARY KEY (key, scope, COALESCE(client_id,
  * sentinel))` (flagged): SQLite treats NULLs in a composite primary key as
@@ -237,9 +285,7 @@ export const settingDefinitions = sqliteTable("setting_definitions", {
 export const settingValues = sqliteTable(
   "setting_values",
   {
-    key: text("key")
-      .notNull()
-      .references(() => settingDefinitions.key),
+    key: text("key").notNull(),
     /** 'owner' | 'client'. */
     scope: text("scope").notNull(),
     /** '' for owner scope; the client id for client scope (sentinel, not NULL). */
@@ -252,6 +298,38 @@ export const settingValues = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.key, table.scope, table.clientId] })],
 );
+
+/**
+ * CONTROL PLANE. Operator/CEO values — the settings that belong to whoever RUNS
+ * the app, not to any customer of it: trial length, comp accounts, the app's own
+ * name and outbound-mail identity.
+ *
+ * A SEPARATE TABLE rather than a third value of `setting_values.scope`, for two
+ * reasons. The mechanical one: that column carries
+ * `CHECK (scope IN ('owner','client'))`, and widening a CHECK in SQLite means a
+ * full table rebuild, while a new table is a free `CREATE TABLE IF NOT EXISTS`.
+ * The structural one matters more — `setting_values` now lives in the TENANT
+ * database, and an operator value must not.
+ *
+ * Nothing in the app writes this table. It has no route, no server action and no
+ * role that can reach it; the only writer is scripts/set-operator-setting.ts,
+ * a standalone CLI modelled on scripts/grant-access.ts and never imported by the
+ * app runtime. That is the point: the control is not EXPOSED to the app and then
+ * guarded, it is absent from the app's request paths entirely, so there is no
+ * privilege check standing between a customer and it that could be got wrong.
+ */
+export const operatorSettingValues = sqliteTable("operator_setting_values", {
+  /** Dotted setting key. No FK: definitions are code, and this is one row per key. */
+  key: text("key").primaryKey(),
+  /** JSON-encoded chosen value, same encoding as setting_values. */
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export type OperatorSettingValueRow = typeof operatorSettingValues.$inferSelect;
+export type NewOperatorSettingValueRow = typeof operatorSettingValues.$inferInsert;
 
 export type SettingDefinitionRow = typeof settingDefinitions.$inferSelect;
 export type NewSettingDefinitionRow = typeof settingDefinitions.$inferInsert;
