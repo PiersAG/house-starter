@@ -47,6 +47,12 @@ const ENV_KEYS = [
   "RATE_LIMIT_ALLOW_IN_MEMORY",
   "EMAIL_PROVIDER_API_KEY",
   "EMAIL_SEND_MODE",
+  "RATE_LIMIT_STORE_URL",
+  "RATE_LIMIT_STORE_TOKEN",
+  // Saved/restored explicitly because the rate-limit store's requirement is
+  // conditional on it. A test run that inherited a stray VERCEL_ENV would
+  // otherwise change what "a valid environment" means.
+  "VERCEL_ENV",
 ] as const;
 const saved: Record<string, string | undefined> = {};
 
@@ -63,6 +69,12 @@ function setFullValidEnv(): void {
   process.env.RATE_LIMIT_ALLOW_IN_MEMORY = "true";
   process.env.EMAIL_PROVIDER_API_KEY = "re_dummy";
   process.env.EMAIL_SEND_MODE = "log";
+  // NOT a deployed instance — the baseline every other test builds on. The
+  // rate-limit store is contract-declared `secret` but required only when
+  // VERCEL_ENV is set, so a local/CI environment is complete WITHOUT it.
+  delete process.env.VERCEL_ENV;
+  delete process.env.RATE_LIMIT_STORE_URL;
+  delete process.env.RATE_LIMIT_STORE_TOKEN;
 }
 
 beforeEach(() => {
@@ -138,6 +150,53 @@ describe("assertBootEnv", () => {
     process.env.DATABASE_URL = "libsql://remote.turso.io";
     delete process.env.DATABASE_AUTH_TOKEN;
     expect(() => assertBootEnv(REAL_CONTRACT)).toThrow(/DATABASE_AUTH_TOKEN/);
+  });
+
+  // The rate-limit store, same conditional shape as DATABASE_AUTH_TOKEN above.
+  // Both halves matter: required on a deploy (or the fail-closed posture is
+  // decoration), NOT required off one (or `npm run dev`, CI and the isolation
+  // harness stop booting — the failure mode a naive `.env.contract` entry
+  // would have caused).
+
+  it("does NOT require the rate-limit store when VERCEL_ENV is unset (dev/CI/harness)", () => {
+    delete process.env.VERCEL_ENV;
+    delete process.env.RATE_LIMIT_STORE_URL;
+    delete process.env.RATE_LIMIT_STORE_TOKEN;
+    expect(() => assertBootEnv(REAL_CONTRACT)).not.toThrow();
+  });
+
+  it.each(["production", "preview"])(
+    "DOES require the rate-limit store on a deployed instance (VERCEL_ENV=%s)",
+    (vercelEnv) => {
+      process.env.VERCEL_ENV = vercelEnv;
+      delete process.env.RATE_LIMIT_STORE_URL;
+      delete process.env.RATE_LIMIT_STORE_TOKEN;
+      expect(() => assertBootEnv(REAL_CONTRACT)).toThrow(
+        /RATE_LIMIT_STORE_URL[\s\S]*RATE_LIMIT_STORE_TOKEN/,
+      );
+    },
+  );
+
+  it("a deployed instance WITH the store set boots", () => {
+    process.env.VERCEL_ENV = "preview";
+    process.env.RATE_LIMIT_STORE_URL = "https://redis.example.upstash.io";
+    process.env.RATE_LIMIT_STORE_TOKEN = "token";
+    expect(() => assertBootEnv(REAL_CONTRACT)).not.toThrow();
+  });
+
+  it("an EMPTY store URL on a deployed instance is missing, not satisfied", () => {
+    process.env.VERCEL_ENV = "production";
+    process.env.RATE_LIMIT_STORE_URL = "";
+    process.env.RATE_LIMIT_STORE_TOKEN = "token";
+    expect(() => assertBootEnv(REAL_CONTRACT)).toThrow(/RATE_LIMIT_STORE_URL/);
+  });
+
+  it("the contract DECLARES both store vars as deploy-injected", () => {
+    // Guards the other half of the pairing: if someone downgrades these to
+    // `app` in .env.contract, the conditional above silently stops applying and
+    // this test says so.
+    expect(requiredBootEnv(REAL_CONTRACT)).toContain("RATE_LIMIT_STORE_URL");
+    expect(requiredBootEnv(REAL_CONTRACT)).toContain("RATE_LIMIT_STORE_TOKEN");
   });
 });
 

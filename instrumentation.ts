@@ -38,6 +38,20 @@ const DEPLOY_INJECTED_SOURCES = new Set(["secret", "generated", "fixed"]);
 // runnable without a token while still catching a missing token in prod.
 const REMOTE_DB_SCHEME = /^(libsql|https?|wss?):/i;
 
+// The shared rate-limit store is required on a DEPLOYED instance only. Same
+// conditional shape as DATABASE_AUTH_TOKEN above, and for the same reason: a
+// blanket requirement would stop `npm run dev`, CI and the isolation harness
+// from booting, none of which have (or need) a Redis endpoint. VERCEL_ENV's
+// PRESENCE is the signal — it is set on every deployed instance and nowhere
+// else, and lib/tenant/provisioner.ts already treats it as THE test for
+// "deployed". lib/rate-limit.ts refuses the in-memory stand-in under exactly the
+// same condition; this makes the failure arrive at BOOT, naming the variable,
+// rather than at the first login attempt.
+const DEPLOY_ONLY_REQUIRED = new Set([
+  "RATE_LIMIT_STORE_URL",
+  "RATE_LIMIT_STORE_TOKEN",
+]);
+
 /**
  * Parse `.env.contract` text into the list of names the deploy must inject
  * (source secret/generated/fixed). Blanks, comments, and infra/app-source
@@ -64,9 +78,14 @@ export function requiredBootEnv(contractText: string): string[] {
  */
 export function assertBootEnv(contractText: string): void {
   const dbUrl = process.env.DATABASE_URL ?? "";
+  const deployed = (process.env.VERCEL_ENV ?? "").trim().length > 0;
   const missing = requiredBootEnv(contractText).filter((name) => {
     // DATABASE_AUTH_TOKEN is required only for a remote database URL.
     if (name === "DATABASE_AUTH_TOKEN" && !REMOTE_DB_SCHEME.test(dbUrl)) {
+      return false;
+    }
+    // The rate-limit store is required only on a deployed instance.
+    if (DEPLOY_ONLY_REQUIRED.has(name) && !deployed) {
       return false;
     }
     const value = process.env[name];
