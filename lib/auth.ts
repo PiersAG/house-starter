@@ -33,6 +33,11 @@ import { SHARED_TENANT_ID } from "@/lib/tenant-context";
 import { getUserByEmail } from "@/lib/users";
 import { verifyPassword } from "@/lib/password";
 import {
+  AUTH_RATE_LIMITS,
+  AuthRateLimitError,
+  guardAuthAttempt,
+} from "@/lib/auth-rate-limit";
+import {
   handleTokenRenewal,
   isSessionRevoked,
   RENEW_AFTER_SECONDS,
@@ -56,6 +61,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     Credentials({
       async authorize(credentials) {
+        // THROTTLE FIRST, before the credential is even parsed — and HERE
+        // rather than in app/login/actions.ts. The NextAuth credentials
+        // endpoint (/api/auth/callback/credentials) is publicly reachable, so
+        // a guard sitting only in the server action would be bypassed by
+        // posting straight at it: a limit on the door nobody has to use.
+        // authorize() is the one path both surfaces come through.
+        //
+        // Throwing (rather than returning null) is deliberate: null means
+        // "wrong credentials", and telling a throttled user their password is
+        // wrong sends them to the reset flow, which makes it worse. The login
+        // action maps this back to a plain "too many attempts" message.
+        const rate = await guardAuthAttempt(AUTH_RATE_LIMITS.login);
+        if (!rate.allowed) throw new AuthRateLimitError(rate.retryAfterSeconds);
+
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
 

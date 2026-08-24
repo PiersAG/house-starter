@@ -193,8 +193,16 @@ export function resetRateLimiterForTests(): void {
   cachedStore = undefined;
 }
 
+/**
+ * The subset of `Headers` a client key is derived from. Widened from `Headers`
+ * so a server action can pass what `next/headers` returns (a ReadonlyHeaders,
+ * which omits the mutators) without a cast — same function, same key, both
+ * surfaces (lib/auth-rate-limit.ts).
+ */
+export type HeadersLike = { get(name: string): string | null };
+
 /** Derive a best-effort client identifier from request headers. */
-export function clientKeyFromHeaders(headers: Headers): string {
+export function clientKeyFromHeaders(headers: HeadersLike): string {
   const forwarded = headers.get("x-forwarded-for");
   if (forwarded) {
     const first = forwarded.split(",")[0]?.trim();

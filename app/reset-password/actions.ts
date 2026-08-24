@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { catalogDb } from "@/lib/catalog";
 import { PasswordResetError, resetPassword } from "@/lib/password-reset";
+import { AUTH_RATE_LIMITS, guardAuthAttempt } from "@/lib/auth-rate-limit";
 
 export type ResetPasswordState = { error?: string } | null;
 
@@ -10,6 +11,13 @@ export async function resetPasswordAction(
   _prev: ResetPasswordState,
   formData: FormData,
 ): Promise<ResetPasswordState> {
+  // Throttled BEFORE the token is looked at: an unthrottled reset endpoint is
+  // an offline-free oracle for guessing reset tokens.
+  const rate = await guardAuthAttempt(AUTH_RATE_LIMITS.resetPassword);
+  if (!rate.allowed) {
+    return { error: "Too many attempts. Please try again shortly." };
+  }
+
   const token = String(formData.get("token") ?? "");
   const password = String(formData.get("password") ?? "");
 

@@ -5,6 +5,7 @@ import { catalogDb } from "@/lib/catalog";
 import { registerUser, RegistrationError } from "@/lib/users";
 import { startTrialForNewOwner } from "@/lib/billing/trial";
 import { ensureTenantForUser } from "@/lib/tenant/provisioner";
+import { AUTH_RATE_LIMITS, guardAuthAttempt } from "@/lib/auth-rate-limit";
 
 export type SignupState = { error?: string } | null;
 
@@ -12,6 +13,13 @@ export async function signupAction(
   _prev: SignupState,
   formData: FormData,
 ): Promise<SignupState> {
+  // Same bucket the JSON twin (POST /api/auth/signup) counts into, so the two
+  // surfaces share one budget instead of handing an attacker two.
+  const rate = await guardAuthAttempt(AUTH_RATE_LIMITS.signup);
+  if (!rate.allowed) {
+    return { error: "Too many signup attempts. Please try again shortly." };
+  }
+
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
   const rawName = String(formData.get("name") ?? "").trim();
@@ -39,6 +47,24 @@ export async function signupAction(
   // it would hand the new customer a session pointing at nothing. It is fatal on
   // purpose: an account without a database cannot be signed in to, so reporting
   // "created" and then failing on the first page would be the worse outcome.
+  // SECOND, MUCH TIGHTER BUCKET — and it guards a different resource. Above is
+  // a request limit; this is the ceiling on how many DATABASES one client can
+  // cause to exist, which is billed, quota'd and slow to reclaim. Checked here
+  // rather than at entry so a rejected signup (bad email, taken address) does
+  // not spend the provisioning budget.
+  const provisionRate = await guardAuthAttempt(AUTH_RATE_LIMITS.signupProvision);
+  if (!provisionRate.allowed) {
+    // The account exists; only its workspace is deferred. lib/auth.ts::authorize
+    // provisions on first sign-in, so this is recoverable exactly as the message
+    // says — no orphaned account, no support ticket.
+    return {
+      error:
+        "Your account was created, but too many workspaces have been set up " +
+        "from this network recently. Try signing in shortly and we'll finish " +
+        "setting it up.",
+    };
+  }
+
   try {
     await ensureTenantForUser(user.id, { label: user.email });
   } catch (error) {
