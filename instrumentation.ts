@@ -11,8 +11,10 @@
  *      immediately naming the missing var beats an instance that 500s forever.
  *      This is a DETERMINISTIC misconfiguration: throwing is correct.
  *
- *   2. Migration (shared tenancy only) — apply DDL so the server is
- *      schema-current without a separate CLI step. This is a TRANSIENT-fault
+ *   2. Migration — apply DDL so the server is schema-current without a
+ *      separate CLI step. In shared mode that is the one database; in
+ *      per_tenant it is the CATALOG (control plane), which holds identity and
+ *      so must exist in every mode. This is a TRANSIENT-fault
  *      surface (a cold-start network blip), so unlike (1) it must NEVER throw:
  *      retry once, then log and keep serving (schema is applied out-of-band at
  *      deploy time anyway). See the cold-start incident note below.
@@ -173,42 +175,79 @@ export async function register() {
     }
     if (contractText !== null) assertBootEnv(contractText);
 
-    // (2) Boot migration — shared tenancy only (per-tenant needs per-tenant
-    // orchestration via scripts/migrate-all-tenants.ts). Safe to call
-    // repeatedly: all DDL in MIGRATION_SQL uses IF NOT EXISTS.
+    // (2) Boot migration — apply the schema this instance needs without a
+    // separate CLI step.
+    //
+    // WHICH DATABASE, BY MODE. This block used to run for `shared` ONLY, which
+    // left a per_tenant app with NO catalog schema anywhere: nothing else in the
+    // boot path creates it and CI runs no migration step, so the first sign-up
+    // hit `SQLITE_ERROR: no such table: users` inside registerUser — and the
+    // catch-all in app/signup/actions.ts turned that into a bland "Could not
+    // create your account" (BLD.12). The catalog is the CONTROL PLANE: it holds
+    // identity, so it has to exist in every tenancy mode and in every
+    // environment the app boots in (CI, preview, production).
+    //
+    //   shared      — one database holds both planes: migrate it in full.
+    //   per_tenant  — migrate the CATALOG ONLY. Tenant databases keep their
+    //                 existing lifecycle: created and migrated per sign-up by
+    //                 lib/tenant/provisioner.ts, and back-filled for existing
+    //                 tenants by scripts/migrate-all-tenants.ts. Boot does not,
+    //                 and must not, fan out over tenants.
+    //
+    // Safe to call repeatedly: every statement in the DDL uses IF NOT EXISTS.
     const mode = (process.env.TENANCY_MODE ?? "per_tenant").trim().toLowerCase();
+
+    // A cold-start migration failure must NEVER poison the instance: Next.js
+    // treats a throw from register() as a failed instrumentation hook and the
+    // instance then 500s EVERY request it serves. Observed live on the k9coach
+    // preview 2026-07-16 — a transient `connect ETIMEDOUT <turso-host>:443` at
+    // cold start turned into "500 on every authenticated page" for users pinned
+    // to that instance. The schema is also applied out-of-band at deploy time,
+    // so: retry once for transient network faults, then log loudly and keep
+    // serving. Shared by both modes so neither can drift into throwing.
+    const bootMigrate = async (
+      what: string,
+      apply: () => Promise<void>,
+    ): Promise<void> => {
+      try {
+        await apply();
+      } catch (firstError) {
+        console.error(
+          `instrumentation: ${what} migration attempt 1 failed, retrying once`,
+          firstError,
+        );
+        try {
+          await apply();
+        } catch (secondError) {
+          console.error(
+            `instrumentation: ${what} migration failed at cold start — ` +
+              "continuing to serve (schema is applied at deploy time)",
+            secondError,
+          );
+        }
+      }
+    };
+
     if (mode === "shared") {
       const url = process.env.DATABASE_URL;
       if (url) {
         const { migrate } = await import("./lib/migrate");
-        // A cold-start migration failure must NEVER poison the instance:
-        // Next.js treats a throw from register() as a failed instrumentation
-        // hook and the instance then 500s EVERY request it serves. Observed
-        // live on the k9coach preview 2026-07-16 — a transient
-        // `connect ETIMEDOUT <turso-host>:443` at cold start turned into
-        // "500 on every authenticated page" for users pinned to that instance.
-        // The schema is already applied out-of-band at deploy time
-        // (safe-env-deploy runs scripts/migrate.ts); this boot migration is
-        // belt-and-braces, so: retry once for transient network faults, then
-        // log loudly and keep serving.
-        try {
-          await migrate(url, process.env.DATABASE_AUTH_TOKEN);
-        } catch (firstError) {
-          console.error(
-            "instrumentation: migration attempt 1 failed, retrying once",
-            firstError,
-          );
-          try {
-            await migrate(url, process.env.DATABASE_AUTH_TOKEN);
-          } catch (secondError) {
-            console.error(
-              "instrumentation: migration failed at cold start — continuing " +
-                "to serve (schema is applied at deploy time)",
-              secondError,
-            );
-          }
-        }
+        await bootMigrate("shared-database", () =>
+          migrate(url, process.env.DATABASE_AUTH_TOKEN),
+        );
       }
+    } else {
+      const { migrateCatalog } = await import("./lib/migrate");
+      const { resolveCatalog } = await import("./lib/catalog");
+      // resolveCatalog() prefers CATALOG_DATABASE_URL, falls back to
+      // DATABASE_URL, and THROWS when neither is set. Resolving INSIDE the
+      // guarded callback is deliberate: a misconfigured catalog is then
+      // reported loudly at boot by the same handler, without turning every
+      // subsequent request into a 500.
+      await bootMigrate("catalog", async () => {
+        const { url, authToken } = resolveCatalog();
+        await migrateCatalog(url, authToken);
+      });
     }
   }
 }

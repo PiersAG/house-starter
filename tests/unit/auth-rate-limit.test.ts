@@ -15,8 +15,11 @@ import {
   AUTH_RATE_LIMIT_MARKER,
   AUTH_RATE_LIMITS,
   AuthRateLimitError,
+  type AuthRateLimitEnv,
   checkAuthRateLimit,
+  effectiveAuthRateLimit,
   guardAuthAttempt,
+  inSafeTestEnvironment,
   isAuthRateLimitError,
 } from "@/lib/auth-rate-limit";
 import { resetRateLimiterForTests } from "@/lib/rate-limit";
@@ -180,5 +183,71 @@ describe("isAuthRateLimitError", () => {
 
   it("carries the retry hint", () => {
     expect(new AuthRateLimitError(42).retryAfterSeconds).toBe(42);
+  });
+});
+
+// ── Safe-test-environment provisioning ceiling ───────────────────────────────
+//
+// BOTH STATES, because the whole point is that the relaxation is confined to one
+// of them. The declared AUTH_RATE_LIMITS.signupProvision is never mutated — what
+// changes is the limit RESOLVED for the current environment — so the tests above
+// that read the declared config stay true in either state.
+
+describe("provisioning ceiling in the safe test environment", () => {
+  const SAFE: AuthRateLimitEnv = { RATE_LIMIT_ALLOW_IN_MEMORY: "true" };
+  const DEPLOYED: AuthRateLimitEnv = {
+    RATE_LIMIT_ALLOW_IN_MEMORY: "true",
+    VERCEL_ENV: "preview",
+  };
+  const PLAIN: AuthRateLimitEnv = {};
+
+  it("recognises the safe test environment by BOTH halves of the signal", () => {
+    expect(inSafeTestEnvironment(SAFE)).toBe(true);
+    // Deployed — VERCEL_ENV present. This is the case that must never relax.
+    expect(inSafeTestEnvironment(DEPLOYED)).toBe(false);
+    // No explicit opt-in.
+    expect(inSafeTestEnvironment(PLAIN)).toBe(false);
+  });
+
+  it("raises ONLY the provisioning ceiling, and only there", () => {
+    expect(effectiveAuthRateLimit(AUTH_RATE_LIMITS.signupProvision, SAFE).limit)
+      .toBeGreaterThan(AUTH_RATE_LIMITS.signupProvision.limit);
+    // Same bucket and window — it is the same counter, just a higher ceiling.
+    expect(effectiveAuthRateLimit(AUTH_RATE_LIMITS.signupProvision, SAFE))
+      .toMatchObject({
+        bucket: AUTH_RATE_LIMITS.signupProvision.bucket,
+        windowSeconds: AUTH_RATE_LIMITS.signupProvision.windowSeconds,
+      });
+    // Every other surface is untouched in every environment.
+    for (const config of Object.values(AUTH_RATE_LIMITS)) {
+      if (config.bucket === AUTH_RATE_LIMITS.signupProvision.bucket) continue;
+      expect(effectiveAuthRateLimit(config, SAFE)).toEqual(config);
+    }
+  });
+
+  it("does NOT relax provisioning on a deployed instance — production posture is unchanged", () => {
+    // The load-bearing assertion of this whole change. A deployed instance keeps
+    // the declared 3/hour database ceiling, because THERE the databases are real,
+    // billed and quota'd.
+    expect(effectiveAuthRateLimit(AUTH_RATE_LIMITS.signupProvision, DEPLOYED))
+      .toEqual(AUTH_RATE_LIMITS.signupProvision);
+    expect(effectiveAuthRateLimit(AUTH_RATE_LIMITS.signupProvision, PLAIN))
+      .toEqual(AUTH_RATE_LIMITS.signupProvision);
+  });
+
+  it("lets an e2e suite sign up more times than the declared ceiling from one unkeyed client", async () => {
+    // THE CI SCENARIO, end to end. No x-real-ip and no x-forwarded-for, so
+    // clientKeyFromHeaders returns "unknown" and all four attempts share one
+    // bucket — exactly what k9coach-v2's four-signup suite does on the runner.
+    const unkeyed = { get: () => null };
+    for (let i = 0; i < 4; i += 1) {
+      const result = await checkAuthRateLimit(
+        AUTH_RATE_LIMITS.signupProvision,
+        unkeyed,
+      );
+      expect(result.allowed, `provisioning attempt ${i + 1} was refused`).toBe(
+        true,
+      );
+    }
   });
 });

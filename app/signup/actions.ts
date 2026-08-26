@@ -39,6 +39,16 @@ export async function signupAction(
     if (error instanceof RegistrationError) {
       return { error: error.message };
     }
+    // LOG IT. A RegistrationError is an expected, self-explaining refusal
+    // (address taken, password too weak) and its message reaches the user. This
+    // branch is everything else — the UNEXPECTED failures — and it used to
+    // return the generic message while recording nothing at all. That is how
+    // BLD.12 stayed invisible: the catalog had no `users` table in per_tenant
+    // mode, so registerUser threw `SQLITE_ERROR: no such table: users` on every
+    // attempt, and all anyone could see was "Could not create your account".
+    // The two sibling catches below already log; this one is the outlier.
+    // User-facing message deliberately unchanged — it must not leak internals.
+    console.error("signup: failed to register the account", error);
     return { error: "Could not create your account. Please try again." };
   }
 
