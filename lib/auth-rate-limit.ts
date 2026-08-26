@@ -76,6 +76,85 @@ export const AUTH_RATE_LIMITS = {
 } as const satisfies Record<string, AuthRateLimit>;
 
 /**
+ * The provisioning ceiling that applies in the SAFE TEST ENVIRONMENT only.
+ *
+ * WHY THIS EXISTS. `clientKeyFromHeaders` derives the key from `x-real-ip` /
+ * `x-forwarded-for`. A local run has neither — no proxy sets them — so every
+ * request keys to the literal string "unknown" and the whole suite shares ONE
+ * bucket. That is the limiter behaving correctly (an e2e suite genuinely IS one
+ * client), but it means any suite that signs up more than three times fails on
+ * the fourth: house-starter's own template suite, and every app's, drive sign-up
+ * repeatedly to reach an authenticated page. k9coach-v2's core-ui suite signs up
+ * four times and hit exactly this.
+ *
+ * WHY RAISING IT HERE IS SAFE — the resource the 3/hour limit protects does not
+ * exist in this environment. That limit is not request-shaped: it is the ceiling
+ * on how many REAL hosted databases one client can cause to be created, because
+ * those are billed, quota'd and slow to reclaim (see AUTH_RATE_LIMITS below).
+ * With no VERCEL_ENV, lib/tenant/provisioner.ts selects the FILE adapter, so a
+ * "provisioned database" is a throwaway file under .build/tenants. There is
+ * nothing billed to protect.
+ *
+ * Still a real limit, not a bypass: the guard runs, the store is hit, the same
+ * code path is exercised — only the number differs. 100/hour is far above any
+ * plausible suite and far below anything that could exhaust a runner's disk.
+ */
+const SAFE_TEST_PROVISION_LIMIT = 100;
+
+/**
+ * The only two variables this module reads from the environment. Narrow and
+ * injectable for the same reason lib/rate-limit.ts's RateLimitEnv is: the
+ * both-states tests below pin the deployed case by passing an env, and a test
+ * must not have to fabricate a whole ProcessEnv to do it.
+ */
+export type AuthRateLimitEnv = {
+  RATE_LIMIT_ALLOW_IN_MEMORY?: string;
+  /**
+   * Set by the platform on every deployed instance. Its PRESENCE, not its
+   * value, is the signal — same treatment as lib/rate-limit.ts.
+   */
+  VERCEL_ENV?: string;
+};
+
+/**
+ * True only in ADR-015's safe/test build environment, where nothing real is
+ * reachable.
+ *
+ * Deliberately the SAME two-part signal lib/rate-limit.ts already uses to decide
+ * whether the in-memory stand-in may be used: the explicit
+ * RATE_LIMIT_ALLOW_IN_MEMORY opt-in AND the absence of VERCEL_ENV. Both halves
+ * are required, and a DEPLOYED instance can satisfy neither path to this
+ * relaxation: VERCEL_ENV is set on every deployed instance (preview and
+ * production alike), and lib/rate-limit.ts already REFUSES TO SERVE there when
+ * ALLOW_IN_MEMORY is set. Re-deriving `deployed` here instead of trusting that
+ * refusal is on purpose — this exemption stands on its own check rather than on
+ * another module's control flow continuing to behave as it does today.
+ */
+export function inSafeTestEnvironment(
+  env: AuthRateLimitEnv = process.env as AuthRateLimitEnv,
+): boolean {
+  const deployed = (env.VERCEL_ENV ?? "").trim().length > 0;
+  return !deployed && env.RATE_LIMIT_ALLOW_IN_MEMORY === "true";
+}
+
+/**
+ * The limit actually enforced for `config` in the current environment.
+ *
+ * The identity function everywhere that matters: only `signup:provision`, and
+ * only in the safe test environment, resolves to anything other than the
+ * declared config. Exported so the both-states behaviour is unit-testable
+ * without booting the app.
+ */
+export function effectiveAuthRateLimit(
+  config: AuthRateLimit,
+  env: AuthRateLimitEnv = process.env as AuthRateLimitEnv,
+): AuthRateLimit {
+  if (config.bucket !== AUTH_RATE_LIMITS.signupProvision.bucket) return config;
+  if (!inSafeTestEnvironment(env)) return config;
+  return { ...config, limit: SAFE_TEST_PROVISION_LIMIT };
+}
+
+/**
  * Record one attempt against `config`'s bucket, keyed by client.
  *
  * Takes the headers rather than reading them, so a route handler (which holds a
@@ -86,7 +165,7 @@ export async function checkAuthRateLimit(
   config: AuthRateLimit,
   requestHeaders: HeadersLike,
 ): Promise<RateLimitResult> {
-  const { bucket, ...options } = config;
+  const { bucket, ...options } = effectiveAuthRateLimit(config);
   return getRateLimiter().hit(
     `${bucket}:${clientKeyFromHeaders(requestHeaders)}`,
     options,
