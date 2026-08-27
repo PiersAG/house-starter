@@ -284,8 +284,8 @@ jobs:
           EMAIL_SEND_MODE: log
           # Blank on the template → spec self-skips. Two distinct file: URLs on a
           # generated app → the attack runs for real.
-          TENANT_DB_URL_TENANT_A: ${{ github.repository == 'PiersAG/house-starter' && '' || 'file:isolation-tenant-a.db' }}
-          TENANT_DB_URL_TENANT_B: ${{ github.repository == 'PiersAG/house-starter' && '' || 'file:isolation-tenant-b.db' }}
+          TENANT_DB_URL_TENANT_A: ${{ github.repository != 'PiersAG/house-starter' && 'file:isolation-tenant-a.db' || '' }}
+          TENANT_DB_URL_TENANT_B: ${{ github.repository != 'PiersAG/house-starter' && 'file:isolation-tenant-b.db' || '' }}
         run: |
           npx playwright install chromium
           npm run test:isolation
