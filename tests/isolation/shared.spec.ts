@@ -14,7 +14,10 @@ test.skip(
   "shared isolation spec runs only when TENANCY_MODE=shared",
 );
 
-const USER_A_SENTINEL = "SENTINEL-USER-A-77a91f";
+// Only user B's sentinel is asserted on — it is the value that must never
+// appear in user A's responses. User A's own sentinel is a seed input the
+// builder supplies (see the seedUsers() scaffolding below), so it is not
+// declared here.
 const USER_B_SENTINEL = "SENTINEL-USER-B-c48d20";
 
 const TODO_ROUTES: string[] = [
@@ -30,7 +33,7 @@ test.describe("shared-mode cross-user isolation", () => {
 
     // Builder implements seedUsers() and loginAs() against the app's real
     // schema. Both live under tests/isolation/support/ in the descendant app.
-    // await seedUsers({ userA: USER_A_SENTINEL, userB: USER_B_SENTINEL });
+    // await seedUsers({ userA: "SENTINEL-USER-A-77a91f", userB: USER_B_SENTINEL });
     // await loginAs(request, { email: "a@example.test" });
 
     for (const route of TODO_ROUTES) {

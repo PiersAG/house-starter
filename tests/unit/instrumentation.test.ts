@@ -14,11 +14,22 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { migrateMock } = vi.hoisted(() => ({ migrateMock: vi.fn() }));
+// BOTH migration entry points are mocked. Mocking only `migrate` used to make
+// the per-tenant case pass vacuously: register() calls migrateCatalog there, so
+// "migrate was not called" was true while a REAL catalog migration ran against
+// the throwaway DATABASE_URL and was swallowed by bootMigrate's catch.
+const { migrateMock, migrateCatalogMock } = vi.hoisted(() => ({
+  migrateMock: vi.fn(),
+  migrateCatalogMock: vi.fn(),
+}));
 
 vi.mock("@/lib/migrate", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/migrate")>();
-  return { ...actual, migrate: migrateMock };
+  return {
+    ...actual,
+    migrate: migrateMock,
+    migrateCatalog: migrateCatalogMock,
+  };
 });
 
 import {
@@ -40,6 +51,11 @@ const ENV_KEYS = [
   "TENANCY_MODE",
   "DATABASE_URL",
   "DATABASE_AUTH_TOKEN",
+  // resolveCatalog() prefers these over DATABASE_URL; saved/restored (and
+  // cleared below) so a stray value cannot change which URL the per-tenant
+  // catalog assertion expects.
+  "CATALOG_DATABASE_URL",
+  "CATALOG_DATABASE_AUTH_TOKEN",
   "AUTH_SECRET",
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
@@ -75,12 +91,17 @@ function setFullValidEnv(): void {
   delete process.env.VERCEL_ENV;
   delete process.env.RATE_LIMIT_STORE_URL;
   delete process.env.RATE_LIMIT_STORE_TOKEN;
+  // No explicit catalog override: resolveCatalog() falls back to DATABASE_URL /
+  // DATABASE_AUTH_TOKEN, which is what the per-tenant test asserts on.
+  delete process.env.CATALOG_DATABASE_URL;
+  delete process.env.CATALOG_DATABASE_AUTH_TOKEN;
 }
 
 beforeEach(() => {
   for (const k of ENV_KEYS) saved[k] = process.env[k];
   setFullValidEnv();
   migrateMock.mockReset();
+  migrateCatalogMock.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -209,6 +230,7 @@ describe("register — boot env validation is deterministic (fail loudly)", () =
     delete process.env.AUTH_SECRET;
     await expect(register()).rejects.toThrow(/AUTH_SECRET/);
     expect(migrateMock).not.toHaveBeenCalled();
+    expect(migrateCatalogMock).not.toHaveBeenCalled();
   });
 
   it("does nothing at all in the edge runtime (validation is Node-only)", async () => {
@@ -216,6 +238,7 @@ describe("register — boot env validation is deterministic (fail loudly)", () =
     delete process.env.AUTH_SECRET; // would fail validation if it ran
     await expect(register()).resolves.toBeUndefined();
     expect(migrateMock).not.toHaveBeenCalled();
+    expect(migrateCatalogMock).not.toHaveBeenCalled();
   });
 });
 
@@ -227,6 +250,10 @@ describe("register — cold-start migration must never poison the instance", () 
       "libsql://preview-db.example.turso.io",
       "test-token",
     );
+    // In shared mode one database holds both planes, so `migrate` (which
+    // applies catalog + tenant DDL together) is the only call — the
+    // catalog-only path belongs to per_tenant.
+    expect(migrateCatalogMock).not.toHaveBeenCalled();
   });
 
   it("retries once on a transient failure, then succeeds", async () => {
@@ -245,9 +272,36 @@ describe("register — cold-start migration must never poison the instance", () 
     expect(migrateMock).toHaveBeenCalledTimes(2);
   });
 
-  it("does not run the migration in per-tenant mode (but still validates env)", async () => {
+  it("in per-tenant mode migrates the CATALOG, never the shared database", async () => {
+    // The catalog is the control plane: it holds identity, so it must exist in
+    // every tenancy mode. Boot migrates it and ONLY it — tenant databases are
+    // created and migrated per sign-up by lib/tenant/provisioner.ts, so boot
+    // must not fan out over tenants. Regression guard for BLD.12, where
+    // per_tenant booted with no catalog schema anywhere and the first sign-up
+    // hit `no such table: users`.
     process.env.TENANCY_MODE = "per_tenant";
+    migrateCatalogMock.mockResolvedValue(undefined);
     await expect(register()).resolves.toBeUndefined();
+    // resolveCatalog() falls back to DATABASE_URL when CATALOG_DATABASE_URL is
+    // unset, so the catalog migration lands on the same connection details.
+    expect(migrateCatalogMock).toHaveBeenCalledWith(
+      "libsql://preview-db.example.turso.io",
+      "test-token",
+    );
+    // The shared-database migration (catalog + tenant DDL in one pass) must NOT
+    // run: applying tenant tables to the catalog is exactly the plane mixing
+    // per_tenant exists to avoid.
     expect(migrateMock).not.toHaveBeenCalled();
+  });
+
+  it("retries the catalog migration once, then keeps serving, in per-tenant mode", async () => {
+    // The never-poison contract is shared by both modes via bootMigrate; this
+    // pins it for the per-tenant branch too, so neither can drift into throwing.
+    process.env.TENANCY_MODE = "per_tenant";
+    migrateCatalogMock.mockRejectedValue(
+      new Error("connect ETIMEDOUT 52.18.151.235:443"),
+    );
+    await expect(register()).resolves.toBeUndefined();
+    expect(migrateCatalogMock).toHaveBeenCalledTimes(2);
   });
 });

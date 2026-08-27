@@ -89,5 +89,31 @@ export default defineConfig({
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
+    // CI-safe dummy values used when the environment has not already injected
+    // them (local dev, stop-hook, or any runner that does not supply these).
+    // These are the identical strings the CI workflow injects in its
+    // "Playwright smoke test" step — no real secrets, no real systems reached.
+    // process.env values already present always win (|| '' guard below ensures
+    // an explicit empty string in the environment still gets the fallback).
+    env: {
+      AUTH_SECRET:
+        process.env.AUTH_SECRET ||
+        "ci-e2e-only-dummy-secret-not-used-anywhere-real",
+      TENANCY_MODE: process.env.TENANCY_MODE || "per_tenant",
+      DATABASE_URL: process.env.DATABASE_URL || "file:e2e-playwright.db",
+      RATE_LIMIT_ALLOW_IN_MEMORY:
+        process.env.RATE_LIMIT_ALLOW_IN_MEMORY || "true",
+      STRIPE_SECRET_KEY:
+        process.env.STRIPE_SECRET_KEY ||
+        "sk_test_ci-e2e-only-dummy-not-a-real-key",
+      STRIPE_WEBHOOK_SECRET:
+        process.env.STRIPE_WEBHOOK_SECRET ||
+        "whsec_ci-e2e-only-dummy-not-a-real-secret",
+      APP_LIFECYCLE_STATE: process.env.APP_LIFECYCLE_STATE || "LAUNCHED",
+      EMAIL_PROVIDER_API_KEY:
+        process.env.EMAIL_PROVIDER_API_KEY ||
+        "re_ci-e2e-only-dummy-not-a-real-key",
+      EMAIL_SEND_MODE: process.env.EMAIL_SEND_MODE || "log",
+    },
   },
 });
