@@ -241,6 +241,54 @@ jobs:
             test-results/
           retention-days: 14
 
+      # TENANT ISOLATION — HTTP CROSS-TENANT ATTACK (SEC.47). BLOCKING.
+      #
+      # `npm run test:isolation` has two legs: a vitest resolver check and the
+      # Playwright suite in tests/isolation/per-tenant.spec.ts, which signs in as
+      # tenant A and tries to reach tenant B's rows over HTTP from six
+      # directions — including a real cross-tenant WRITE (SEC.41). Nothing in CI
+      # ran that Playwright leg, so the one gate that actually mounts the attack
+      # was absent from every run.
+      #
+      # A SEPARATE STEP, for the same reason the layout gate is: it owns its own
+      # databases, and Playwright's webServer has reuseExistingServer=false under
+      # CI, so it cannot piggyback on the smoke step's server.
+      #
+      # ONE STEP, TWO BEHAVIOURS, chosen by repo identity — the same idiom as the
+      # billing-price gate above. The two tenant database URLs are blank on the
+      # template, which is exactly the condition the spec's own skip guard reads
+      # (per-tenant.spec.ts:74-77): house-starter provisions no tenants, so the
+      # step runs and self-skips green. On any generated app both URLs are set,
+      # the spec provisions and migrates both databases itself, and the real
+      # attack fires. Env is set explicitly here rather than left to
+      # playwright.config.ts fallbacks, because those fallbacks diverge between
+      # the template and generated apps — explicit env is what lets one identical
+      # step behave correctly on both.
+      - name: Tenant isolation — HTTP cross-tenant attack
+        env:
+          AUTH_SECRET: ci-e2e-only-dummy-secret-not-used-anywhere-real
+          # per_tenant is the posture under attack (ADR-023 default) and the mode
+          # the spec asserts against. Its own catalog file, not the smoke step's,
+          # so a signed-up smoke user cannot perturb the seeded fixtures.
+          TENANCY_MODE: per_tenant
+          DATABASE_URL: file:ci-isolation.db
+          RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+          STRIPE_SECRET_KEY: sk_test_ci-e2e-only-dummy-not-a-real-key
+          STRIPE_WEBHOOK_SECRET: whsec_ci-e2e-only-dummy-not-a-real-secret
+          # LAUNCHED — "live-quiet: any authenticated user passes"
+          # (lib/live-eval.ts). Same reason as the two steps above: this drives
+          # signed-in surfaces, and LIVE_EVAL would 403 every one of them.
+          APP_LIFECYCLE_STATE: LAUNCHED
+          EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
+          EMAIL_SEND_MODE: log
+          # Blank on the template → spec self-skips. Two distinct file: URLs on a
+          # generated app → the attack runs for real.
+          TENANT_DB_URL_TENANT_A: ${{ github.repository == 'PiersAG/house-starter' && '' || 'file:isolation-tenant-a.db' }}
+          TENANT_DB_URL_TENANT_B: ${{ github.repository == 'PiersAG/house-starter' && '' || 'file:isolation-tenant-b.db' }}
+        run: |
+          npx playwright install chromium
+          npm run test:isolation
+
       # Fail on high-severity vulnerabilities in production dependencies.
       - name: Security audit
         run: npm audit --audit-level high --omit=dev
