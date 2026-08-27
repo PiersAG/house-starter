@@ -265,6 +265,7 @@ jobs:
       # the template and generated apps — explicit env is what lets one identical
       # step behave correctly on both.
       - name: Tenant isolation — HTTP cross-tenant attack
+        if: always()
         env:
           AUTH_SECRET: ci-e2e-only-dummy-secret-not-used-anywhere-real
           # per_tenant is the posture under attack (ADR-023 default) and the mode
