@@ -22,6 +22,17 @@
 // caller passes it; it is marked BEFORE sub-users exist rather than retrofitted
 // one route at a time afterwards.
 //
+// AND WHETHER THEY HAVE PAID (item 17). A settings write is a product write, so
+// it sits behind the same subscription paywall as every other data route —
+// enforcePaidApi, keyed on this route's OWN pathname, not a borrowed one. It is
+// the LAST refusal in each handler because authorization refuses before payment
+// does: a non-owner gets 403 whether or not the workspace is paid up. The free
+// trial passes — the gate reads the caller's catalog subscription, not the
+// route, and startTrialForNewOwner() gives every new owner one at sign-up. In
+// the TEMPLATE this call is inert by config (config/billing.ts ·
+// gatedRoutePrefixes is empty until a per-app build fills it in), which is the
+// same posture every other gated-route call would have here.
+//
 // WHAT THIS ROUTE CANNOT DO AT ALL: write an operator/CEO control. Those are
 // not role-gated here, they are absent from this surface — validateOwnerWrite
 // refuses them and operator_setting_values has no route. See
@@ -33,6 +44,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { catalogDb } from "@/lib/catalog";
+import { enforcePaidApi } from "@/lib/billing/enforce";
 import { getTenantDb } from "@/lib/tenant-context";
 import { NotAuthorizedError, assertTenantOwner } from "@/lib/authz";
 import { requireCapabilityForSettingKey } from "@/lib/capabilities/guard";
@@ -141,6 +154,9 @@ export async function PUT(
     if (refusal) return refusal;
   }
 
+  const denied = await enforcePaidApi(catalogDb, userId, "/api/settings/[key]");
+  if (denied) return denied;
+
   const db = await getTenantDb();
   if (scope === "client") {
     await setClientValue(db, key, userId, validation.value);
@@ -183,6 +199,9 @@ export async function DELETE(
     const operatorRefusal = operatorKeyRefusal(key);
     if (operatorRefusal) return operatorRefusal;
   }
+
+  const denied = await enforcePaidApi(catalogDb, userId, "/api/settings/[key]");
+  if (denied) return denied;
 
   const db = await getTenantDb();
   const removed =

@@ -10,9 +10,20 @@
 // A builder adding a domain model copies this shape: `await getTenantDb()`,
 // then query. tests/isolation/per-tenant.spec.ts discovers this route by
 // walking app/ and mounts the cross-tenant attack against it.
+//
+// PAYWALL (item 17). App data is behind the subscription gate, and this route
+// returns app data — so it calls enforcePaidApi like every other data route.
+// It previously did not, while an app's config/billing.ts listed "/api/tenant"
+// in gatedRoutePrefixes: the gate was DECLARED and never enforced, because the
+// prefix list is only ever consulted from inside enforcePaidApi (there is no
+// middleware that reads it). Declaring a gate no handler calls is the failure
+// mode this call closes. Inert in the template, where gatedRoutePrefixes is
+// empty; live in an app that lists this path.
 
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { catalogDb } from "@/lib/catalog";
+import { enforcePaidApi } from "@/lib/billing/enforce";
 import { getTenantDb } from "@/lib/tenant-context";
 import { tenantMeta } from "@/lib/schema";
 
@@ -26,6 +37,9 @@ export async function GET(): Promise<Response> {
       { status: 401 },
     );
   }
+
+  const denied = await enforcePaidApi(catalogDb, session.user.id, "/api/tenant");
+  if (denied) return denied;
 
   const db = await getTenantDb();
   const rows = await db.select().from(tenantMeta).limit(1).all();
