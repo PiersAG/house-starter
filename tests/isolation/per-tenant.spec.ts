@@ -161,6 +161,27 @@ async function seedTenant(
       "name = excluded.name, tenant_id = excluded.tenant_id",
     args: [`user-${tenantId}`, email, await hashPassword(PASSWORD), tenantId, tenantId],
   });
+
+  // Seed a trial subscription so the paywall (lib/billing/enforce.ts) allows
+  // writes to gated routes during the isolation attack. Without this the
+  // write-leg positive control below reports zero accepted writes because every
+  // POST returns 402, making the cross-tenant write isolation proof vacuous.
+  // Status "incomplete" + a future trial_ends_at is the same shape
+  // startTrialForNewOwner() (lib/billing/trial.ts) writes at sign-up. Stored as
+  // unix epoch SECONDS — the value Drizzle integer({ mode: "timestamp" })
+  // round-trips.
+  await catalog.execute({
+    sql:
+      "INSERT INTO subscriptions (id, user_id, status, trial_ends_at, created_at, updated_at) " +
+      "VALUES (?, ?, 'incomplete', ?, unixepoch(), unixepoch()) " +
+      "ON CONFLICT(user_id) DO UPDATE SET trial_ends_at = excluded.trial_ends_at",
+    args: [
+      `sub-${tenantId}`,
+      `user-${tenantId}`,
+      // 90 days from now in unix seconds (Drizzle mode:"timestamp" stores seconds)
+      Math.floor(Date.now() / 1000) + 90 * 24 * 3600,
+    ],
+  });
 }
 
 /** One row of one table, kept with its table name and its columns intact. */
