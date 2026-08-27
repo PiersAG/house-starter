@@ -42,6 +42,15 @@ const store = vi.hoisted(() => ({
 vi.mock("@/lib/settings/values", () => store);
 const { setOwnerValue, deleteValue } = store;
 
+// The paywall (item 17). Mocked to "allowed" (null) so these cases stay about
+// the capability guard and the owner role; the paywall's own allow/deny logic is
+// covered in tests/unit/enforce.test.ts against a real catalog. Without this the
+// handler would reach for a live catalog database in an app whose config gates
+// /api/settings — the same reason every other route test mocks it.
+vi.mock("@/lib/billing/enforce", () => ({
+  enforcePaidApi: vi.fn(async () => null),
+}));
+
 import { PUT, DELETE } from "@/app/api/settings/[key]/route";
 
 function putReq(key: string, value: unknown): [Request, { params: Promise<{ key: string }> }] {
