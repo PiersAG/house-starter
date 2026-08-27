@@ -14,15 +14,19 @@
 //   4. over HTTP, WRITING     — signed in as tenant A, can a write reach tenant
 //                               B's database, or land in a row every tenant
 //                               shares?
-//   5. by tampering           — can the caller name the tenant themselves?
-//   6. by removing a route    — does an unregistered tenant fall back to a
+//   5. over HTTP, DELETING    — signed in as tenant A, can a DELETE destroy a
+//                               record that belongs to tenant B?
+//   6. by tampering           — can the caller name the tenant themselves?
+//   7. by removing a route    — does an unregistered tenant fall back to a
 //                               shared DATABASE_URL sitting right there?
 //
-// A pass means all six were tried and blocked. Tests 3 and 4 additionally assert
+// A pass means all seven were tried and blocked. Tests 3, 4 and 5 additionally assert
 // a POSITIVE: tenant A must be able to read its OWN sentinel over HTTP, and an
 // accepted write must be observed landing in tenant A's OWN database. Without
 // those, an app whose data routes all returned 500 would "leak nothing" and pass
-// while proving nothing — the failure mode this spec's previous life had.
+// while proving nothing — the failure mode this spec's previous life had. Leg 5
+// asserts the same shape for deletion: tenant A must be able to delete its OWN
+// record, or "tenant B's rows survived" only means DELETE is broken everywhere.
 //
 // WHY THE WRITE LEG EXISTS (added by SEC.41)
 // -----------------------------------------
@@ -36,10 +40,29 @@
 // tenant B's database, or that lands in a shared control-plane row carrying no
 // attribution to tenant A, fails it whatever the app is.
 //
+// WHY THE DELETE LEG EXISTS (added by item 16b)
+// ---------------------------------------------
+// Leg 4 proves a write leaked by FOLLOWING A SENTINEL — a unique string written
+// as tenant A, then found (or not) in tenant B's database afterwards. A DELETE
+// writes nothing, carries no sentinel, and that method does not apply to it; so
+// DELETE stayed out of WRITE_METHODS and `/api/settings/[key]` had its PUT
+// attacked on every run while its DELETE — same file, same rows, same
+// authorization question — was attacked never. Leg 5 proves the mirror image
+// instead: plant a real, deletable resource in tenant B through tenant B's own
+// session, aim tenant A at it by the id tenant B's database actually holds, and
+// require the row to still be there afterwards.
+//
 // The route list is DISCOVERED from the app's own `app/` directory, not typed
 // into a constant here. A hand-maintained list is a list someone forgets to
 // update, and an empty one is what made this spec vacuous for its entire life.
 // A route the builder adds is attacked the next time this runs.
+//
+// And what discovery DROPS is now declared rather than silent (item 16a):
+// tests/isolation/route-map.ts holds the exclusions with a reason each, and
+// tests/unit/isolation-route-coverage.test.ts fails the build if a writable route
+// ends up outside this attack without an explicit, reasoned exemption. That guard
+// reads the source tree only, so it runs on the template too — where this spec
+// skips.
 //
 // WHEN IT SKIPS
 // -------------
@@ -49,8 +72,6 @@
 // not, the SEC.24 isolation floor converts the resulting skip into a build
 // failure. There is no path where this spec passes without attacking.
 
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { createClient } from "@libsql/client";
 import { migrateCatalog, migrateTenant } from "@/lib/migrate";
@@ -63,6 +84,13 @@ import {
   __resetDbCacheForTests,
 } from "@/lib/db";
 import { tenantMeta } from "@/lib/schema";
+import {
+  DELETE_METHOD,
+  WRITE_METHODS,
+  type DiscoveredRoute,
+  appDir,
+  attackableRoutes,
+} from "./route-map";
 
 const TENANT_A = "TENANT_A";
 const TENANT_B = "TENANT_B";
@@ -97,10 +125,19 @@ const WRITE_SENTINELS = {
 
 type WriteSource = keyof typeof WRITE_SENTINELS;
 
-/** Verbs the write leg tries. DELETE is deliberately absent: it carries no
- *  sentinel, so "where did it land" — the whole question this leg asks — has no
- *  answer for it. Cross-tenant deletion is its own gap, not this one. */
-const WRITE_METHODS = ["POST", "PUT", "PATCH"] as const;
+// WRITE_METHODS (the sentinel-carrying verbs) and DELETE_METHOD (the
+// survive-check verb) are declared in ./route-map.ts, next to the coverage guard
+// that asserts the app exports no write verb this file fails to attack. Two
+// copies of that list would be two lists to keep in step, which is the failure
+// item 16a exists to remove.
+
+/** Sentinel written by the DELETE leg's fixtures, one per tenant. Unlike the
+ *  write sentinels these mark a row that must be DELETABLE — planted through the
+ *  app's own routes so it is a real resource, not a row this file invented. */
+const DELETE_SENTINELS = {
+  A: "SENTINEL-DELETE-OWN-4f19ea",
+  B: "SENTINEL-DELETE-TARGET-8a26bc",
+} as const;
 
 const A_EMAIL = "tenant-a-a3f92c@isolation.test";
 const B_EMAIL = "tenant-b-b7e14d@isolation.test";
@@ -223,101 +260,21 @@ async function dump(url: string, authToken?: string): Promise<string> {
 }
 
 /**
- * Routes that are public BY DESIGN, or that no browser session can drive. They
- * are excluded because a public page leaking nothing proves nothing — the attack
- * has to land on routes that require a session.
- */
-const PUBLIC_PREFIXES = [
-  "/login",
-  "/signup",
-  "/contact",
-  "/reset-password",
-  "/reactivate",
-  "/api/auth", // NextAuth internals — exercised by the login flow, not attacked directly
-  "/api/billing/webhook", // Stripe-signed; unreachable from a browser session
-  "/api/health", // deliberately unauthenticated liveness probe
-];
-
-/** A route as discovered from the source tree, with its shape preserved. */
-type DiscoveredRoute = {
-  /** URL path, `[dynamic]` segments left in place: `/api/settings/[key]`. */
-  path: string;
-  /** Parameter names, in path order: `["key"]`. Empty for a static route. */
-  params: string[];
-  /** `route.ts` is an API handler; `page.tsx` is a page. */
-  kind: "api" | "page";
-};
-
-/**
- * Discover the app's authenticated data routes by walking `app/`.
+ * The routes this attack aims at: every route under `app/` except the ones
+ * declared public-by-design in ROUTE_EXCLUSIONS (tests/isolation/route-map.ts,
+ * where each exclusion carries its reason).
  *
- * Next.js App Router: a directory holding `page.tsx` is a page route and one
- * holding `route.ts` is an API route; `(group)` and `@slot` directories are not
- * URL segments.
+ * Still DISCOVERED from the app's own source tree, not typed into a constant
+ * here — a hand-maintained list is a list someone forgets to update, and an empty
+ * one is what made this spec vacuous for its entire life. A route the builder
+ * adds is attacked the next time this runs.
  *
- * `[dynamic]` segments are KEPT, with their parameter names, rather than dropped
- * (SEC.41). Dropping them was defended as "there is no honest value to substitute
- * for another tenant's record id" — but there is: the id the OTHER TENANT'S OWN
- * DATABASE says it holds. Substituting a guess would indeed only test a 404;
- * substituting tenant B's real id tests the authorization boundary exactly. So
- * the parameter names travel with the route and the caller supplies values (see
- * `candidatesFor`). Silently skipping them meant `/api/settings/[key]` — the
- * route that carried a real cross-tenant write defect — was never attacked.
+ * What is NEW (item 16a) is that the routes discovery drops are now dropped by a
+ * declaration rather than silently, and tests/unit/isolation-route-coverage.test.ts
+ * fails the build if a WRITABLE route ends up on the dropped side without an
+ * explicit, reasoned exemption. Coverage of this attack is asserted, not assumed.
  */
-function discoverRoutes(appDir: string): DiscoveredRoute[] {
-  const found: DiscoveredRoute[] = [];
-
-  function walk(dir: string, urlPath: string, params: string[]) {
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    const names = entries.map((e) => e.name);
-    const isApi = names.includes("route.ts");
-    if (names.includes("page.tsx") || isApi) {
-      found.push({
-        path: urlPath === "" ? "/" : urlPath,
-        params: [...params],
-        kind: isApi ? "api" : "page",
-      });
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const name = entry.name;
-      if (name.startsWith("_")) continue;
-      const isDynamic = name.startsWith("[");
-      const segment =
-        !isDynamic && (name.startsWith("(") || name.startsWith("@"))
-          ? ""
-          : `/${name}`;
-      // `[id]`, `[...slug]` and `[[...slug]]` all name one parameter.
-      const param = isDynamic
-        ? name.replace(/^\[+\.{0,3}/, "").replace(/\]+$/, "")
-        : null;
-      walk(
-        join(dir, name),
-        urlPath + segment,
-        param ? [...params, param] : params,
-      );
-    }
-  }
-
-  walk(appDir, "", []);
-
-  return found
-    .filter((route) => route.path !== "/")
-    .filter(
-      (route) =>
-        !PUBLIC_PREFIXES.some(
-          (p) => route.path === p || route.path.startsWith(`${p}/`),
-        ),
-    )
-    .sort((a, b) => a.path.localeCompare(b.path));
-}
-
-const ALL_ROUTES = discoverRoutes(join(process.cwd(), "app"));
+const ALL_ROUTES = attackableRoutes(appDir());
 
 /**
  * The read/tamper legs navigate to routes with a browser, so they take the
@@ -417,6 +374,124 @@ function writeBody(sentinel: string): Record<string, string> {
     notes: sentinel,
     description: sentinel,
   };
+}
+
+/**
+ * DELETE targets: the discovered API routes that actually export a DELETE
+ * handler (item 16b). Read from the route files themselves rather than guessed,
+ * so a new DELETE handler is attacked with no change here — and
+ * tests/unit/isolation-route-coverage.test.ts fails the build if a DELETE
+ * appears on a route this list would not reach.
+ */
+const DELETE_ROUTES = ALL_ROUTES.filter(
+  (r) => r.kind === "api" && r.methods.includes(DELETE_METHOD),
+);
+
+/** API routes that accept a POST, by path — where a new resource comes from. */
+const POSTABLE = new Set(
+  ALL_ROUTES.filter((r) => r.kind === "api" && r.methods.includes("POST")).map(
+    (r) => r.path,
+  ),
+);
+
+/**
+ * The collection a `/thing/[id]` route belongs to: `/thing`. That is where a
+ * REST app creates the resource its DELETE route then names, which is how the
+ * DELETE leg obtains a target without being told anything about the app.
+ * Null when the route does not end in a parameter.
+ */
+function collectionPathOf(route: DiscoveredRoute): string | null {
+  const segments = route.path.split("/");
+  const last = segments[segments.length - 1];
+  if (!last.startsWith("[")) return null;
+  const parent = segments.slice(0, -1).join("/");
+  return parent === "" ? null : parent;
+}
+
+/** One row, identified by table and full contents, for before/after comparison. */
+function rowKey({ table, row }: DumpRow): string {
+  return `${table}\u0000${JSON.stringify(row)}`;
+}
+
+/** What a planting run produced in one tenant. */
+type Planted = {
+  /** Concrete DELETE-able URLs that now name a row carrying the sentinel. */
+  urls: string[];
+  /** The rows carrying the sentinel, as the database holds them. */
+  rows: DumpRow[];
+  /** Every request tried, with its status — the diagnosis when nothing landed. */
+  attempts: string[];
+};
+
+/**
+ * Create a real, deletable resource in ONE tenant, through the app's own routes,
+ * and report the URLs that now address it.
+ *
+ * THIS IS THE PART ITEM 16b HAD TO SOLVE. A DELETE carries no sentinel — it
+ * writes nothing, so "where did it land" has no answer and the write leg's whole
+ * method is unavailable. What a deletion CAN be proved by is the opposite: a row
+ * that was there before and is there after. That needs a row worth deleting to
+ * exist in the victim tenant in the first place, which is what this plants —
+ * using only what discovery already knows:
+ *
+ *   (a) POST the collection (`/api/subjects` for `/api/subjects/[id]`), the REST
+ *       shape for "create one of these", then read the tenant's database back and
+ *       take the id of whatever row now carries the sentinel; and
+ *   (b) PUT/POST the parameterised URL itself, for routes where naming the
+ *       resource IS creating it (a settings key is the canonical shape).
+ *
+ * Nothing here knows what the app stores. Every id used afterwards came out of
+ * the tenant's own database, exactly as the write leg's candidates do.
+ */
+async function plantDeletable(
+  page: Page,
+  dbUrl: string,
+  sentinel: string,
+): Promise<Planted> {
+  const attempts: string[] = [];
+  const before = await dumpRows(dbUrl);
+  const send = async (url: string, method: string) => {
+    const response = await page.request.fetch(url, {
+      method,
+      data: writeBody(sentinel),
+      headers: { "content-type": "application/json" },
+      failOnStatusCode: false,
+      timeout: 15_000,
+    });
+    attempts.push(`${method} ${url} \u2192 ${response.status()}`);
+  };
+
+  for (const route of DELETE_ROUTES) {
+    const collection = collectionPathOf(route);
+    if (collection && POSTABLE.has(collection)) {
+      await send(collection, "POST");
+    }
+    const pool = route.params.flatMap((param) => candidatesFor(before, param, 8));
+    if (pool.length > 0) {
+      for (const url of urlsFor(route, pool, "")) {
+        for (const method of ["PUT", "POST"] as const) {
+          if (route.methods.includes(method)) await send(url, method);
+        }
+      }
+    }
+  }
+
+  const after = await dumpRows(dbUrl);
+  const rows = after.filter(({ row }) => JSON.stringify(row).includes(sentinel));
+
+  const urls = [
+    ...new Set(
+      DELETE_ROUTES.flatMap((route) => {
+        if (route.params.length === 0) return [];
+        const pool = route.params.flatMap((param) =>
+          candidatesFor(rows, param, 8),
+        );
+        return pool.length > 0 ? urlsFor(route, pool, "") : [];
+      }),
+    ),
+  ];
+
+  return { urls, rows, attempts };
 }
 
 test.describe("per-tenant data isolation", () => {
@@ -695,6 +770,209 @@ test.describe("per-tenant data isolation", () => {
         "the shared catalog is the usual answer, and it is the wrong one. " +
         `Accepted: ${accepted.map((a) => `${a.method} ${a.url} → ${a.status}`).join(", ")}`,
     ).toBeGreaterThan(0);
+  });
+
+  test("a cross-tenant DELETE is refused, and the caller can delete their OWN record", async ({
+    page,
+    browser,
+    baseURL,
+  }) => {
+    // THE VERB THE ATTACK NEVER ISSUED (item 16b). The write leg proves a leak
+    // by following a sentinel: write a unique string as tenant A, then look at
+    // the databases and see where it went. A DELETE writes nothing, so it
+    // carries no sentinel and that method simply does not apply — which is why
+    // DELETE sat outside WRITE_METHODS while `/api/settings/[key]` had its PUT
+    // attacked on every run and its DELETE, same handler file and same data,
+    // attacked never.
+    //
+    // A deletion is proved by the mirror image: a row that was in tenant B's
+    // database before the attack is still in it after. That needs a target worth
+    // deleting, so one is PLANTED in tenant B first — through tenant B's own
+    // session and the app's own routes, never by writing to the database behind
+    // the app's back — and the attack then aims tenant A at it by the id tenant
+    // B's database really holds.
+    //
+    // And a positive control, for the same reason every other leg has one: an
+    // app whose DELETE handlers all 500 would leave every one of tenant B's rows
+    // perfectly intact and "pass". So tenant A must be shown DELETING ITS OWN
+    // planted row successfully before "tenant B's rows survived" means anything.
+    test.skip(
+      DELETE_ROUTES.length === 0,
+      "no route under app/ exports a DELETE handler — there is no cross-tenant " +
+        "deletion to attempt. tests/unit/isolation-route-coverage.test.ts is what " +
+        "notices if one is added.",
+    );
+
+    const catalog = resolveCatalog();
+
+    // ── plant a deletable resource in the VICTIM tenant ────────────────────
+    // Its own browser context: tenant B has to hold a real session to create
+    // anything, and tenant A's session must not be disturbed by acquiring it.
+    const contextB = await browser.newContext({ baseURL: baseURL ?? undefined });
+    let plantedB: Planted;
+    try {
+      const pageB = await contextB.newPage();
+      const signedInB = await loginAs(pageB, B_EMAIL);
+      expect(
+        signedInB,
+        `could not sign in as tenant B (${B_EMAIL}) to plant the deletion target — ` +
+          "the cross-tenant DELETE attack cannot be aimed at anything, so it is " +
+          "UNPROVEN rather than passing.",
+      ).toBe(true);
+      plantedB = await plantDeletable(pageB, URL_B!, DELETE_SENTINELS.B);
+    } finally {
+      await contextB.close();
+    }
+
+    expect(
+      plantedB.rows.length,
+      "tenant B has DELETE routes but no resource could be created at any of " +
+        "them, so there is nothing for tenant A to try to delete and this leg " +
+        "would pass vacuously. Either the create path needs a field this probe " +
+        "does not send, or writes are failing for an unrelated reason. " +
+        `Attempts: ${plantedB.attempts.join(", ")}`,
+    ).toBeGreaterThan(0);
+    expect(
+      plantedB.urls.length,
+      "tenant B's planted rows carry no id this file can put in a URL, so the " +
+        "attack cannot address them. The DELETE route's parameter and the " +
+        "created row's columns do not line up — report this rather than working " +
+        `around it. Planted rows: ${plantedB.rows.map((r) => r.table).join(", ")}`,
+    ).toBeGreaterThan(0);
+
+    // ── plant the ATTACKER's own resource, for the positive control ────────
+    // Tenant A's OWN rows are never used as attack ids — deleting them would
+    // destroy the write leg's positive control. The only rows tenant A deletes
+    // here are the ones this leg planted for the purpose, after the write leg has
+    // finished asserting.
+    const signedIn = await loginAs(page, A_EMAIL);
+    expect(
+      signedIn,
+      `could not sign in as tenant A (${A_EMAIL}) — the cross-tenant DELETE ` +
+        "attack cannot be mounted, so isolation is UNPROVEN, which is not the " +
+        "same as proven safe.",
+    ).toBe(true);
+
+    const plantedA = await plantDeletable(page, URL_A!, DELETE_SENTINELS.A);
+    expect(
+      plantedA.rows.length,
+      "tenant A could not create a resource of its own to delete, so the " +
+        "positive control below cannot run and 'tenant B survived' would prove " +
+        `only that deletion is broken everywhere. Attempts: ${plantedA.attempts.join(", ")}`,
+    ).toBeGreaterThan(0);
+
+    // ── the attack ────────────────────────────────────────────────────────
+    const beforeB = await dumpRows(URL_B!);
+    const beforeCatalog = await dumpRows(catalog.url, catalog.authToken);
+    const poolCross = beforeB;
+    const poolShared = beforeCatalog;
+
+    const crossAttempts: string[] = [];
+    const deleteAs = async (url: string, log: string[]) => {
+      // No body: a DELETE that carries one is a different request from the one
+      // the app's own client sends, and the handler reads its scope from the
+      // query string.
+      const response = await page.request.fetch(url, {
+        method: DELETE_METHOD,
+        failOnStatusCode: false,
+        timeout: 15_000,
+      });
+      log.push(`DELETE ${url} \u2192 ${response.status()}`);
+    };
+
+    // The sharpest aim first: the exact URLs of the rows tenant B just created.
+    for (const url of plantedB.urls) await deleteAs(url, crossAttempts);
+
+    // Then everything else tenant B's database and the shared catalog can name,
+    // so a route keyed on something other than the planted resource is covered
+    // too.
+    for (const route of DELETE_ROUTES) {
+      if (route.params.length === 0) continue;
+      for (const pool of [poolCross, poolShared]) {
+        const values = route.params.flatMap((param) =>
+          candidatesFor(pool, param, 8),
+        );
+        if (values.length === 0) continue;
+        for (const url of urlsFor(route, values, "")) {
+          if (plantedB.urls.includes(url)) continue;
+          await deleteAs(url, crossAttempts);
+        }
+      }
+    }
+
+    // (a) NOT ONE of tenant B's rows may have gone. Row identity is the table
+    //     plus the whole row, so a deletion cannot hide behind a column that
+    //     happened to match something else.
+    const afterB = await dumpRows(URL_B!);
+    const survivors = new Set(afterB.map(rowKey));
+    const removed = beforeB
+      .filter((r) => !survivors.has(rowKey(r)))
+      .map(({ table, row }) => `${table}: ${JSON.stringify(row)}`);
+    expect(
+      removed,
+      "a DELETE issued by tenant A REMOVED rows from tenant B's database. This " +
+        "is a cross-tenant deletion: one customer destroyed another customer's " +
+        `data. Attempts: ${crossAttempts.join(", ")}`,
+    ).toEqual([]);
+
+    // The catalog is the other place tenant B exists: its account, its routing
+    // row, its subscription. A DELETE that cannot reach tenant B's data database
+    // but can unregister tenant B from the control plane is the same customer
+    // harmed by a different door.
+    const afterCatalog = await dumpRows(catalog.url, catalog.authToken);
+    const catalogSurvivors = new Set(afterCatalog.map(rowKey));
+    const namesB = (row: Record<string, unknown>) => {
+      const text = JSON.stringify(row);
+      return text.includes(TENANT_B) || text.includes(B_EMAIL);
+    };
+    const removedFromCatalog = beforeCatalog
+      .filter((r) => namesB(r.row) && !catalogSurvivors.has(rowKey(r)))
+      .map(({ table, row }) => `${table}: ${JSON.stringify(row)}`);
+    expect(
+      removedFromCatalog,
+      "a DELETE issued by tenant A removed a SHARED CATALOG row belonging to " +
+        "tenant B — their account, tenant registration or subscription. The data " +
+        "database is not the only place a tenant can be destroyed from. " +
+        `Attempts: ${crossAttempts.join(", ")}`,
+    ).toEqual([]);
+
+    // Said again against the planted target by name, because that is the row the
+    // attack was actually aimed at and a survivor count alone reads as noise.
+    const textB = afterB.map(({ row }) => JSON.stringify(row)).join("\n");
+    expect(
+      textB,
+      "tenant B's planted resource is gone after tenant A attacked its URL — a " +
+        "cross-tenant DELETE succeeded.",
+    ).toContain(DELETE_SENTINELS.B);
+    expect(
+      textB,
+      "tenant B's seeded sentinel row is gone after the DELETE attack",
+    ).toContain(SENTINEL_B);
+
+    // (b) POSITIVE CONTROL. Tenant A deletes its OWN planted rows. Without this,
+    //     an app whose DELETE handlers all fail would satisfy (a) perfectly.
+    const ownAttempts: string[] = [];
+    for (const url of plantedA.urls) await deleteAs(url, ownAttempts);
+
+    const afterA = await dumpRows(URL_A!);
+    const stillA = afterA.filter(({ row }) =>
+      JSON.stringify(row).includes(DELETE_SENTINELS.A),
+    );
+    expect(
+      stillA.length,
+      "tenant A could not delete its OWN record, so the survival of tenant B's " +
+        "rows above proves only that DELETE does not work at all. Fix the " +
+        "app's own delete path, or this leg is measuring nothing. " +
+        `Planted ${plantedA.rows.length} row(s); attempts: ${ownAttempts.join(", ")}`,
+    ).toBeLessThan(plantedA.rows.length);
+
+    // And the deletion tenant A was allowed to make must not have reached across
+    // either — an over-broad DELETE that clears both tenants is still a leak.
+    expect(
+      textB,
+      "tenant A's OWN delete-probe sentinel is in tenant B's database — the " +
+        "planting write crossed tenants before the deletion ever ran",
+    ).not.toContain(DELETE_SENTINELS.A);
   });
 
   test("tampered tenant identifiers are rejected, not normalised", async ({

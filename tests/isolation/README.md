@@ -23,9 +23,11 @@ Both modes assert that anonymous requests to protected data routes receive a
 | File                    | Runs today                                                      | Notes                                                                                                                                       |
 | ----------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `anon.spec.ts`          | ✓                                                               | Anonymous access to protected routes → redirect / 401. Real behaviour of the shipped app-shell.                                             |
-| `per-tenant.spec.ts`    | skipped unless `TENANT_DB_URL_TENANT_A` and `_TENANT_B` are set | Real seeded attack: migrates + seeds each tenant and the catalog, signs in over HTTP, then attacks from five directions. Routes are discovered from `app/`, not listed by hand. |
+| `per-tenant.spec.ts`    | skipped unless `TENANT_DB_URL_TENANT_A` and `_TENANT_B` are set | Real seeded attack: migrates + seeds each tenant and the catalog, signs in over HTTP, then attacks from seven directions — including a cross-tenant WRITE and a cross-tenant DELETE. Routes are discovered from `app/`, not listed by hand. |
+| `route-map.ts`          | n/a (not a test)                                                | The one discovery both the attack and the coverage guard read, plus the declared exclusions and their reasons.                              |
 | `shared.spec.ts`        | skipped unless `TENANCY_MODE=shared`                            | Same shape for shared-mode apps.                                                                                                            |
 | `tests/unit/db.test.ts` | ✓ (Vitest)                                                      | Factory fail-closed proof — the fallback trap the spec calls out.                                                                           |
+| `tests/unit/isolation-route-coverage.test.ts` | ✓ (Vitest, always)                            | Coverage guard: fails the build if a writable route is neither attacked nor exempted by name. Reads the source tree only, so it runs on the template too. |
 
 ## How the two databases are arranged
 
@@ -51,6 +53,42 @@ silently serving that tenant from the shared URL. Guarded in `lib/db.ts`,
 pinned by `tests/unit/db.test.ts`, and re-mounted over the real seam by
 `per-tenant.spec.ts`'s fifth leg.
 
+## Coverage: what stops a route being missed
+
+The attack discovers its targets, so a new route is attacked with no change to
+any test. The hole was the other direction — a writable route placed under one
+of the public-by-design exclusions vanished from discovery silently, and nothing
+said so.
+
+`tests/isolation/route-map.ts` now holds both lists, and each entry carries the
+reason it is there:
+
+- `ROUTE_EXCLUSIONS` — path prefixes the attack does not aim at (public pages,
+  NextAuth internals, the Stripe-signed webhook, the health probe).
+- `WRITABLE_ROUTE_EXEMPTIONS` — the routes that can MODIFY DATA and are still
+  not attacked, named exactly, one written reason each.
+
+`tests/unit/isolation-route-coverage.test.ts` asserts the relationship between
+them and fails the build when:
+
+- a route exporting `POST`/`PUT`/`PATCH`/`DELETE` is neither attacked nor
+  exempted by exact path;
+- an exemption or an exclusion prefix has rotted (names a route that no longer
+  exists, is not writable, or is attacked anyway);
+- an attacked route exports a write verb the attack never issues.
+
+**Adding a writable route: normally you do nothing.** A new `route.ts` under
+`app/` is discovered and attacked on the next isolation run. You only hear from
+the guard if the route sits under an excluded prefix, and then the choice is
+deliberate: narrow the prefix so the route is attacked, or add an exemption whose
+reason says why a signed-in tenant cannot use that route to reach another
+tenant's data.
+
+Because the guard reads the source tree and nothing else — no server, no browser,
+no tenant databases — it runs everywhere `npm test` runs, including on
+house-starter itself, where the attack self-skips. The template is where routes
+are added, so the template is where the guard has to bite.
+
 ## The positive control
 
 The HTTP leg asserts a POSITIVE before it asserts any negative: signed in as
@@ -59,6 +97,19 @@ sentinel**. Without it, an app whose data routes all returned 500 would leak
 nothing and pass — proving only that nothing works. The negative assertions are
 worth exactly as much as that positive one.
 
+Each write leg carries its own:
+
+- the **WRITE** leg requires at least one accepted write to be observed landing
+  in tenant A's own database;
+- the **DELETE** leg requires tenant A to successfully delete a record of its
+  own. A DELETE writes nothing, so it carries no sentinel and "where did it
+  land" cannot be asked of it. It is proved the other way round: a real,
+  deletable resource is planted in tenant B *through tenant B's own session and
+  the app's own routes*, tenant A then attacks its URL by the id tenant B's
+  database really holds, and every row tenant B had must still be there
+  afterwards. Without the own-delete control, an app whose DELETE handlers all
+  failed would leave tenant B perfectly intact and "pass".
+
 ## Builder handoff
 
 Nothing to fill in by hand. `per-tenant.spec.ts` used to ship with an empty
@@ -66,7 +117,9 @@ Nothing to fill in by hand. `per-tenant.spec.ts` used to ship with an empty
 the spec skipped in every app ever generated and the check was green having
 attacked nothing. That list is gone. The spec now discovers the app's
 authenticated routes by walking `app/` (excluding the routes that are public by
-design), so a route the builder adds is attacked on the next run.
+design), so a route the builder adds is attacked on the next run — and the
+coverage guard above fails the build if one of those routes can write and the
+attack cannot reach it.
 
 The build loop supplies the whole envelope:
 
