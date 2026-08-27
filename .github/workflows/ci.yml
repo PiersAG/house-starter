@@ -393,6 +393,10 @@ jobs:
       # the "no fake price" half of the toggle-safety rule.
       - name: Billing price guard (posture-appropriate mode)
         run: |
+          if [ "${{ github.repository }}" != "PiersAG/house-starter" ]; then
+            echo "billing matrix guard: skipped outside template (real billing config asserted by the main ci job against unmutated config/billing.ts)"
+            exit 0
+          fi
           if [ "${{ matrix.state }}" = "off" ]; then
             node scripts/check-billing-configured.mjs
           else
