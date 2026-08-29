@@ -118,6 +118,33 @@ for lf in glob.glob(os.path.join(REPO, "package-lock.json")) + glob.glob(os.path
             if mn is not None and mn > NPM_PIN_MAJOR:
                 fail.append(f"{rel}: dependency '{dep}' requires npm '{npr}' (needs >= major {mn}) > pin {NPM_PIN_MAJOR}")
 
+# --- item 9: named script-npm workflow pin + container Node assertion ------
+_SCRIPT_NPM_WORKFLOWS = {
+    ".github/workflows/build-run.yml":
+        "runs npm via agents/build/build-loop.py and agents/build/check_deps_existence.py",
+    ".github/workflows/apply-iteration.yml":
+        "runs npm via agents/apply-iteration.py",
+}
+for _rel, _why in _SCRIPT_NPM_WORKFLOWS.items():
+    _p = os.path.join(REPO, _rel)
+    if not os.path.isfile(_p):
+        continue
+    _t = open(_p).read()
+    if "actions/setup-node" not in _t or "node-version-file" not in _t:
+        fail.append(f"{_rel}: {_why} - must carry actions/setup-node with node-version-file: .node-version")
+
+_dockerfile = os.path.join(REPO, "agents/build/docker/Dockerfile")
+if os.path.isfile(_dockerfile):
+    _dtxt = open(_dockerfile).read()
+    for _maj in re.findall(r"deb\.nodesource\.com/setup_(\d+)\.x", _dtxt):
+        if _maj != CANON:
+            fail.append(f"agents/build/docker/Dockerfile: NodeSource setup_{_maj}.x != pin {CANON}")
+    _m = re.search(r"^ARG\s+NODE_MAJOR=(\d+)", _dtxt, re.M)
+    if not _m:
+        fail.append("agents/build/docker/Dockerfile: no `ARG NODE_MAJOR=` to check against .node-version")
+    elif _m.group(1) != CANON:
+        fail.append(f"agents/build/docker/Dockerfile: ARG NODE_MAJOR={_m.group(1)} != pin {CANON}")
+
 if fail:
     print("HARD.06 toolchain guard: FAIL")
     for x in fail:
