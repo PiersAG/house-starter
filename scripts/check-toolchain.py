@@ -81,9 +81,46 @@ if os.path.isfile(planter):
         if re.search(r"node-version\s*:\s*['\"]?\d", ln):
             fail.append(f"scaffold/write-security-scan-workflow.sh:{i}: planter emits a hardcoded node-version - emit node-version-file: .node-version")
 
+# --- G4: minimum-engine check ---------------------------------------------
+# Fail if any dependency declares engines.node/npm requiring a major GREATER than
+# the pin (a dependency that has outgrown our toolchain). Read from the lockfile,
+# so no install needed. A dependency needing an OLDER engine is fine (not flagged).
+NPM_PIN_MAJOR = 11
+
+def _min_required_major(rng):
+    toks = re.findall(r"\d+(?:\.\d+){0,2}", rng or "")
+    majors = [int(t.split(".")[0]) for t in toks]
+    return min(majors) if majors else None
+
+for lf in glob.glob(os.path.join(REPO, "package-lock.json")) + glob.glob(os.path.join(REPO, "*/package-lock.json")):
+    if "node_modules" in lf:
+        continue
+    rel = os.path.relpath(lf, REPO)
+    try:
+        pkgs = (json.load(open(lf)).get("packages") or {})
+    except Exception as e:
+        fail.append(f"{rel}: unreadable for engine check ({e})"); continue
+    for path, meta in pkgs.items():
+        if not path:                       # "" == the root package (ours) - skip
+            continue
+        eng = (meta or {}).get("engines")
+        if not isinstance(eng, dict):
+            continue
+        dep = path.split("node_modules/")[-1]
+        nr = eng.get("node")
+        if nr:
+            mn = _min_required_major(nr)
+            if mn is not None and mn > int(CANON):
+                fail.append(f"{rel}: dependency '{dep}' requires node '{nr}' (needs >= major {mn}) > pin {CANON}")
+        npr = eng.get("npm")
+        if npr:
+            mn = _min_required_major(npr)
+            if mn is not None and mn > NPM_PIN_MAJOR:
+                fail.append(f"{rel}: dependency '{dep}' requires npm '{npr}' (needs >= major {mn}) > pin {NPM_PIN_MAJOR}")
+
 if fail:
-    print("HARD.06 G2 toolchain guard: FAIL")
+    print("HARD.06 toolchain guard: FAIL")
     for x in fail:
         print("  - " + x)
     sys.exit(1)
-print(f"HARD.06 G2 toolchain guard: PASS (canonical Node major {CANON})")
+print(f"HARD.06 toolchain guard: PASS (canonical Node major {CANON})")
