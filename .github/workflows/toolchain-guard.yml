@@ -14,5 +14,8 @@ jobs:
         with:
           repository: PiersAG/house-starter
           path: _toolchain
-      - name: Run toolchain guard against this repo
-        run: python3 _toolchain/scripts/check-toolchain.py
+      - name: Run toolchain guard against this repo only
+        run: |
+          cp _toolchain/scripts/check-toolchain.py "$RUNNER_TEMP/check-toolchain.py"
+          rm -rf _toolchain
+          python3 "$RUNNER_TEMP/check-toolchain.py"
