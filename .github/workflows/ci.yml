@@ -11,6 +11,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  toolchain-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: HARD.06 G2 toolchain divergence guard
+        run: python3 scripts/check-toolchain.py
   ci:
     runs-on: ubuntu-latest
 
