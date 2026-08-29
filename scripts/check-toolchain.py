@@ -145,6 +145,32 @@ if os.path.isfile(_dockerfile):
     elif _m.group(1) != CANON:
         fail.append(f"agents/build/docker/Dockerfile: ARG NODE_MAJOR={_m.group(1)} != pin {CANON}")
 
+# --- G5: major-bump quarantine (renovate.json) ----------------------------
+# A present renovate.json must EITHER carry an inline major-quarantine rule
+# (majors held on the dependency dashboard, never automerged) OR extend the
+# shared house renovate preset (G6). Skipped where renovate.json is absent.
+# The OR-branch lets G6 move the rule into the preset without editing this guard.
+_renovate = os.path.join(REPO, "renovate.json")
+if os.path.isfile(_renovate):
+    try:
+        _rc = json.load(open(_renovate))
+    except Exception as _e:
+        fail.append(f"renovate.json: unreadable ({_e})")
+        _rc = None
+    if _rc is not None:
+        _extends = _rc.get("extends") or []
+        _has_preset = any(isinstance(_x, str) and "PiersAG/" in _x and "renovate" in _x.lower()
+                          for _x in _extends)
+        _has_inline = False
+        for _pr in (_rc.get("packageRules") or []):
+            if "major" in (_pr.get("matchUpdateTypes") or []) and _pr.get("dependencyDashboardApproval") is True:
+                _has_inline = True
+                break
+        if not (_has_preset or _has_inline):
+            fail.append('renovate.json: no G5 major-bump quarantine - needs a packageRules entry with '
+                        'matchUpdateTypes:["major"] + dependencyDashboardApproval:true, or extends the '
+                        'shared house renovate preset')
+
 if fail:
     print("HARD.06 toolchain guard: FAIL")
     for x in fail:
