@@ -1,0 +1,6 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "constraints": { "node": "24.x", "npm": ">=11" },
+  "lockFileMaintenance": { "enabled": true, "extends": ["schedule:weekly"] }
+}
