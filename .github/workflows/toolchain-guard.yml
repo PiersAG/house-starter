@@ -1,0 +1,18 @@
+name: Toolchain guard (reusable)
+
+on:
+  workflow_call: {}
+
+jobs:
+  toolchain-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller
+        uses: actions/checkout@v4
+      - name: Fetch canonical guard script (house-starter, public)
+        uses: actions/checkout@v4
+        with:
+          repository: PiersAG/house-starter
+          path: _toolchain
+      - name: Run toolchain guard against this repo
+        run: python3 _toolchain/scripts/check-toolchain.py
