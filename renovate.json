@@ -2,5 +2,14 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
   "constraints": { "node": "24.x", "npm": ">=11" },
-  "lockFileMaintenance": { "enabled": true, "extends": ["schedule:weekly"] }
+  "lockFileMaintenance": { "enabled": true, "extends": ["schedule:weekly"] },
+  "packageRules": [
+    {
+      "description": "HARD.06 G5 - major-bump quarantine. Majors are held on the Dependency Dashboard until a human approves them, are never automerged, and never ride inside a routine group PR.",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
+      "automerge": false,
+      "addLabels": ["major-migration"]
+    }
+  ]
 }
