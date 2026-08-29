@@ -31,6 +31,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+      # HARD.06 item 9: the build sandbox ran the tsx loader on its own container
+      # Node with no Node-24 equivalent anywhere in CI. This is that equivalent —
+      # if tsx's loader ever breaks on the pinned Node major, it breaks here.
+      - name: tsx runs on Node 24 (loader smoke)
+        run: npx tsx --version
       # DB-DRIVER LOCK: this template's database driver is libSQL (@libsql/client +
       # drizzle-orm/libsql), by design — same driver across dev/test/staging/prod,
       # differing only by DATABASE_URL, and deployable to serverless. The build
