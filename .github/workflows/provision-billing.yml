@@ -22,7 +22,7 @@ on:
         type: string
 jobs:
   provision:
-    uses: PiersAG/app-business-core/.github/workflows/provision-app-billing.yml@main
+    uses: PiersAG/app-business-core/.github/workflows/provision-app-billing.yml@provision-app-billing-v1
     with:
       build_id: ${{ inputs.build_id }}
     secrets:
