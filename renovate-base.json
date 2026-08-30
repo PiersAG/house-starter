@@ -10,6 +10,11 @@
       "dependencyDashboardApproval": true,
       "automerge": false,
       "addLabels": ["major-migration"]
+    },
+    {
+      "description": "The reusable workflows in PiersAG/app-business-core are called by uses: refs in this repo, but that repo is private and has no Renovate app install, so every lookup fails with no-result and surfaces as an error on the Dependency Dashboard. Nothing to update here - these refs are pinned by hand.",
+      "matchDepNames": ["PiersAG/app-business-core"],
+      "enabled": false
     }
   ]
 }
