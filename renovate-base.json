@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": ["config:recommended", ":enableVulnerabilityAlerts"],
   "constraints": { "node": "24.x", "npm": ">=11" },
   "lockFileMaintenance": { "enabled": true, "extends": ["schedule:weekly"] },
   "packageRules": [
