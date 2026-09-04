@@ -68,7 +68,7 @@
     "@vitejs/plugin-react-swc": "3.11.0",
     "@vitest/coverage-v8": "4.1.8",
     "@vitest/ui": "4.1.8",
-    "autoprefixer": "10.4.20",
+    "autoprefixer": "10.5.5",
     "dotenv": "17.4.2",
     "drizzle-kit": "0.31.10",
     "eslint": "9.0.0",
