@@ -23,6 +23,7 @@
 // using authConfig's minimal, DB-free jwt callback.
 
 import NextAuth from "next-auth";
+import type { JWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 import { authConfig } from "@/auth.config";
@@ -35,8 +36,12 @@ import { verifyPassword } from "@/lib/password";
 import {
   AUTH_RATE_LIMITS,
   AuthRateLimitError,
+  checkAccountRateLimit,
   guardAuthAttempt,
 } from "@/lib/auth-rate-limit";
+import { loadSecretBoxKey } from "@/lib/crypto/secret-box";
+import { resolveSignInFactor } from "@/lib/mfa/enrollment";
+import { MfaSignInError, submittedCode } from "@/lib/mfa/sign-in";
 import {
   handleTokenRenewal,
   isSessionRevoked,
@@ -54,6 +59,9 @@ const loginSchema = z.object({
   // "undefined" or "null" rather than a real boolean. Accept any string and
   // treat only the literal "on" as opt-in — never reject the login over it.
   rememberMe: z.string().optional(),
+  // The second-factor code (SEC.15), when the form is at the code step. Same
+  // stringified-absence problem as rememberMe — read through submittedCode().
+  code: z.string().optional(),
 });
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
@@ -87,6 +95,40 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         );
         if (!valid) return null;
 
+        // SECOND FACTOR (SEC.15). HERE, on the shared path, for the same reason
+        // the throttle is: the public credentials endpoint would bypass a check
+        // that sat only in a route or in the login action. AFTER the password, so
+        // a wrong password never reveals whether MFA is on; BEFORE the tenant is
+        // resolved, so a sign-in that stops here never opens a tenant database.
+        // No session exists until this passes. Throwing (not returning null)
+        // lets the login form ask for the code instead of reporting a wrong
+        // password — see lib/mfa/sign-in.ts.
+        const code = submittedCode(parsed.data.code);
+        if (code) {
+          for (const rate of [
+            await guardAuthAttempt(AUTH_RATE_LIMITS.mfaVerify),
+            await checkAccountRateLimit(AUTH_RATE_LIMITS.mfaVerify, user.id),
+          ]) {
+            if (!rate.allowed) throw new AuthRateLimitError(rate.retryAfterSeconds);
+          }
+        }
+        const factor = await resolveSignInFactor(catalogDb, {
+          userId: user.id,
+          code,
+          getKey: () => loadSecretBoxKey(),
+        });
+        if (factor.status === "code_required") throw new MfaSignInError("mfa_code_required");
+        if (factor.status === "invalid") throw new MfaSignInError("mfa_code_invalid");
+        if (factor.status === "totp_locked") throw new MfaSignInError("mfa_totp_locked");
+        // ANTI-LOCKOUT: an owner who has not enrolled is signed in and MARKED,
+        // never refused — enrollment needs a session. Slice 3 enforces the mark.
+        const mfa =
+          factor.status === "verified"
+            ? "verified"
+            : factor.status === "enroll_required"
+              ? "enroll_required"
+              : "none";
+
         // Resolve the tenant BEFORE the session exists. In per-tenant mode this
         // provisions one on first use (the seeded owner account has none), so an
         // account can always reach its own data. A failure here is a failed
@@ -108,6 +150,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           // the claim exists so the owner-only writes are already marked when
           // sub-users arrive. See lib/authz.ts.
           role: user.role,
+          // Second-factor state (SEC.15) — see types/next-auth.d.ts.
+          mfa,
         };
       },
     }),
@@ -133,6 +177,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // runs) must mint the same token shape, or a claim would appear and
         // disappear depending on which runtime last touched the cookie.
         token.role = (user as { role?: string }).role;
+        // The second-factor claim. Minted identically by auth.config.ts's Edge
+        // callback — the two must agree or the claim flickers by runtime.
+        token.mfa = (user as { mfa?: JWT["mfa"] }).mfa ?? "none";
         const rememberMe = (user as { rememberMe?: boolean }).rememberMe ?? false;
         token.rememberMe = rememberMe;
         token.maxAge = rememberMe ? THIRTY_DAY_SECONDS : DAY_SECONDS;
@@ -165,6 +212,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (token.role) {
         session.user.role = token.role as string;
       }
+      // Absent on a pre-claim session — anything enforcing MFA treats absent as
+      // NOT verified.
+      if (token.mfa) session.user.mfa = token.mfa;
       // Expose sessionId so a signOut action can write the revocation record.
       if (token.sessionId) {
         session.user.sessionId = token.sessionId as string;
