@@ -73,6 +73,16 @@ export const AUTH_RATE_LIMITS = {
   },
   forgotPassword: { bucket: "forgot-password", limit: 5, windowSeconds: 60 },
   resetPassword: { bucket: "reset-password", limit: 5, windowSeconds: 60 },
+  // SEC.15 MFA. Every check of a second-factor code — at sign-in, at enrollment
+  // confirm and on the verify route — spends this ONE bucket, counted per client
+  // AND per account (checkAccountRateLimit), so rotating addresses does not buy
+  // an attacker a fresh budget. 10 per 15 minutes is ~960 guesses a day at most,
+  // and the hard consecutive-failure ceiling in lib/mfa/enrollment.ts (≤100, per
+  // NIST SP 800-63B) stops guessing long before that.
+  mfaVerify: { bucket: "mfa-verify", limit: 10, windowSeconds: 900 },
+  // Starting enrollment generates and stores a new secret; nobody legitimately
+  // does that more than a handful of times.
+  mfaEnroll: { bucket: "mfa-enroll", limit: 5, windowSeconds: 900 },
 } as const satisfies Record<string, AuthRateLimit>;
 
 /**
@@ -170,6 +180,20 @@ export async function checkAuthRateLimit(
     `${bucket}:${clientKeyFromHeaders(requestHeaders)}`,
     options,
   );
+}
+
+/**
+ * Record one attempt against `config`'s bucket, keyed by ACCOUNT rather than by
+ * client. For limits that protect one account's secret (a second-factor code),
+ * where an attacker can change address but not the account under attack. Uses a
+ * separate key namespace, so it never shares a counter with the per-client key.
+ */
+export async function checkAccountRateLimit(
+  config: AuthRateLimit,
+  accountId: string,
+): Promise<RateLimitResult> {
+  const { bucket, ...options } = effectiveAuthRateLimit(config);
+  return getRateLimiter().hit(`${bucket}:account:${accountId}`, options);
 }
 
 /**

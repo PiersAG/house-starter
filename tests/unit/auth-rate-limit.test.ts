@@ -16,6 +16,7 @@ import {
   AUTH_RATE_LIMITS,
   AuthRateLimitError,
   type AuthRateLimitEnv,
+  checkAccountRateLimit,
   checkAuthRateLimit,
   effectiveAuthRateLimit,
   guardAuthAttempt,
@@ -123,6 +124,21 @@ describe("checkAuthRateLimit", () => {
     expect(
       (await checkAuthRateLimit(AUTH_RATE_LIMITS.login, nothing)).allowed,
     ).toBe(true);
+  });
+});
+
+describe("checkAccountRateLimit", () => {
+  // SEC.15 MFA. A second-factor code protects ONE account's secret, and an
+  // attacker can change address but not the account under attack — so the MFA
+  // buckets are also counted per account, in their own key namespace.
+  it("counts per account, independent of address, and separately from the per-client key", async () => {
+    const config = AUTH_RATE_LIMITS.mfaVerify;
+    for (let i = 0; i < config.limit; i += 1) {
+      expect((await checkAccountRateLimit(config, "user-1")).allowed).toBe(true);
+    }
+    expect((await checkAccountRateLimit(config, "user-1")).allowed).toBe(false);
+    expect((await checkAccountRateLimit(config, "user-2")).allowed).toBe(true);
+    expect((await checkAuthRateLimit(config, fakeHeaders("9.9.9.9"))).allowed).toBe(true);
   });
 });
 

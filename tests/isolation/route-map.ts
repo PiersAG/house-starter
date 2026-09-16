@@ -177,6 +177,24 @@ export const WRITABLE_ROUTE_EXEMPTIONS: { path: string; reason: string }[] = [
       "Stripe-signed. A browser session cannot forge the signature, so the cross-tenant attack " +
       "cannot reach it at all; its tenant handling is covered by the billing webhook unit tests.",
   },
+  {
+    path: "/api/auth/mfa/confirm",
+    reason:
+      "catalog-scoped, keyed on session.user.id; no tenant database opened. It activates " +
+      "the caller's OWN second factor; there is no tenant-scoped input to redirect.",
+  },
+  {
+    path: "/api/auth/mfa/enroll",
+    reason:
+      "catalog-scoped, keyed on session.user.id; no tenant database opened. It writes the " +
+      "caller's OWN unconfirmed secret and nothing else.",
+  },
+  {
+    path: "/api/auth/mfa/verify",
+    reason:
+      "catalog-scoped, keyed on session.user.id; no tenant database opened. It checks a " +
+      "code against the caller's OWN factor; a foreign tenant's data is unreachable from it.",
+  },
 ];
 
 /**

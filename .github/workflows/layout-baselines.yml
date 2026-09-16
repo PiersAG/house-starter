@@ -101,6 +101,9 @@ jobs:
           APP_LIFECYCLE_STATE: LAUNCHED
           EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
           EMAIL_SEND_MODE: log
+          # CI-only throwaway MFA key (base64 of `ci-e2e-only-dummy-key-32-bytes!!`);
+          # boot-required by .env.contract, or the app cannot start to be screenshotted.
+          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
         run: |
           npx playwright install --with-deps chromium
           npm run test:layout:update

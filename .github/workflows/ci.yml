@@ -105,7 +105,7 @@ jobs:
           node -e '
             const { readFileSync, existsSync } = require("fs");
             const cfg = readFileSync("vitest.config.ts", "utf8");
-            const files = ["lib/password.ts", "lib/rate-limit.ts", "lib/auth-rate-limit.ts", "lib/app-url.ts", "lib/authz.ts", "lib/settings/operator.ts", "lib/users.ts", "lib/db.ts", "lib/crypto/secret-box.ts", "lib/mfa/totp.ts", "lib/mfa/recovery-codes.ts", "lib/mfa/enrollment.ts", "lib/mfa/sign-in.ts"];
+            const files = ["lib/password.ts", "lib/rate-limit.ts", "lib/auth-rate-limit.ts", "lib/app-url.ts", "lib/authz.ts", "lib/settings/operator.ts", "lib/users.ts", "lib/db.ts", "lib/crypto/secret-box.ts", "lib/mfa/totp.ts", "lib/mfa/recovery-codes.ts", "lib/mfa/enrollment.ts", "lib/mfa/sign-in.ts", "lib/mfa/route-guard.ts"];
             const metrics = ["lines", "statements", "branches", "functions"];
             let failed = false;
             for (const f of files) {
@@ -196,6 +196,10 @@ jobs:
           # source=app, not deploy-injected, so the boot validator skips it.)
           EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
           EMAIL_SEND_MODE: log
+          # MFA_ENCRYPTION_KEY (secret) is declared deploy-injected in .env.contract
+          # → the boot validator requires it. CI-only throwaway: the base64 of the
+          # 32-byte string `ci-e2e-only-dummy-key-32-bytes!!`. Seals nothing real.
+          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
         run: |
           npx playwright install --with-deps chromium
           npm run test:e2e
@@ -235,6 +239,8 @@ jobs:
           APP_LIFECYCLE_STATE: LAUNCHED
           EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
           EMAIL_SEND_MODE: log
+          # See the smoke step above — CI-only throwaway MFA key.
+          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
         run: |
           npx playwright install chromium
           npm run test:layout
@@ -293,6 +299,8 @@ jobs:
           APP_LIFECYCLE_STATE: LAUNCHED
           EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
           EMAIL_SEND_MODE: log
+          # See the smoke step above — CI-only throwaway MFA key.
+          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
           # Blank on the template → spec self-skips. Two distinct file: URLs on a
           # generated app → the attack runs for real.
           TENANT_DB_URL_TENANT_A: ${{ github.repository != 'PiersAG/house-starter' && 'file:isolation-tenant-a.db' || '' }}

@@ -12,6 +12,14 @@ declare module "next-auth" {
        * owner" rather than defaulting to the most privileged value.
        */
       role?: string;
+      /**
+       * Second-factor state at sign-in (SEC.15): "verified" = a factor was
+       * proven; "enroll_required" = policy requires MFA and none is set up yet;
+       * "none" = not required and not set up. ABSENT on a session minted before
+       * the claim existed — anything enforcing MFA must treat absent as NOT
+       * verified.
+       */
+      mfa?: "none" | "verified" | "enroll_required";
       /** JWT session identifier — exposed so a signOut action can write a revocation record. */
       sessionId?: string;
     } & DefaultSession["user"];
@@ -25,6 +33,14 @@ declare module "next-auth/jwt" {
     tenantId?: string;
     /** The role claim — see lib/authz.ts. */
     role?: string;
+    /**
+     * Second-factor state at sign-in (SEC.15): "verified" = a factor was
+     * proven; "enroll_required" = policy requires MFA and none is set up yet;
+     * "none" = not required and not set up. ABSENT on a session minted before
+     * the claim existed — anything enforcing MFA must treat absent as NOT
+     * verified.
+     */
+    mfa?: "none" | "verified" | "enroll_required";
     rememberMe?: boolean;
     maxAge?: number;
     /** Unique JWT session identifier (used as the revocation key). */
@@ -40,6 +56,14 @@ declare module "next-auth" {
     tenantId?: string;
     /** Set by authorize() from the catalog user row; copied onto the JWT. */
     role?: string;
+    /**
+     * Second-factor state at sign-in (SEC.15): "verified" = a factor was
+     * proven; "enroll_required" = policy requires MFA and none is set up yet;
+     * "none" = not required and not set up. ABSENT on a session minted before
+     * the claim existed — anything enforcing MFA must treat absent as NOT
+     * verified.
+     */
+    mfa?: "none" | "verified" | "enroll_required";
     rememberMe?: boolean;
   }
 }

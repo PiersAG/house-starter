@@ -147,6 +147,15 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // The one gate in front of every /api/auth/mfa/* route: session, then
+        // rate limit (per client AND per account), then input. An uncovered
+        // branch is a route that can be reached without one of the three.
+        "**/lib/mfa/route-guard.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
       },
     },
   },
