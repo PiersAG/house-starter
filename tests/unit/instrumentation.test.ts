@@ -65,6 +65,7 @@ const ENV_KEYS = [
   "EMAIL_SEND_MODE",
   "RATE_LIMIT_STORE_URL",
   "RATE_LIMIT_STORE_TOKEN",
+  "MFA_ENCRYPTION_KEY",
   // Saved/restored explicitly because the rate-limit store's requirement is
   // conditional on it. A test run that inherited a stray VERCEL_ENV would
   // otherwise change what "a valid environment" means.
@@ -85,6 +86,7 @@ function setFullValidEnv(): void {
   process.env.RATE_LIMIT_ALLOW_IN_MEMORY = "true";
   process.env.EMAIL_PROVIDER_API_KEY = "re_dummy";
   process.env.EMAIL_SEND_MODE = "log";
+  process.env.MFA_ENCRYPTION_KEY = Buffer.from("test-only-mfa-key-32-bytes-long!").toString("base64");
   // NOT a deployed instance — the baseline every other test builds on. The
   // rate-limit store is contract-declared `secret` but required only when
   // VERCEL_ENV is set, so a local/CI environment is complete WITHOUT it.
@@ -218,6 +220,19 @@ describe("assertBootEnv", () => {
     // this test says so.
     expect(requiredBootEnv(REAL_CONTRACT)).toContain("RATE_LIMIT_STORE_URL");
     expect(requiredBootEnv(REAL_CONTRACT)).toContain("RATE_LIMIT_STORE_TOKEN");
+  });
+
+  // SEC.15 MFA. The key that seals authenticator secrets is a `secret`, so every
+  // environment that boots the app must carry it — and a deploy without it must
+  // fail at boot, naming it, not at the first owner's sign-in.
+
+  it("the contract DECLARES MFA_ENCRYPTION_KEY as deploy-injected", () => {
+    expect(requiredBootEnv(REAL_CONTRACT)).toContain("MFA_ENCRYPTION_KEY");
+  });
+
+  it("throws, naming MFA_ENCRYPTION_KEY, when it is absent", () => {
+    delete process.env.MFA_ENCRYPTION_KEY;
+    expect(() => assertBootEnv(REAL_CONTRACT)).toThrow(/MFA_ENCRYPTION_KEY/);
   });
 });
 

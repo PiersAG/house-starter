@@ -1,4 +1,5 @@
 import type { NextAuthConfig } from "next-auth";
+import type { JWT } from "next-auth/jwt";
 import { encode, decode } from "@auth/core/jwt";
 
 const DAY_SECONDS = 24 * 60 * 60;
@@ -64,6 +65,9 @@ export const authConfig: NextAuthConfig = {
         // depending on which runtime last touched the cookie.
         token.tenantId = (user as { tenantId?: string }).tenantId;
         token.role = (user as { role?: string }).role;
+        // The second-factor claim (SEC.15). Minted identically by lib/auth.ts's
+        // Node callback — the two must agree or the claim flickers by runtime.
+        token.mfa = (user as { mfa?: JWT["mfa"] }).mfa ?? "none";
         token.rememberMe = (user as { rememberMe?: boolean }).rememberMe ?? false;
         token.maxAge = token.rememberMe ? THIRTY_DAY_SECONDS : DAY_SECONDS;
       }
@@ -74,6 +78,7 @@ export const authConfig: NextAuthConfig = {
       if (id) session.user.id = id;
       if (token.tenantId) session.user.tenantId = token.tenantId as string;
       if (token.role) session.user.role = token.role as string;
+      if (token.mfa) session.user.mfa = token.mfa;
       return session;
     },
   },
