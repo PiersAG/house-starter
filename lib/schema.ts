@@ -12,7 +12,7 @@
 //   CATALOG / control plane — one shared database per app, CATALOG_DATABASE_URL.
 //     tenants, users, revoked_sessions, subscriptions, stripe_events,
 //     password_reset_tokens, access_grants, setting_definitions,
-//     setting_values, error_events.
+//     setting_values, error_events, user_mfa_totp, user_mfa_recovery_codes.
 //     Everything needed to IDENTIFY and BILL a caller, and to route them to
 //     their tenant, BEFORE any tenant database is opened. Queried through
 //     `catalogDb` / `getCatalogDb()` in lib/catalog.ts.
@@ -400,6 +400,61 @@ export const accessGrants = sqliteTable("access_grants", {
 
 export type AccessGrant = typeof accessGrants.$inferSelect;
 export type NewAccessGrant = typeof accessGrants.$inferInsert;
+
+/**
+ * CATALOG. An account's authenticator-app (TOTP) factor — SEC.15 MFA, Slice 1.
+ *
+ * Account-level, so it lives beside `users` in the catalog and never in a tenant
+ * database: the second factor is checked during sign-in, BEFORE any tenant is
+ * resolved. One row per account (userId unique).
+ *
+ * The secret is sealed with AES-256-GCM under MFA_ENCRYPTION_KEY
+ * (lib/crypto/secret-box.ts) — ciphertext, IV and tag are stored, never the
+ * secret. `confirmedAt` null = enrollment started but no code proven yet; the
+ * factor is ACTIVE only once it is set. `lastUsedStep` is the TOTP time step of
+ * the last accepted code — the single-use replay guard. `failedAttempts` counts
+ * consecutive failed factor checks; it is the hard ceiling NIST SP 800-63B asks
+ * for (lib/mfa/enrollment.ts), reset by any success.
+ */
+export const userMfaTotp = sqliteTable("user_mfa_totp", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id),
+  secretCiphertext: text("secret_ciphertext").notNull(),
+  secretIv: text("secret_iv").notNull(),
+  secretTag: text("secret_tag").notNull(),
+  confirmedAt: integer("confirmed_at", { mode: "timestamp" }),
+  lastUsedStep: integer("last_used_step"),
+  failedAttempts: integer("failed_attempts").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export type UserMfaTotp = typeof userMfaTotp.$inferSelect;
+export type NewUserMfaTotp = typeof userMfaTotp.$inferInsert;
+
+/**
+ * CATALOG. Single-use recovery codes — SEC.15 MFA, Slice 1. Issued (ten) the
+ * moment a TOTP factor is confirmed, so an active factor always has a way back
+ * in. Only the SHA-256 hash is stored; `usedAt` is claimed atomically on use.
+ */
+export const userMfaRecoveryCodes = sqliteTable("user_mfa_recovery_codes", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  codeHash: text("code_hash").notNull().unique(),
+  usedAt: integer("used_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export type UserMfaRecoveryCode = typeof userMfaRecoveryCodes.$inferSelect;
+export type NewUserMfaRecoveryCode = typeof userMfaRecoveryCodes.$inferInsert;
 
 /**
  * TENANT DATA PLANE. The one row a tenant database carries about itself.
