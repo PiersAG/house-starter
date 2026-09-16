@@ -105,7 +105,7 @@ jobs:
           node -e '
             const { readFileSync, existsSync } = require("fs");
             const cfg = readFileSync("vitest.config.ts", "utf8");
-            const files = ["lib/password.ts", "lib/rate-limit.ts", "lib/auth-rate-limit.ts", "lib/app-url.ts", "lib/authz.ts", "lib/settings/operator.ts", "lib/users.ts", "lib/db.ts"];
+            const files = ["lib/password.ts", "lib/rate-limit.ts", "lib/auth-rate-limit.ts", "lib/app-url.ts", "lib/authz.ts", "lib/settings/operator.ts", "lib/users.ts", "lib/db.ts", "lib/crypto/secret-box.ts", "lib/mfa/totp.ts", "lib/mfa/recovery-codes.ts", "lib/mfa/enrollment.ts", "lib/mfa/sign-in.ts"];
             const metrics = ["lines", "statements", "branches", "functions"];
             let failed = false;
             for (const f of files) {

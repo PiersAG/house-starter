@@ -111,6 +111,42 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // SEC.15 MFA (Slice 1). The second factor's whole security story lives
+        // in these files: the at-rest seal on TOTP secrets, the code check
+        // and its single-use step, recovery-code generation and hashing, and the
+        // catalog reads/writes that enforce single use, the failure ceiling and
+        // the anti-lockout rule. An uncovered branch in any of them is an
+        // untested way to pass a second factor without holding it.
+        "**/lib/crypto/secret-box.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/mfa/totp.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/mfa/recovery-codes.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/mfa/enrollment.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/mfa/sign-in.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
       },
     },
   },

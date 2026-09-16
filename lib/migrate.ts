@@ -155,6 +155,31 @@ CREATE TABLE IF NOT EXISTS access_grants (
   granted_at INTEGER NOT NULL DEFAULT (unixepoch()),
   expires_at INTEGER
 );
+
+-- SEC.15 MFA (Slice 1). Account-level second factor — catalog only, checked
+-- during sign-in before any tenant is resolved. The TOTP secret is stored sealed
+-- (AES-256-GCM, lib/crypto/secret-box.ts); recovery codes as SHA-256 hashes.
+CREATE TABLE IF NOT EXISTS user_mfa_totp (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
+  secret_ciphertext TEXT NOT NULL,
+  secret_iv TEXT NOT NULL,
+  secret_tag TEXT NOT NULL,
+  confirmed_at INTEGER,
+  last_used_step INTEGER,
+  failed_attempts INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE TABLE IF NOT EXISTS user_mfa_recovery_codes (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  code_hash TEXT NOT NULL UNIQUE,
+  used_at INTEGER,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS user_mfa_recovery_codes_user_idx ON user_mfa_recovery_codes(user_id);
 `;
 
 /**
