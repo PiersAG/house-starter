@@ -45,6 +45,7 @@ import { MfaSignInError, submittedCode } from "@/lib/mfa/sign-in";
 import {
   handleTokenRenewal,
   isSessionRevoked,
+  recordSignOut,
   RENEW_AFTER_SECONDS,
 } from "@/lib/revoked-sessions";
 
@@ -220,6 +221,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         session.user.sessionId = token.sessionId as string;
       }
       return session;
+    },
+  },
+  events: {
+    // Sign-out writes the revocation record for this session's jti, so the
+    // renewal-time check in the jwt callback above refuses the token. Written
+    // to the CATALOG, where isSessionRevoked() reads it. recordSignOut never
+    // throws, so a failed write cannot break sign-out — see lib/revoked-sessions.ts.
+    async signOut(message) {
+      await recordSignOut(catalogDb, message);
     },
   },
 });
