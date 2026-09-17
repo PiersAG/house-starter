@@ -44,6 +44,7 @@ import { resolveSignInFactor } from "@/lib/mfa/enrollment";
 import { MfaSignInError, submittedCode } from "@/lib/mfa/sign-in";
 import {
   handleTokenRenewal,
+  isSessionBeforeUserCutoff,
   isSessionRevoked,
   recordSignOut,
   RENEW_AFTER_SECONDS,
@@ -186,6 +187,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.maxAge = rememberMe ? THIRTY_DAY_SECONDS : DAY_SECONDS;
         token.sessionId = crypto.randomUUID();
         token.renewAfter = Math.floor(Date.now() / 1000) + RENEW_AFTER_SECONDS;
+        token.authTime = Math.floor(Date.now() / 1000);
         return token;
       }
 
@@ -196,6 +198,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token,
         (jti) => isSessionRevoked(catalogDb, jti),
         now,
+        (userId, authTime) => isSessionBeforeUserCutoff(catalogDb, userId, authTime),
       );
     },
 
