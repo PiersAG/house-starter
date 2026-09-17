@@ -46,8 +46,10 @@ import {
  * isolation harness prove production's routing using two local files.
  *
  * `dbAuthToken` is the per-database credential a remote libSQL URL needs and a
- * `file:` URL ignores. It is a CREDENTIAL AT REST in this table — the catalog
- * database is therefore as sensitive as the tenant databases it points at.
+ * `file:` URL ignores. It is stored SEALED (AES-256-GCM under MFA_ENCRYPTION_KEY,
+ * bound to the tenant id — lib/crypto/secret-box.ts::sealTenantToken), so a
+ * catalog dump alone does not yield tenant credentials, and a sealed value copied
+ * onto another tenant's row fails to open. Null for `file:` URLs.
  */
 export const tenants = sqliteTable("tenants", {
   /** Tenant id — must match lib/db.ts's TENANT_ID_PATTERN, [A-Za-z0-9_]{1,64}. */

@@ -116,3 +116,90 @@ export function openSecret(
     decipher.final(),
   ]).toString("utf8");
 }
+
+// ── tenant database tokens ───────────────────────────────────────────────────
+//
+// The catalog's `tenants.db_auth_token` holds every tenant database's
+// credential, so a plaintext column would turn one catalog leak into a leak of
+// every tenant. The token is sealed under the same MFA_ENCRYPTION_KEY and packed
+// into ONE text value so the column shape does not change.
+//
+// The associated data is the tenant id (domain-separated from the MFA owner
+// ids), so a sealed token copied onto another tenant's row fails to open.
+//
+// There is no plaintext fallback: a value that is not `v1.`-sealed, or that
+// does not open, throws. Pre-seal rows are wiped and re-provisioned, never read.
+
+const TENANT_TOKEN_VERSION = "v1";
+const TENANT_TOKEN_AAD_PREFIX = "tenant-db-token:";
+
+/** Raised when a stored tenant token is not a sealed value that opens. */
+export class TenantTokenSealError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TenantTokenSealError";
+  }
+}
+
+function toB64url(b64: string): string {
+  return Buffer.from(b64, "base64").toString("base64url");
+}
+
+function fromB64url(part: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(part)) {
+    throw new TenantTokenSealError("Sealed tenant token is malformed.");
+  }
+  return Buffer.from(part, "base64url").toString("base64");
+}
+
+/** Seal a tenant database token as `v1.<iv>.<tag>.<ciphertext>` (base64url). */
+export function sealTenantToken(
+  token: string,
+  tenantId: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const sealed = sealSecret(
+    token,
+    loadSecretBoxKey(env),
+    TENANT_TOKEN_AAD_PREFIX + tenantId,
+  );
+  return [
+    TENANT_TOKEN_VERSION,
+    toB64url(sealed.iv),
+    toB64url(sealed.tag),
+    toB64url(sealed.ciphertext),
+  ].join(".");
+}
+
+/**
+ * Open a value written by sealTenantToken. Throws TenantTokenSealError when the
+ * value is not sealed, is malformed, or fails to open (wrong key, wrong tenant,
+ * altered) — never returns the stored value as if it were plaintext.
+ */
+export function openTenantToken(
+  sealed: string,
+  tenantId: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const parts = sealed.split(".");
+  if (parts.length !== 4 || parts[0] !== TENANT_TOKEN_VERSION) {
+    throw new TenantTokenSealError(
+      `Stored token for tenant ${JSON.stringify(tenantId)} is not a sealed ` +
+        `${TENANT_TOKEN_VERSION} value — refusing to use it.`,
+    );
+  }
+  const key = loadSecretBoxKey(env);
+  const box: SealedSecret = {
+    iv: fromB64url(parts[1]),
+    tag: fromB64url(parts[2]),
+    ciphertext: fromB64url(parts[3]),
+  };
+  try {
+    return openSecret(box, key, TENANT_TOKEN_AAD_PREFIX + tenantId);
+  } catch {
+    throw new TenantTokenSealError(
+      `Stored token for tenant ${JSON.stringify(tenantId)} failed to open ` +
+        "(wrong key, wrong tenant, or altered).",
+    );
+  }
+}
