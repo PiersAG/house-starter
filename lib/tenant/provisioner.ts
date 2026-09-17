@@ -31,6 +31,7 @@ import { mkdirSync, closeSync, openSync, existsSync } from "node:fs";
 import { isAbsolute, join, resolve as resolvePath } from "node:path";
 import { eq } from "drizzle-orm";
 import { getCatalogDb } from "@/lib/catalog";
+import { sealTenantToken } from "@/lib/crypto/secret-box";
 import { assertValidTenantId } from "@/lib/db";
 import { migrateTenant } from "@/lib/migrate";
 import { tenants, users } from "@/lib/schema";
@@ -336,12 +337,17 @@ export async function provisionTenant(
     client.close();
   }
 
+  // Sealed before the row is written: a missing key throws here, leaving the
+  // same recoverable unregistered state as any other pre-registration failure.
+  const storedToken =
+    created.authToken == null ? null : sealTenantToken(created.authToken, tenantId, env);
+
   await getCatalogDb()
     .insert(tenants)
     .values({
       id: tenantId,
       dbUrl: created.url,
-      dbAuthToken: created.authToken ?? null,
+      dbAuthToken: storedToken,
       provisioner: provisioner.name,
       label,
     })
@@ -349,7 +355,7 @@ export async function provisionTenant(
       target: tenants.id,
       set: {
         dbUrl: created.url,
-        dbAuthToken: created.authToken ?? null,
+        dbAuthToken: storedToken,
         provisioner: provisioner.name,
       },
     })

@@ -19,7 +19,9 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "@libsql/client";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { MFA_KEY_ENV, openTenantToken } from "@/lib/crypto/secret-box";
 import { migrateCatalog } from "@/lib/migrate";
 import { __resetCatalogCacheForTests } from "@/lib/catalog";
 import { __resetDbCacheForTests, getDb } from "@/lib/db";
@@ -54,6 +56,7 @@ const CLEARED_KEYS = [
   "TURSO_API_TOKEN",
   "TURSO_ORG",
   "APP_SLUG",
+  MFA_KEY_ENV,
 ];
 
 let workDir: string;
@@ -70,6 +73,7 @@ afterAll(() => {
 });
 
 function clearEnv() {
+  vi.restoreAllMocks();
   for (const key of CLEARED_KEYS) delete process.env[key];
   __resetCatalogCacheForTests();
   __resetDbCacheForTests();
@@ -102,7 +106,7 @@ async function catalogRow(tenantId: string) {
   const client = createClient({ url: catalogUrl });
   try {
     const r = await client.execute({
-      sql: "SELECT id, db_url, provisioner, label FROM tenants WHERE id = ?",
+      sql: "SELECT id, db_url, db_auth_token, provisioner, label FROM tenants WHERE id = ?",
       args: [tenantId],
     });
     return r.rows[0] as Record<string, unknown> | undefined;
@@ -273,6 +277,51 @@ describe("provisionTenant", () => {
     const { url } = await (async () => ({ url: (await catalogRow(tenantId))!.db_url }))();
     expect(url).toBe(created.url);
     expect(await getDb(tenantId)).toBeTruthy();
+  });
+
+  it("stores null, unsealed, for a file: URL", async () => {
+    const tenantId = newTenantId();
+    await provisionTenant(tenantId);
+    expect((await catalogRow(tenantId))?.db_auth_token).toBeNull();
+  });
+
+  it("stores a present token SEALED, bound to the tenant, on insert and on conflict", async () => {
+    // The file adapter never yields a token, so stand in for a remote adapter:
+    // same file database, plus the credential a Turso database would carry.
+    const keyB64 = randomBytes(32).toString("base64");
+    process.env[MFA_KEY_ENV] = keyB64;
+    const rawToken = "eyJhbGciOiJFZERTQSJ9.tenant-db-token-not-real.sig";
+    const realCreate = FileTenantProvisioner.prototype.create;
+    vi.spyOn(FileTenantProvisioner.prototype, "create").mockImplementation(
+      async function (this: FileTenantProvisioner, id: string) {
+        return { ...(await realCreate.call(this, id)), authToken: rawToken };
+      },
+    );
+
+    const tenantId = newTenantId();
+    await provisionTenant(tenantId);
+    const first = String((await catalogRow(tenantId))?.db_auth_token);
+    expect(first.startsWith("v1.")).toBe(true);
+    expect(first).not.toBe(rawToken);
+    expect(first).not.toContain(rawToken);
+    expect(openTenantToken(first, tenantId, { [MFA_KEY_ENV]: keyB64 })).toBe(rawToken);
+
+    await provisionTenant(tenantId); // the ON CONFLICT update path
+    const second = String((await catalogRow(tenantId))?.db_auth_token);
+    expect(second.startsWith("v1.")).toBe(true);
+    expect(openTenantToken(second, tenantId, { [MFA_KEY_ENV]: keyB64 })).toBe(rawToken);
+  });
+
+  it("does not register the tenant when a token cannot be sealed (no key)", async () => {
+    const realCreate = FileTenantProvisioner.prototype.create;
+    vi.spyOn(FileTenantProvisioner.prototype, "create").mockImplementation(
+      async function (this: FileTenantProvisioner, id: string) {
+        return { ...(await realCreate.call(this, id)), authToken: "tok-not-real" };
+      },
+    );
+    const tenantId = newTenantId();
+    await expect(provisionTenant(tenantId)).rejects.toThrowError(/MFA_ENCRYPTION_KEY/);
+    expect(await catalogRow(tenantId)).toBeUndefined();
   });
 
   it("is idempotent — re-provisioning the same tenant converges", async () => {

@@ -42,6 +42,7 @@ import { eq } from "drizzle-orm";
 import type { AppDatabase } from "@/lib/users";
 import { getCatalogDb } from "@/lib/catalog";
 import { tenants } from "@/lib/schema";
+import { openTenantToken } from "@/lib/crypto/secret-box";
 
 export type TenancyMode = "per_tenant" | "shared";
 
@@ -135,7 +136,9 @@ export async function resolveTenant(tenantId: string): Promise<TenantConnection>
   }
   return {
     url: normaliseUrl(row.dbUrl),
-    authToken: row.dbAuthToken ?? undefined,
+    // Sealed at rest (lib/crypto/secret-box.ts); a value that won't open throws.
+    authToken:
+      row.dbAuthToken == null ? undefined : openTenantToken(row.dbAuthToken, row.id),
   };
 }
 

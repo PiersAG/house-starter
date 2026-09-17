@@ -10,8 +10,11 @@ import {
   loadSecretBoxKey,
   MFA_KEY_ENV,
   openSecret,
+  openTenantToken,
   SecretBoxKeyError,
   sealSecret,
+  sealTenantToken,
+  TenantTokenSealError,
   type SealedSecret,
 } from "@/lib/crypto/secret-box";
 
@@ -98,5 +101,57 @@ describe("seal / open", () => {
   it("refuses a row transplanted to another account (associated data)", () => {
     const sealed = sealSecret("secret", key, "user-1");
     expect(() => openSecret(sealed, key, "user-2")).toThrow();
+  });
+});
+
+describe("sealTenantToken / openTenantToken", () => {
+  const keyEnv = { [MFA_KEY_ENV]: key.toString("base64") };
+  const token = "eyJhbGciOiJFZERTQSJ9.tenant-db-token-not-real.sig";
+
+  it("round-trips a token through one v1. column value", () => {
+    const sealed = sealTenantToken(token, "TENANT_A", keyEnv);
+    expect(sealed.startsWith("v1.")).toBe(true);
+    expect(sealed.split(".")).toHaveLength(4);
+    expect(sealed).not.toContain(token);
+    expect(openTenantToken(sealed, "TENANT_A", keyEnv)).toBe(token);
+  });
+
+  it("uses a fresh IV per seal", () => {
+    expect(sealTenantToken(token, "TENANT_A", keyEnv)).not.toBe(
+      sealTenantToken(token, "TENANT_A", keyEnv),
+    );
+  });
+
+  it("refuses a token sealed for another tenant", () => {
+    const sealed = sealTenantToken(token, "TENANT_A", keyEnv);
+    expect(() => openTenantToken(sealed, "TENANT_B", keyEnv)).toThrow(TenantTokenSealError);
+  });
+
+  it("refuses a different key", () => {
+    const sealed = sealTenantToken(token, "TENANT_A", keyEnv);
+    const other = { [MFA_KEY_ENV]: randomBytes(32).toString("base64") };
+    expect(() => openTenantToken(sealed, "TENANT_A", other)).toThrow(TenantTokenSealError);
+  });
+
+  it("fails closed on a plaintext (pre-seal) value rather than returning it", () => {
+    expect(() => openTenantToken(token, "TENANT_A", keyEnv)).toThrow(/not a sealed v1 value/);
+  });
+
+  it.each([
+    ["wrong version", (s: string) => s.replace(/^v1\./, "v2.")],
+    ["missing part", (s: string) => s.split(".").slice(0, 3).join(".")],
+    ["non-base64url part", (s: string) => s.replace(/\.[^.]+$/, ".!!!")],
+    ["altered ciphertext", (s: string) => s.slice(0, -2) + (s.endsWith("AA") ? "BB" : "AA")],
+  ])("fails closed on a corrupted value (%s)", (_name, corrupt) => {
+    const sealed = sealTenantToken(token, "TENANT_A", keyEnv);
+    expect(() => openTenantToken(corrupt(sealed), "TENANT_A", keyEnv)).toThrow(
+      TenantTokenSealError,
+    );
+  });
+
+  it("refuses to seal or open without the key", () => {
+    expect(() => sealTenantToken(token, "TENANT_A", {})).toThrow(SecretBoxKeyError);
+    const sealed = sealTenantToken(token, "TENANT_A", keyEnv);
+    expect(() => openTenantToken(sealed, "TENANT_A", {})).toThrow(SecretBoxKeyError);
   });
 });

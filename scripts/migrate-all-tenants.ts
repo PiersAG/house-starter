@@ -21,6 +21,7 @@
 // Env required:
 //   CATALOG_DATABASE_URL (or DATABASE_URL) – the app's control-plane database
 //   CATALOG_DATABASE_AUTH_TOKEN (or DATABASE_AUTH_TOKEN) – for a remote catalog
+//   MFA_ENCRYPTION_KEY – opens the sealed per-tenant tokens in the catalog
 //
 // Refuses to run if TENANCY_MODE=shared: a shared app has one database and
 // its migration path is `npm run db:migrate` (drizzle-kit).
@@ -36,6 +37,7 @@ import { writeFileSync } from "node:fs";
 import { createClient } from "@libsql/client";
 import { migrateTenant, TENANT_MIGRATION_SQL } from "../lib/migrate";
 import { resolveCatalog } from "../lib/catalog";
+import { openTenantToken } from "../lib/crypto/secret-box";
 
 const TENANT_ID_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
 
@@ -112,7 +114,10 @@ async function listTenants(): Promise<TenantRecord[]> {
       out.push({
         tenantId: r.id,
         dbUrl: r.db_url,
-        authToken: r.db_auth_token ?? undefined,
+        // Sealed at rest; needs MFA_ENCRYPTION_KEY. A value that won't open
+        // throws, failing the catalog read closed.
+        authToken:
+          r.db_auth_token == null ? undefined : openTenantToken(r.db_auth_token, r.id),
       });
     }
     return out;
