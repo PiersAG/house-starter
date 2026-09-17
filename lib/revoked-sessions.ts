@@ -118,3 +118,38 @@ export async function handleTokenRenewal(
   // Not revoked: extend the renewal window and return.
   return { ...token, renewAfter: nowSeconds + RENEW_AFTER_SECONDS };
 }
+
+/**
+ * Record a revocation for the session being signed out.
+ *
+ * Called from the NextAuth `events.signOut` hook. With the JWT strategy
+ * Auth.js emits `{ token }` (the decoded JWT, or null if it could not be
+ * decoded); the database strategy emits `{ session }` instead, which carries
+ * no `jti` and is ignored here.
+ *
+ * Never throws: it runs inside the sign-out event, and a throw there must not
+ * break sign-out. A duplicate `jti` (signing out twice) is logged and ignored.
+ *
+ * @param db       Database to write the revocation record to.
+ * @param message  The sign-out event payload.
+ */
+export async function recordSignOut(
+  db: AppDatabase,
+  message: { token?: JWT | null; session?: unknown },
+): Promise<void> {
+  const token = message.token;
+  const jti = token?.sessionId;
+  if (!token || !jti) {
+    return;
+  }
+
+  const userId = token.id ?? token.sub ?? "";
+  try {
+    await revokeSession(db, jti, userId);
+  } catch (error) {
+    console.warn(
+      "sign-out: could not record session revocation (already revoked, or store unavailable)",
+      error,
+    );
+  }
+}
