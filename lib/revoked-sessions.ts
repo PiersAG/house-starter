@@ -8,6 +8,10 @@
 //      id (`jti`).
 //   3. The revocation check (DB hit) occurs ONLY at renewal time — when the
 //      token's `renewAfter` timestamp has passed — never on every page load.
+//   4. A password reset sets a per-user cutoff (`users.sessions_valid_from`).
+//      At renewal, a session whose sign-in time (`authTime`) predates that
+//      cutoff is rejected — so a reset ends every earlier session within one
+//      renewal window, not instantly.
 //
 // `handleTokenRenewal` is extracted from the NextAuth jwt callback so it can
 // be unit-tested directly, without mocking NextAuth internals.
@@ -15,7 +19,7 @@
 import { eq } from "drizzle-orm";
 import type { JWT } from "next-auth/jwt";
 import type { AppDatabase } from "@/lib/users";
-import { revokedSessions } from "@/lib/schema";
+import { revokedSessions, users } from "@/lib/schema";
 
 /**
  * How long (seconds) between revocation checks. After each check the window
@@ -58,6 +62,36 @@ export async function isSessionRevoked(
 }
 
 /**
+ * Return true when a session that signed in at `authTime` (unix seconds) must
+ * be rejected because the user's per-user cutoff (`sessionsValidFrom`, set by
+ * a password reset) is later than it. Used at token renewal time only.
+ *
+ * - `authTime` missing → true (fail closed: an unstamped session cannot prove
+ *   it post-dates a reset).
+ * - No such user → true (fail closed: the account is gone).
+ * - Cutoff NULL (never reset) → false.
+ * - Otherwise → `authTime < cutoff`; a sign-in in the same second as the reset
+ *   passes (the column stores whole seconds).
+ */
+export async function isSessionBeforeUserCutoff(
+  db: AppDatabase,
+  userId: string,
+  authTime: number | undefined,
+): Promise<boolean> {
+  if (authTime === undefined) return true;
+  const rows = await db
+    .select({ sessionsValidFrom: users.sessionsValidFrom })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+    .all();
+  const row = rows[0];
+  if (!row) return true;
+  if (!row.sessionsValidFrom) return false;
+  return authTime < Math.floor(row.sessionsValidFrom.getTime() / 1000);
+}
+
+/**
  * Apply rolling-renewal + revocation logic to a decoded JWT token.
  *
  * Called from the NextAuth `jwt` callback on every non-sign-in request.
@@ -67,16 +101,25 @@ export async function isSessionRevoked(
  * - If `now < token.renewAfter`: return the token unchanged — NO DB call.
  * - If `now >= token.renewAfter`: check `checkRevoked(jti)`.
  *     - If revoked: return `null` (session invalidated).
- *     - If not revoked: update `renewAfter` and return the token.
+ *     - If `checkUserCutoff` is supplied: a token with no `authTime` or no user
+ *       id returns `null` (fail closed, no DB hit); otherwise
+ *       `checkUserCutoff(userId, authTime)` returning true returns `null`.
+ *     - Otherwise: update `renewAfter` and return the token.
+ *
+ * `checkUserCutoff` is optional so the cutoff is inert until the sign-in mint
+ * stamps `authTime` — without it every session would be rejected at renewal.
  *
  * @param token      Decoded JWT (contains sessionId and renewAfter).
  * @param checkRevoked  Async function to check the revocation store.
  * @param nowSeconds Unix timestamp for "now" (injectable for testing).
+ * @param checkUserCutoff  Async function: true when the session signed in
+ *                   before the user's password-reset cutoff.
  */
 export async function handleTokenRenewal(
   token: JWT,
   checkRevoked: (jti: string) => Promise<boolean>,
   nowSeconds: number,
+  checkUserCutoff?: (userId: string, authTime: number | undefined) => Promise<boolean>,
 ): Promise<JWT | null> {
   const sessionId = token.sessionId as string | undefined;
   const renewAfter = token.renewAfter as number | undefined;
@@ -113,6 +156,31 @@ export async function handleTokenRenewal(
   }
   if (revoked) {
     return null; // Invalidate the session — the signOut revocation was recorded.
+  }
+
+  // Per-user cutoff (password reset). Unlike the missing-sessionId case above,
+  // a missing authTime is rejected: an unstamped session cannot prove it signed
+  // in after a reset. Same fail-closed rule for a store failure.
+  if (checkUserCutoff) {
+    const userId = token.id ?? token.sub;
+    const authTime = token.authTime;
+    if (!userId || authTime === undefined) {
+      return null;
+    }
+    let beforeCutoff: boolean;
+    try {
+      beforeCutoff = await checkUserCutoff(userId, authTime);
+    } catch (error) {
+      console.error(
+        "session renewal: user cutoff check failed — invalidating session " +
+          "(user is sent to /login, never a 500)",
+        error,
+      );
+      return null;
+    }
+    if (beforeCutoff) {
+      return null; // Signed in before the user's last password reset.
+    }
   }
 
   // Not revoked: extend the renewal window and return.
