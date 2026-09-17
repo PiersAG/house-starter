@@ -21,6 +21,7 @@ import {
   RENEW_AFTER_SECONDS,
   handleTokenRenewal,
   isSessionRevoked,
+  recordSignOut,
   revokeSession,
 } from "@/lib/revoked-sessions";
 
@@ -249,5 +250,57 @@ describe("revoke then renewal-check integration", () => {
     const result = await handleTokenRenewal(token, checkRevoked, 100);
 
     expect(result).toBe(token); // unchanged, no DB hit
+  });
+});
+
+// ---------------------------------------------------------------------------
+// recordSignOut — the events.signOut helper (sign-out must record revocation)
+// ---------------------------------------------------------------------------
+
+describe("recordSignOut", () => {
+  it("records a revocation that the renewal check then enforces", async () => {
+    const userId = await seedUser();
+    const jti = crypto.randomUUID();
+    const token = { ...makeToken(jti, 0), id: userId } as JWT;
+
+    await recordSignOut(db, { token });
+
+    await expect(isSessionRevoked(db, jti)).resolves.toBe(true);
+    const result = await handleTokenRenewal(
+      token,
+      (id) => isSessionRevoked(db, id),
+      100,
+    );
+    expect(result).toBeNull();
+  });
+
+  it("is a no-op when there is no token or no sessionId", async () => {
+    const countRows = async () =>
+      Number(
+        (await client.execute("SELECT COUNT(*) AS n FROM revoked_sessions"))
+          .rows[0].n,
+      );
+
+    await expect(recordSignOut(db, { token: null })).resolves.toBeUndefined();
+    await expect(recordSignOut(db, {})).resolves.toBeUndefined();
+    await expect(
+      recordSignOut(db, { token: { sub: "user-1" } as JWT }),
+    ).resolves.toBeUndefined();
+
+    expect(await countRows()).toBe(0);
+  });
+
+  it("swallows a duplicate sign-out for the same sessionId", async () => {
+    const userId = await seedUser();
+    const jti = crypto.randomUUID();
+    const token = { ...makeToken(jti, 0), id: userId } as JWT;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(recordSignOut(db, { token })).resolves.toBeUndefined();
+    await expect(recordSignOut(db, { token })).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    await expect(isSessionRevoked(db, jti)).resolves.toBe(true);
+    warn.mockRestore();
   });
 });
