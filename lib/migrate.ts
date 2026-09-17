@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT,
   tenant_id TEXT,
   role TEXT NOT NULL DEFAULT 'owner',
-  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  sessions_valid_from INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS revoked_sessions (

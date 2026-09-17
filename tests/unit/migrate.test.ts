@@ -80,6 +80,44 @@ describe("runMigrations", () => {
     );
   });
 
+  it("creates the users table with the sessions_valid_from cutoff column", async () => {
+    await runMigrations(client);
+    expect(await columnsOf(client, "users")).toContain("sessions_valid_from");
+  });
+
+  it("adds sessions_valid_from to a pre-existing users table without data loss", async () => {
+    // A catalog created before the cutoff column existed.
+    await client.executeMultiple(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        name TEXT,
+        tenant_id TEXT,
+        role TEXT NOT NULL DEFAULT 'owner',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      INSERT INTO users (id, email, password_hash, name)
+        VALUES ('u1', 'legacy@example.com', 'hash-1', 'Legacy');
+    `);
+    expect(await columnsOf(client, "users")).not.toContain("sessions_valid_from");
+
+    await runMigrations(client);
+
+    expect(await columnsOf(client, "users")).toContain("sessions_valid_from");
+    const res = await client.execute(
+      "SELECT id, email, password_hash, name, role, sessions_valid_from FROM users;",
+    );
+    expect(res.rows).toHaveLength(1);
+    const row = res.rows[0] as Record<string, unknown>;
+    expect(row.id).toBe("u1");
+    expect(row.email).toBe("legacy@example.com");
+    expect(row.password_hash).toBe("hash-1");
+    expect(row.name).toBe("Legacy");
+    expect(row.role).toBe("owner");
+    expect(row.sessions_valid_from).toBeNull();
+  });
+
   it("creates the revoked_sessions table with all expected columns", async () => {
     await runMigrations(client);
     const cols = await columnsOf(client, "revoked_sessions");

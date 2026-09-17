@@ -47,6 +47,13 @@ declare module "next-auth/jwt" {
     sessionId?: string;
     /** Unix timestamp after which the next request must check revocation. */
     renewAfter?: number;
+    /**
+     * Unix timestamp (seconds) of the SIGN-IN that minted this session. Unlike
+     * `iat` it is never refreshed, so renewal can compare it with the user's
+     * `sessionsValidFrom` cutoff (lib/revoked-sessions.ts). ABSENT on a session
+     * minted before the claim existed — treated as signed in before any cutoff.
+     */
+    authTime?: number;
   }
 }
 

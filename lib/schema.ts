@@ -106,6 +106,14 @@ export const users = sqliteTable("users", {
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
+  /**
+   * Per-user session cutoff: any session that SIGNED IN before this instant is
+   * dead. Set by a password reset (lib/password-reset.ts) and enforced at token
+   * renewal against the JWT `authTime` claim (lib/revoked-sessions.ts). NULL =
+   * never reset, so no cutoff applies. Nullable with no default, so
+   * lib/migrate.ts::reconcileColumns can add it to an existing catalog.
+   */
+  sessionsValidFrom: integer("sessions_valid_from", { mode: "timestamp" }),
 });
 
 /** The roles an account can hold inside its own tenant. */

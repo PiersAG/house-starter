@@ -119,6 +119,28 @@ describe("resetPassword — the full completion step", () => {
     });
   });
 
+  it("sets the per-user session cutoff (sessionsValidFrom) to the reset time", async () => {
+    const userId = await seedUser();
+    const { getUserById } = await import("@/lib/users");
+    expect((await getUserById(db, userId))!.sessionsValidFrom).toBeNull();
+
+    const now = new Date("2026-09-17T12:00:00Z");
+    const { token } = await createPasswordResetToken(db, userId, now);
+    await resetPassword(db, token, "a brand new strong password", now);
+
+    const user = await getUserById(db, userId);
+    expect(user!.sessionsValidFrom).toEqual(now);
+  });
+
+  it("leaves the cutoff unset when the reset fails", async () => {
+    const userId = await seedUser();
+    const { token } = await createPasswordResetToken(db, userId);
+    await expect(resetPassword(db, token, "short")).rejects.toBeInstanceOf(PasswordResetError);
+
+    const { getUserById } = await import("@/lib/users");
+    expect((await getUserById(db, userId))!.sessionsValidFrom).toBeNull();
+  });
+
   it("rejects a weak password before touching the token", async () => {
     const userId = await seedUser();
     const { token } = await createPasswordResetToken(db, userId);

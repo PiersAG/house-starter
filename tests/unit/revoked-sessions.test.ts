@@ -20,6 +20,7 @@ import type { AppDatabase } from "@/lib/users";
 import {
   RENEW_AFTER_SECONDS,
   handleTokenRenewal,
+  isSessionBeforeUserCutoff,
   isSessionRevoked,
   recordSignOut,
   revokeSession,
@@ -250,6 +251,146 @@ describe("revoke then renewal-check integration", () => {
     const result = await handleTokenRenewal(token, checkRevoked, 100);
 
     expect(result).toBe(token); // unchanged, no DB hit
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-user cutoff — a password reset ends every session that signed in before it
+// ---------------------------------------------------------------------------
+
+type CutoffCheck = (userId: string, authTime: number | undefined) => Promise<boolean>;
+
+/** A renewal-due token for `userId` that signed in at `authTime`. */
+function makeStampedToken(userId: string, authTime?: number): JWT {
+  const token = { ...makeToken(crypto.randomUUID(), 0), id: userId } as JWT;
+  if (authTime !== undefined) token.authTime = authTime;
+  return token;
+}
+
+const notRevoked = () => Promise.resolve(false);
+
+/** Set a user's cutoff directly (what resetPassword writes). */
+async function setCutoff(userId: string, seconds: number | null): Promise<void> {
+  await client.execute({
+    sql: "UPDATE users SET sessions_valid_from = ? WHERE id = ?;",
+    args: [seconds, userId],
+  });
+}
+
+describe("handleTokenRenewal — per-user cutoff", () => {
+  it("rejects a token whose authTime is earlier than the cutoff", async () => {
+    const checkUserCutoff = vi.fn<CutoffCheck>().mockResolvedValue(true);
+    const token = makeStampedToken("user-1", 1000);
+
+    const result = await handleTokenRenewal(token, notRevoked, 5000, checkUserCutoff);
+
+    expect(checkUserCutoff).toHaveBeenCalledWith("user-1", 1000);
+    expect(result).toBeNull();
+  });
+
+  it("passes a token whose authTime is at/after the cutoff and extends renewAfter", async () => {
+    const checkUserCutoff = vi.fn<CutoffCheck>().mockResolvedValue(false);
+    const token = makeStampedToken("user-1", 3000);
+
+    const result = await handleTokenRenewal(token, notRevoked, 5000, checkUserCutoff);
+
+    expect(result).not.toBeNull();
+    expect((result as JWT).renewAfter).toBe(5000 + RENEW_AFTER_SECONDS);
+    expect((result as JWT).authTime).toBe(3000);
+  });
+
+  it("rejects a token with NO authTime without a DB hit (fail closed)", async () => {
+    const checkUserCutoff = vi.fn<CutoffCheck>();
+    const token = makeStampedToken("user-1"); // unstamped
+
+    const result = await handleTokenRenewal(token, notRevoked, 5000, checkUserCutoff);
+
+    expect(checkUserCutoff).not.toHaveBeenCalled();
+    expect(result).toBeNull();
+  });
+
+  it("does not consult the cutoff before renewal time", async () => {
+    const checkUserCutoff = vi.fn<CutoffCheck>();
+    const token = { ...makeToken("jti-x", 10_000), id: "user-1" } as JWT; // unstamped, not due
+
+    const result = await handleTokenRenewal(token, notRevoked, 100, checkUserCutoff);
+
+    expect(checkUserCutoff).not.toHaveBeenCalled();
+    expect(result).toBe(token);
+  });
+
+  it("a revoked jti is still rejected before the cutoff is consulted", async () => {
+    const checkUserCutoff = vi.fn<CutoffCheck>().mockResolvedValue(false);
+    const token = makeStampedToken("user-1", 3000);
+
+    const result = await handleTokenRenewal(
+      token,
+      () => Promise.resolve(true),
+      5000,
+      checkUserCutoff,
+    );
+
+    expect(result).toBeNull();
+    expect(checkUserCutoff).not.toHaveBeenCalled();
+  });
+
+  it("a throwing cutoff store invalidates the session instead of escaping", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const token = makeStampedToken("user-1", 3000);
+
+    const result = await handleTokenRenewal(token, notRevoked, 5000, () =>
+      Promise.reject(new Error("connect ETIMEDOUT")),
+    );
+
+    expect(result).toBeNull();
+    error.mockRestore();
+  });
+
+  it("without checkUserCutoff an unstamped token renews exactly as before", async () => {
+    const token = makeToken("jti-legacy", 0);
+
+    const result = await handleTokenRenewal(token, notRevoked, 5000);
+
+    expect(result).not.toBeNull();
+    expect((result as JWT).renewAfter).toBe(5000 + RENEW_AFTER_SECONDS);
+  });
+});
+
+describe("isSessionBeforeUserCutoff + renewal against the real DB", () => {
+  const renew = (token: JWT) =>
+    handleTokenRenewal(
+      token,
+      (id) => isSessionRevoked(db, id),
+      5000,
+      (userId, authTime) => isSessionBeforeUserCutoff(db, userId, authTime),
+    );
+
+  it("a user with a NULL cutoff (never reset) passes", async () => {
+    const userId = await seedUser();
+    await expect(isSessionBeforeUserCutoff(db, userId, 1000)).resolves.toBe(false);
+    await expect(renew(makeStampedToken(userId, 1000))).resolves.not.toBeNull();
+  });
+
+  it("a session that signed in before the cutoff is rejected", async () => {
+    const userId = await seedUser();
+    await setCutoff(userId, 2000);
+    await expect(isSessionBeforeUserCutoff(db, userId, 1999)).resolves.toBe(true);
+    await expect(renew(makeStampedToken(userId, 1999))).resolves.toBeNull();
+  });
+
+  it("a session that signed in at or after the cutoff passes", async () => {
+    const userId = await seedUser();
+    await setCutoff(userId, 2000);
+    await expect(isSessionBeforeUserCutoff(db, userId, 2000)).resolves.toBe(false);
+    await expect(renew(makeStampedToken(userId, 2000))).resolves.not.toBeNull();
+    await expect(renew(makeStampedToken(userId, 2500))).resolves.not.toBeNull();
+  });
+
+  it("a missing authTime or an unknown user is treated as before the cutoff", async () => {
+    const userId = await seedUser();
+    await expect(isSessionBeforeUserCutoff(db, userId, undefined)).resolves.toBe(true);
+    await expect(isSessionBeforeUserCutoff(db, "no-such-user", 1000)).resolves.toBe(true);
+    await expect(renew(makeStampedToken(userId))).resolves.toBeNull();
   });
 });
 

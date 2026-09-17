@@ -111,7 +111,9 @@ export class PasswordResetError extends Error {
 
 /**
  * Complete a reset: validate the new password, atomically consume the token,
- * and set the user's new password hash. Throws PasswordResetError on a weak
+ * and set the user's new password hash. The same write sets the per-user
+ * session cutoff (`sessionsValidFrom = now`), so every session that signed in
+ * before the reset is rejected at its next renewal. Throws PasswordResetError on a weak
  * password (before any DB write) or an invalid/expired/used token.
  */
 export async function resetPassword(
@@ -132,7 +134,11 @@ export async function resetPassword(
     );
   }
   const passwordHash = await hashPassword(newPassword);
-  await db.update(users).set({ passwordHash }).where(eq(users.id, userId)).run();
+  await db
+    .update(users)
+    .set({ passwordHash, sessionsValidFrom: now })
+    .where(eq(users.id, userId))
+    .run();
   return { userId };
 }
 
