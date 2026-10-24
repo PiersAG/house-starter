@@ -14,7 +14,11 @@ jobs:
   toolchain-guard:
     uses: PiersAG/house-starter/.github/workflows/toolchain-guard.yml@toolchain-guard-v1
   ci:
-    runs-on: ubuntu-latest
+    # Pinned, never ubuntu-latest: the layout baselines are pixel-matched to
+    # this image's fonts, and a silent image move (ubuntu-latest → 26.04, Oct
+    # 2026) broke every browser step. Every job pins the same image. Move it
+    # deliberately, together with layout-baselines.yml, then regenerate.
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -223,8 +227,8 @@ jobs:
       #
       # THIS STEP FAILS ON A MISSING BASELINE, which is correct and is the
       # first thing a new branch sees. Baselines are generated in CI, never
-      # locally — Playwright 1.60 installs no browser on the dev machine, and a
-      # baseline rendered on different fonts mismatches every run. Generate or
+      # locally — a baseline rendered on different fonts mismatches every run,
+      # which is also why this job's runner image is pinned. Generate or
       # refresh them by running the "Layout baselines" workflow against the
       # branch (.github/workflows/layout-baselines.yml).
       - name: Layout regression guardrail (overflow + visual baselines)
@@ -370,7 +374,7 @@ jobs:
   # This job is the pattern later per-feature retrofits extend by adding routes
   # to CAPABILITY_ROUTES / CAPABILITY_NAV.
   capability-matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -419,7 +423,7 @@ jobs:
   # and carries its own negative control, so the off leg fails if a billing route
   # were live — it is not a test that passes because nothing was checked.
   billing-matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
