@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    # main only (app-business-core#813). On a PR branch the push run and the
+    # pull_request run share the concurrency group below, so one is cancelled,
+    # and a cancelled check is not a pass to Renovate's automerge. PR branches
+    # are covered by the pull_request trigger.
+    branches: [main]
   pull_request:
     branches: ["**"]
 
