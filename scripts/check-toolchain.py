@@ -147,8 +147,9 @@ if os.path.isfile(_dockerfile):
 
 # --- G5: major-bump quarantine (renovate.json) ----------------------------
 # A present renovate.json must EITHER carry an inline major-quarantine rule
-# (majors held on the dependency dashboard, never automerged) OR extend the
-# shared house renovate preset (G6). Skipped where renovate.json is absent.
+# (majors never automerged - #716 opens them as their own PRs for the CEO;
+# the older form held them on the dependency dashboard, also accepted) OR
+# extend the shared house renovate preset (G6). Skipped where renovate.json is absent.
 # The OR-branch lets G6 move the rule into the preset without editing this guard.
 _renovate = os.path.join(REPO, "renovate.json")
 if os.path.isfile(_renovate):
@@ -163,12 +164,13 @@ if os.path.isfile(_renovate):
                           for _x in _extends)
         _has_inline = False
         for _pr in (_rc.get("packageRules") or []):
-            if "major" in (_pr.get("matchUpdateTypes") or []) and _pr.get("dependencyDashboardApproval") is True:
+            if "major" in (_pr.get("matchUpdateTypes") or []) and (
+                    _pr.get("automerge") is False or _pr.get("dependencyDashboardApproval") is True):
                 _has_inline = True
                 break
         if not (_has_preset or _has_inline):
             fail.append('renovate.json: no G5 major-bump quarantine - needs a packageRules entry with '
-                        'matchUpdateTypes:["major"] + dependencyDashboardApproval:true, or extends the '
+                        'matchUpdateTypes:["major"] + automerge:false, or extends the '
                         'shared house renovate preset')
 
 if fail:
