@@ -17,7 +17,7 @@ const CODE_MESSAGE = "Enter the 6-digit code from your authenticator app.";
 
 const confirmSchema = z.object({
   code: z
-    .string({ required_error: CODE_MESSAGE, invalid_type_error: CODE_MESSAGE })
+    .string({ error: CODE_MESSAGE })
     .transform((value) => value.replace(/\s+/g, ""))
     .pipe(z.string().regex(/^\d{6}$/, CODE_MESSAGE)),
 });
