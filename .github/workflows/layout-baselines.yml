@@ -2,11 +2,14 @@
 # ARE COMPARED (card 2.3.51).
 #
 # This workflow exists because the baselines cannot be made anywhere else.
-# Playwright 1.60 installs no browser on the dev machine (no Ubuntu 26.04
-# support), and even where it could, a screenshot rendered against a different
-# font stack differs from CI's by thousands of pixels — so a locally-generated
-# baseline would fail every CI run after it. Generating them on the same runner
-# image that compares them is the only arrangement that holds.
+# A screenshot rendered against a different font stack (the dev machine, or a
+# different runner image) differs from CI's by thousands of pixels — so a
+# locally-generated baseline would fail every CI run after it. Generating them
+# on the same runner image that compares them is the only arrangement that
+# holds. That image is PINNED (`runs-on: ubuntu-24.04`, here and in ci.yml),
+# never `ubuntu-latest`: when GitHub moved ubuntu-latest to 26.04 in Oct 2026
+# the browser jobs broke overnight. Moving the pin is a deliberate change made
+# in BOTH files together, followed by a run of this workflow on that branch.
 #
 # ── WHEN TO RUN IT ─────────────────────────────────────────────────────────
 #   • A branch added or renamed a guarded page or width, and CI is failing with
@@ -61,7 +64,7 @@ permissions:
 
 jobs:
   regenerate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4

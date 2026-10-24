@@ -18,7 +18,7 @@ const LENGTH_MESSAGE = "Enter the 6-digit code from your app, or a recovery code
 
 const verifySchema = z.object({
   code: z
-    .string({ required_error: "Enter a code.", invalid_type_error: "Enter a code." })
+    .string({ error: "Enter a code." })
     .trim()
     .min(6, LENGTH_MESSAGE)
     .max(32, LENGTH_MESSAGE),
