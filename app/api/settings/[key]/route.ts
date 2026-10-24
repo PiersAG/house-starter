@@ -97,7 +97,10 @@ function operatorKeyRefusal(key: string): Response | null {
 }
 
 const putSchema = z.object({
-  value: z.unknown(),
+  // `.optional()` keeps zod 3's behaviour: a body with no `value` key parses
+  // (value undefined) and is judged by the setting's own validator below. zod 4
+  // made a bare z.unknown() key required, which would turn that into a 400.
+  value: z.unknown().optional(),
   scope: z.enum(["owner", "client"]).default("owner"),
 });
 
