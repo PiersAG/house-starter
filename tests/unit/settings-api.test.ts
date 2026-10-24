@@ -155,6 +155,44 @@ describe("PUT /api/settings/[key] — capability guard (R2)", () => {
   });
 });
 
+describe("PUT /api/settings/[key] — body shape (zod 4 upgrade)", () => {
+  function rawPut(key: string, body: string): [Request, { params: Promise<{ key: string }> }] {
+    return [
+      new Request(`http://localhost/api/settings/${key}`, {
+        method: "PUT",
+        body,
+        headers: { "content-type": "application/json" },
+      }),
+      { params: Promise.resolve({ key }) },
+    ];
+  }
+
+  it("a body with no `value` key passes the shape check and is judged by the setting's validator", async () => {
+    // zod 3 accepted a missing z.unknown() key; zod 4 made it required. The
+    // schema marks it .optional() so this request still reaches validation
+    // (same answer as before the upgrade), never the generic shape 400.
+    const res = await PUT(...rawPut("core.client_self_registration", "{}"));
+    expect(await res.json()).not.toEqual({ error: "Invalid request body." });
+    expect(res.status).not.toBe(200);
+    expect(setOwnerValue).not.toHaveBeenCalled();
+  });
+
+  it("an unknown scope or a non-object body is still the shape 400", async () => {
+    for (const body of ['{"value":true,"scope":"bad"}', "null", '"x"', "[]"]) {
+      const res = await PUT(...rawPut("core.client_self_registration", body));
+      expect(res.status, body).toBe(400);
+      expect(await res.json(), body).toEqual({ error: "Invalid request body." });
+    }
+    expect(setOwnerValue).not.toHaveBeenCalled();
+  });
+
+  it("scope defaults to owner when omitted", async () => {
+    const res = await PUT(...rawPut("core.client_self_registration", '{"value":true}'));
+    expect(res.status).toBe(200);
+    expect(setOwnerValue).toHaveBeenCalledOnce();
+  });
+});
+
 describe("DELETE /api/settings/[key] — capability guard (R2)", () => {
   const paymentsOn = enabledCapabilities.payments === true;
 
