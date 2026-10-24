@@ -32,7 +32,7 @@ export async function guardMfaRequest<T>(input: {
   request: Request;
   session: MfaSession;
   limit: AuthRateLimit;
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
+  schema: z.ZodType<T, unknown>;
 }): Promise<GuardResult<T>> {
   const user = input.session?.user;
   if (!user?.id) return fail(401, "You need to be signed in to do that.");
