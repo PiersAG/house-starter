@@ -1,15 +1,44 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Shared Renovate preset for house-starter and app-business-core (both extend it). #716: non-major and security updates merge themselves once every required check passes, in one weekly batch per repo; majors open one PR each for the CEO, after Claude Code has checked them.",
   "extends": ["config:recommended", ":enableVulnerabilityAlerts"],
   "constraints": { "node": "24.x", "npm": ">=11" },
-  "lockFileMaintenance": { "enabled": true, "extends": ["schedule:weekly"] },
+  "timezone": "Europe/London",
+  "schedule": ["before 6am on monday"],
+  "minimumReleaseAge": "14 days",
+  "rebaseWhen": "conflicted",
+  "automergeType": "pr",
+  "platformAutomerge": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "automerge": true,
+    "addLabels": ["security"]
+  },
   "packageRules": [
     {
-      "description": "HARD.06 G5 - major-bump quarantine. Majors are held on the Dependency Dashboard until a human approves them, are never automerged, and never ride inside a routine group PR.",
+      "description": "#716 weekly batch: every non-major update in one PR per repo, merged by GitHub only when the required checks pass. minimumReleaseAge matches the CI anti-slopsquatting gate (versions >= 14 days old), so the batch never proposes a version that gate would reject.",
+      "matchUpdateTypes": ["patch", "minor", "pin", "pinDigest", "digest"],
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-non-major",
+      "automerge": true
+    },
+    {
+      "description": "#716 majors: one PR each (monorepo siblings stay together), never automerged, labelled for the CEO. Replaces the HARD.06 G5 Dependency Dashboard approval hold, which kept majors invisible as PRs; the never-automerge, never-in-a-group-PR halves of G5 still hold.",
       "matchUpdateTypes": ["major"],
-      "dependencyDashboardApproval": true,
       "automerge": false,
-      "addLabels": ["major-migration"]
+      "addLabels": ["major-upgrade"]
+    },
+    {
+      "description": "A language-runtime minor (Python 3.11 -> 3.15) is a breaking upgrade in practice - core #218 broke the semgrep gate - so it is handled like a major: its own PR, never automerged, never in the weekly batch.",
+      "matchDepNames": ["python"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": null,
+      "automerge": false,
+      "addLabels": ["major-upgrade"]
     },
     {
       "description": "The reusable workflows in PiersAG/app-business-core are called by uses: refs in this repo, but that repo is private and has no Renovate app install, so every lookup fails with no-result and surfaces as an error on the Dependency Dashboard. Nothing to update here - these refs are pinned by hand.",
