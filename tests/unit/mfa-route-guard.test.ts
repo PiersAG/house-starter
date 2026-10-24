@@ -10,7 +10,9 @@ import type { AuthRateLimit } from "@/lib/auth-rate-limit";
 import { guardMfaRequest, NO_STORE } from "@/lib/mfa/route-guard";
 
 const LIMIT: AuthRateLimit = { bucket: "mfa-guard-test", limit: 2, windowSeconds: 60 };
-const schema = z.object({ code: z.string({ required_error: "Enter a code." }) });
+const schema = z.object({ code: z.string({
+  error: (issue) => (issue.input === undefined ? "Enter a code." : undefined),
+}) });
 const SESSION = { user: { id: "user-1", email: "owner@example.com" } };
 
 function request(body: string, ip = "192.0.2.1"): Request {
