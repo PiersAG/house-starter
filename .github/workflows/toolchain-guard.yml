@@ -8,9 +8,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout caller
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Fetch canonical guard script (house-starter, public)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: PiersAG/house-starter
           path: _toolchain
