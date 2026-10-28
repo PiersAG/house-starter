@@ -156,6 +156,15 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // The one "get key" layer (#822 Step 5). An uncovered branch is a path
+        // where a moved key could quietly fall back to its old stored copy, or
+        // a value could reach an error message.
+        "**/lib/vault.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
       },
     },
   },
