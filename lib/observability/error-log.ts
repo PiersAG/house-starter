@@ -22,6 +22,7 @@
 // crashes the request. Every failure here is swallowed after a console.error.
 
 import { createClient, type Client } from "@libsql/client";
+import { readSecret } from "@/lib/secrets";
 
 export interface ErrorEventInput {
   message: string;
@@ -57,7 +58,7 @@ export function sinkClient(env: NodeJS.ProcessEnv = process.env): Client | null 
   if (cachedClient) return cachedClient;
   const url = env.DATABASE_URL;
   if (!url) return null;
-  const authToken = REMOTE_DB_SCHEME.test(url) ? env.DATABASE_AUTH_TOKEN : undefined;
+  const authToken = REMOTE_DB_SCHEME.test(url) ? readSecret("DATABASE_AUTH_TOKEN", env) : undefined;
   cachedClient = createClient({ url: normaliseUrl(url), authToken });
   return cachedClient;
 }

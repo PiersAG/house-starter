@@ -386,6 +386,27 @@ export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type NewErrorEvent = typeof errorEvents.$inferInsert;
 
 /**
+ * Credential audit log (#746). One row per issue and per use of a tenant
+ * database credential: which credential, when, from which IP address, for which
+ * service. Catalog only. Never holds a token. Written by lib/credential-audit.ts.
+ */
+export const credentialEvents = sqliteTable("credential_events", {
+  id: text("id").primaryKey(),
+  occurredAt: integer("occurred_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  event: text("event", { enum: ["issue", "use"] }).notNull(),
+  credential: text("credential").notNull(),
+  tenantId: text("tenant_id"),
+  service: text("service").notNull(),
+  access: text("access"),
+  ip: text("ip"),
+  expiresAt: integer("expires_at", { mode: "timestamp" }),
+});
+
+export type CredentialEvent = typeof credentialEvents.$inferSelect;
+
+/**
  * Access grants (owner-account-paywall-exemption). The single audited path
  * around the subscription paywall: an account with a LIVE grant reaches gated
  * routes exactly as an active subscriber does (lib/billing/gate.ts). One grant

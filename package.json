@@ -25,6 +25,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:all-tenants": "tsx scripts/migrate-all-tenants.ts",
     "db:verify-tenant-backups": "tsx scripts/verify-tenant-backups.ts",
+    "db:reseal-secrets": "tsx scripts/reseal-secrets.ts",
     "db:push": "drizzle-kit push",
     "prepare": "husky"
   },

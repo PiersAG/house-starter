@@ -165,6 +165,40 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // Bundle S4 (keys inside the apps): who may read a key (#760), where the
+        // server may connect (#756), one-hour database credentials and their
+        // audit log (#746), and re-sealing under a replaced key (D7). Every
+        // branch is a path by which a key could leak or a check be skipped.
+        "**/lib/secrets.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/egress.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/credential-audit.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/tenant/db-credentials.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/crypto/reseal.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
       },
     },
   },

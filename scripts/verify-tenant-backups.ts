@@ -5,7 +5,8 @@
 // prefix in the Turso org) and verifies point-in-time restore is enabled on
 // each. Fails closed on missing env or missing PITR on any tenant.
 //
-// Env required: TURSO_API_TOKEN, TURSO_ORG, APP_SLUG (or --app-slug).
+// Env required: TURSO_READ_TOKEN (read-only; TURSO_API_TOKEN accepted until one
+// is issued), TURSO_ORG, APP_SLUG (or --app-slug).
 // Refuses to run when TENANCY_MODE=shared.
 
 import { writeFileSync } from "node:fs";
@@ -106,7 +107,18 @@ async function getBackupStatus(
 async function main(): Promise<void> {
   refuseIfShared();
   const args = parseArgs(process.argv.slice(2));
-  const apiToken = requireEnv("TURSO_API_TOKEN");
+  // This job only reads (#756: "services that only read data should use
+  // read-only credentials"). TURSO_READ_TOKEN is a Turso platform token with the
+  // `read` scope only; the full TURSO_API_TOKEN is accepted until one is issued,
+  // with a warning so the gap stays visible.
+  const readOnly = (process.env.TURSO_READ_TOKEN ?? "").trim();
+  if (!readOnly) {
+    console.warn(
+      "[verify-tenant-backups] TURSO_READ_TOKEN is not set — using TURSO_API_TOKEN, which can " +
+        "also create and delete databases. Issue a read-only token for this job.",
+    );
+  }
+  const apiToken = readOnly || requireEnv("TURSO_API_TOKEN");
   const org      = requireEnv("TURSO_ORG");
   const appSlug  = args.appSlug ?? process.env.APP_SLUG ?? "";
   if (!appSlug) {

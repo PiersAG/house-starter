@@ -181,6 +181,23 @@ CREATE TABLE IF NOT EXISTS user_mfa_recovery_codes (
 );
 
 CREATE INDEX IF NOT EXISTS user_mfa_recovery_codes_user_idx ON user_mfa_recovery_codes(user_id);
+
+-- Every issue and use of a tenant database credential (#746, Matt Murphy #251:
+-- "requested credentials, when, from which IP address, for which service").
+-- Written by lib/credential-audit.ts. Names and ids only, never a token.
+CREATE TABLE IF NOT EXISTS credential_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  occurred_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  event TEXT NOT NULL CHECK (event IN ('issue','use')),
+  credential TEXT NOT NULL,
+  tenant_id TEXT,
+  service TEXT NOT NULL,
+  access TEXT,
+  ip TEXT,
+  expires_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS credential_events_occurred_idx ON credential_events(occurred_at);
 `;
 
 /**

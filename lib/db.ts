@@ -43,6 +43,8 @@ import type { AppDatabase } from "@/lib/users";
 import { getCatalogDb } from "@/lib/catalog";
 import { tenants } from "@/lib/schema";
 import { openTenantToken } from "@/lib/crypto/secret-box";
+import { appService, recordCredentialEvent } from "@/lib/credential-audit";
+import { readSecret } from "@/lib/secrets";
 
 export type TenancyMode = "per_tenant" | "shared";
 
@@ -112,7 +114,7 @@ export async function resolveTenant(tenantId: string): Promise<TenantConnection>
     }
     return {
       url: normaliseUrl(url),
-      authToken: process.env.DATABASE_AUTH_TOKEN,
+      authToken: readSecret("DATABASE_AUTH_TOKEN"),
     };
   }
 
@@ -134,20 +136,46 @@ export async function resolveTenant(tenantId: string): Promise<TenantConnection>
         `lib/tenant/provisioner.ts. Set TENANCY_MODE=shared to opt into shared tenancy.`,
     );
   }
-  return {
-    url: normaliseUrl(row.dbUrl),
-    // Sealed at rest (lib/crypto/secret-box.ts); a value that won't open throws.
-    authToken:
-      row.dbAuthToken == null ? undefined : openTenantToken(row.dbAuthToken, row.id),
-  };
+  const url = normaliseUrl(row.dbUrl);
+  let authToken: string | undefined;
+  if (row.dbAuthToken != null) {
+    // stored mode: sealed at rest (lib/crypto/secret-box.ts); a value that
+    // won't open throws.
+    authToken = openTenantToken(row.dbAuthToken, row.id);
+  } else if (REMOTE_DB_SCHEME.test(url)) {
+    // short-lived mode (#746): no token is stored; this instance holds a
+    // one-hour one. In stored mode a row with no token is passed through as
+    // before (a local database server that takes no token).
+    const { credentialMode, shortLivedTenantToken } = await import(
+      "@/lib/tenant/db-credentials"
+    );
+    if (credentialMode() === "short-lived") {
+      authToken = await shortLivedTenantToken(row.id, { service: appService() });
+    }
+  }
+  if (authToken !== undefined) {
+    await recordCredentialEvent({
+      event: "use",
+      credential: "tenant-db",
+      tenantId: row.id,
+      service: appService(),
+      access: "full-access",
+    });
+  }
+  return { url, authToken };
 }
+
+// A hosted database needs a token; a local file: database does not.
+const REMOTE_DB_SCHEME = /^(libsql|https?|wss?):/i;
 
 // Process-wide cache: every module resolving a tenant shares one connection per
 // resolved URL, rather than each route bundle opening its own.
+// The token is kept beside the client: a one-hour token (#746) is replaced on the
+// hour, and the client is then rebuilt with the new one.
 const globalForDb = globalThis as unknown as {
-  __appDbCache?: Map<string, AppDatabase>;
+  __appDbCache?: Map<string, { db: AppDatabase; authToken?: string }>;
 };
-const cache: Map<string, AppDatabase> =
+const cache: Map<string, { db: AppDatabase; authToken?: string }> =
   globalForDb.__appDbCache ?? (globalForDb.__appDbCache = new Map());
 
 /**
@@ -157,10 +185,10 @@ const cache: Map<string, AppDatabase> =
 export async function getDb(tenantId: string): Promise<AppDatabase> {
   const { url, authToken } = await resolveTenant(tenantId);
   const existing = cache.get(url);
-  if (existing) return existing;
+  if (existing && existing.authToken === authToken) return existing.db;
   const client = createClient({ url, authToken });
   const instance = drizzle(client) as AppDatabase;
-  cache.set(url, instance);
+  cache.set(url, { db: instance, authToken });
   return instance;
 }
 
@@ -195,7 +223,7 @@ export const db: AppDatabase = new Proxy({} as AppDatabase, {
       _shared = drizzle(
         createClient({
           url: normaliseUrl(url),
-          authToken: process.env.DATABASE_AUTH_TOKEN,
+          authToken: readSecret("DATABASE_AUTH_TOKEN"),
         }),
       ) as AppDatabase;
     }

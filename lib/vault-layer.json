@@ -1,5 +1,5 @@
 {
-  "_comment": "Where each key comes from, for lib/vault.ts. Names only, never a value. Copied from the factory's key register (PiersAG/app-business-core state/security/key-register.json, kinds `template` and `per-app`) on 2026-10-28 (#822 Step 5). Every key is `exception` until the K9Coach rebuild moves it into the vault as app/<slug>/<NAME> (plan Step 6, wave 5).",
+  "_comment": "Where each key comes from, for lib/vault.ts. Names only, never a value. Copied from the factory's key register (PiersAG/app-business-core state/security/key-register.json, kinds `template` and `per-app`) on 2026-10-28 (#822 Step 5); TENANT_DB_TOKEN_KEY and TURSO_READ_TOKEN added 2026-10-29 (bundle S4). Every key is `exception` until the K9Coach rebuild moves it into the vault as app/<slug>/<NAME> (plan Step 6, wave 5).",
   "keys": {
     "AUTH_SECRET": {
       "vault": null,
@@ -46,6 +46,14 @@
       "status": "exception"
     },
     "STRIPE_WEBHOOK_SECRET": {
+      "vault": null,
+      "status": "exception"
+    },
+    "TENANT_DB_TOKEN_KEY": {
+      "vault": null,
+      "status": "exception"
+    },
+    "TURSO_READ_TOKEN": {
       "vault": null,
       "status": "exception"
     }

@@ -134,11 +134,11 @@ describe("sealTenantToken / openTenantToken", () => {
   });
 
   it("fails closed on a plaintext (pre-seal) value rather than returning it", () => {
-    expect(() => openTenantToken(token, "TENANT_A", keyEnv)).toThrow(/not a sealed v1 value/);
+    expect(() => openTenantToken(token, "TENANT_A", keyEnv)).toThrow(/not a sealed v1 or v2 value/);
   });
 
   it.each([
-    ["wrong version", (s: string) => s.replace(/^v1\./, "v2.")],
+    ["wrong version", (s: string) => s.replace(/^v1\./, "v9.")],
     ["missing part", (s: string) => s.split(".").slice(0, 3).join(".")],
     ["non-base64url part", (s: string) => s.replace(/\.[^.]+$/, ".!!!")],
     ["altered ciphertext", (s: string) => s.slice(0, -2) + (s.endsWith("AA") ? "BB" : "AA")],
