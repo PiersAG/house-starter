@@ -31,6 +31,7 @@
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import type { AppDatabase } from "@/lib/users";
+import { readSecret } from "@/lib/secrets";
 
 export interface CatalogConnection {
   url: string;
@@ -57,12 +58,17 @@ export function resolveCatalog(
   if (explicit && explicit.length > 0) {
     return {
       url: normaliseUrl(explicit),
-      authToken: env.CATALOG_DATABASE_AUTH_TOKEN ?? env.DATABASE_AUTH_TOKEN,
+      authToken:
+        readSecret("CATALOG_DATABASE_AUTH_TOKEN", env) ??
+        readSecret("DATABASE_AUTH_TOKEN", env),
     };
   }
   const shared = env.DATABASE_URL;
   if (shared && shared.length > 0) {
-    return { url: normaliseUrl(shared), authToken: env.DATABASE_AUTH_TOKEN };
+    return {
+      url: normaliseUrl(shared),
+      authToken: readSecret("DATABASE_AUTH_TOKEN", env),
+    };
   }
   throw new Error(
     "lib/catalog.ts: neither CATALOG_DATABASE_URL nor DATABASE_URL is set. " +

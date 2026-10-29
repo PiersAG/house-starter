@@ -1,0 +1,17 @@
+{
+  "_comment": "Where the app's server may open a network connection (PiersAG/app-business-core#756, Matt Murphy #13 and #95: 'services without an internet requirement should have no outbound access'; 'network egress controls'). lib/egress.ts refuses every other host on a deployed instance. Hosts are matched exactly; `suffixes` match the host itself or any name under it. The app's own addresses, the database addresses and the rate-limit store are added from the environment. An app that needs another service adds it here, with the reason, or names it in EGRESS_ALLOW.",
+  "hosts": {
+    "api.turso.tech": "Turso platform API: create a tenant's database and mint its tokens (lib/tenant/provisioner.ts)",
+    "api.stripe.com": "Stripe: subscription billing (lib/billing/stripe.ts)",
+    "api.resend.com": "Resend: sending email (lib/email/provider.ts)",
+    "secretsmanager.eu-west-2.amazonaws.com": "The factory vault: reading a key moved into it (lib/vault.ts)",
+    "sts.amazonaws.com": "AWS sign-in for the vault read (lib/vault.ts, Vercel OIDC)",
+    "sts.eu-west-2.amazonaws.com": "AWS sign-in for the vault read, regional address",
+    "localhost": "This server itself",
+    "127.0.0.1": "This server itself",
+    "::1": "This server itself"
+  },
+  "suffixes": {
+    "turso.io": "Tenant and catalog databases (each database has its own name under turso.io)"
+  }
+}

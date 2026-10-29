@@ -175,6 +175,19 @@ export async function register() {
     }
     if (contractText !== null) assertBootEnv(contractText);
 
+    // (1b) Outbound network by need (#756): from here on this process may open
+    // connections only to the hosts in lib/egress-allow.json and the addresses
+    // the environment names. Enforced on a deployed instance.
+    const { installEgressGuard } = await import("./lib/egress");
+    installEgressGuard();
+
+    // (1c) Each module receives only the keys it needs (#760): every key
+    // lib/key-access.json marks `scrub` leaves process.env now, so a package that
+    // reads process.env finds none of them. Our own modules read them through
+    // readSecret() (lib/secrets.ts). After the boot check, which reads them all.
+    const { scrubSecretsFromEnv } = await import("./lib/secrets");
+    scrubSecretsFromEnv();
+
     // (2) Boot migration — apply the schema this instance needs without a
     // separate CLI step.
     //
@@ -232,8 +245,9 @@ export async function register() {
       const url = process.env.DATABASE_URL;
       if (url) {
         const { migrate } = await import("./lib/migrate");
+        const { readSecret } = await import("./lib/secrets");
         await bootMigrate("shared-database", () =>
-          migrate(url, process.env.DATABASE_AUTH_TOKEN),
+          migrate(url, readSecret("DATABASE_AUTH_TOKEN")),
         );
       }
     } else {

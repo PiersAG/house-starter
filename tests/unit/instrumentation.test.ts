@@ -37,6 +37,8 @@ import {
   register,
   requiredBootEnv,
 } from "@/instrumentation";
+import { __resetSecretsForTests, readSecret, secretsScrubbed } from "@/lib/secrets";
+import { __uninstallEgressGuardForTests } from "@/lib/egress";
 
 // The real repo-root contract, read once so assertBootEnv (pure) can be tested
 // against exactly what validateBootEnv reads at boot.
@@ -114,6 +116,8 @@ afterEach(() => {
     else process.env[k] = saved[k];
   }
   vi.restoreAllMocks();
+  __resetSecretsForTests();
+  __uninstallEgressGuardForTests();
 });
 
 // ---------------------------------------------------------------------------
@@ -318,5 +322,28 @@ describe("register — cold-start migration must never poison the instance", () 
     );
     await expect(register()).resolves.toBeUndefined();
     expect(migrateCatalogMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("register — keys leave process.env after the boot check (#760)", () => {
+  it("takes the scrubbed keys out of process.env; their readers still get them", async () => {
+    migrateMock.mockResolvedValue(undefined);
+    await expect(register()).resolves.toBeUndefined();
+    expect(secretsScrubbed()).toBe(true);
+    expect(process.env.DATABASE_AUTH_TOKEN).toBeUndefined();
+    expect(process.env.EMAIL_PROVIDER_API_KEY).toBeUndefined();
+    expect(process.env.MFA_ENCRYPTION_KEY).toBeUndefined();
+    expect(readSecret("DATABASE_AUTH_TOKEN")).toBe("test-token");
+    // the shared-mode boot migration got the token through readSecret
+    expect(migrateMock).toHaveBeenCalledWith("libsql://preview-db.example.turso.io", "test-token");
+    // the sign-in secret stays: the Edge middleware reads it
+    expect(process.env.AUTH_SECRET).toBe("dummy-session-secret");
+  });
+
+  it("does not scrub when the boot check fails (nothing has started)", async () => {
+    delete process.env.AUTH_SECRET;
+    await expect(register()).rejects.toThrow(/AUTH_SECRET/);
+    expect(secretsScrubbed()).toBe(false);
+    expect(process.env.DATABASE_AUTH_TOKEN).toBe("test-token");
   });
 });

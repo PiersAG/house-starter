@@ -35,18 +35,47 @@ import { sealTenantToken } from "@/lib/crypto/secret-box";
 import { assertValidTenantId } from "@/lib/db";
 import { migrateTenant } from "@/lib/migrate";
 import { tenants, users } from "@/lib/schema";
+import { readSecret } from "@/lib/secrets";
 
 export type ProvisionerName = "file" | "turso";
 
 export interface ProvisionedDatabase {
   url: string;
   authToken?: string;
+  /** When `authToken` stops working; absent = it does not expire. */
+  authTokenExpiresAt?: Date;
+}
+
+/** Turso's two levels of database token (#756: read-only where only reading). */
+export type DbTokenAccess = "full-access" | "read-only";
+
+export interface MintOptions {
+  access?: DbTokenAccess;
+  /** Turso duration, e.g. "1h". Absent = never expires (stored mode). */
+  expiration?: string;
 }
 
 export interface TenantProvisioner {
   readonly name: ProvisionerName;
   /** Create (or return the existing) database for this tenant. Idempotent. */
-  create(tenantId: string): Promise<ProvisionedDatabase>;
+  create(tenantId: string, opts?: MintOptions): Promise<ProvisionedDatabase>;
+}
+
+/** When a token minted now with Turso duration `d` (e.g. "1h", "2w1d30m") expires. */
+export function expiryOf(d: string, now: Date = new Date()): Date {
+  const units: Record<string, number> = { w: 604800, d: 86400, h: 3600, m: 60, s: 1 };
+  let seconds = 0;
+  const re = /(\d+)([wdhms])/g;
+  let m: RegExpExecArray | null;
+  let consumed = "";
+  while ((m = re.exec(d)) !== null) {
+    seconds += Number(m[1]) * units[m[2]];
+    consumed += m[0];
+  }
+  if (!seconds || consumed !== d) {
+    throw new Error(`lib/tenant/provisioner.ts: ${JSON.stringify(d)} is not a Turso duration`);
+  }
+  return new Date(now.getTime() + seconds * 1000);
 }
 
 /**
@@ -141,9 +170,16 @@ async function tursoFetch(
  * A real hosted database per tenant, created through the Turso platform API —
  * the production model: every customer gets their own database.
  *
- * Requires TURSO_API_TOKEN (org API token with database-create rights) and
- * TURSO_ORG. Both are read at construction and their absence is an immediate,
- * named error — never a silent downgrade to the file adapter.
+ * Requires TURSO_API_TOKEN and TURSO_ORG. Both are read at construction and their
+ * absence is an immediate, named error — never a silent downgrade to the file
+ * adapter.
+ *
+ * THE APP'S OWN GROUP (#439). TURSO_GROUP names the Turso group this app's
+ * databases live in. With it set, TURSO_API_TOKEN should be a token scoped to that
+ * group alone (scopes db:create, db:mint-token, read), so a leak of this app's
+ * runtime reaches this app's databases and no other app's. Without it the first
+ * group in the organisation is used, which is what an organisation-wide token on
+ * the one-group Turso plan needs (the position until the K9Coach rebuild).
  */
 export class TursoTenantProvisioner implements TenantProvisioner {
   readonly name = "turso" as const;
@@ -151,10 +187,11 @@ export class TursoTenantProvisioner implements TenantProvisioner {
   private readonly token: string;
   private readonly org: string;
   private readonly appSlug: string;
+  private readonly group: string | null;
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
     const missing: string[] = [];
-    const token = (env.TURSO_API_TOKEN ?? "").trim();
+    const token = (readSecret("TURSO_API_TOKEN", env) ?? "").trim();
     const org = (env.TURSO_ORG ?? "").trim();
     if (!token) missing.push("TURSO_API_TOKEN");
     if (!org) missing.push("TURSO_ORG");
@@ -172,10 +209,12 @@ export class TursoTenantProvisioner implements TenantProvisioner {
     this.org = org;
     this.appSlug =
       (env.APP_SLUG ?? env.NEXT_PUBLIC_APP_SLUG ?? "app").trim().toLowerCase() || "app";
+    this.group = (env.TURSO_GROUP ?? "").trim() || null;
   }
 
-  /** New databases must land in an existing group; starter plans have one. */
+  /** New databases land in the app's own group, else the organisation's first. */
   private async resolveGroup(): Promise<string> {
+    if (this.group) return this.group;
     const r = await tursoFetch(`/organizations/${encodeURIComponent(this.org)}/groups`, this.token);
     if (!r.ok) {
       throw new Error(
@@ -207,9 +246,11 @@ export class TursoTenantProvisioner implements TenantProvisioner {
    * stored against a tenant can only ever open that tenant's data — a leaked
    * catalog row compromises one customer, not the portfolio.
    */
-  private async mintToken(dbName: string): Promise<string> {
+  private async mintToken(dbName: string, opts: MintOptions = {}): Promise<string> {
+    const q = new URLSearchParams({ authorization: opts.access ?? "full-access" });
+    if (opts.expiration) q.set("expiration", opts.expiration);
     const r = await tursoFetch(
-      `/organizations/${encodeURIComponent(this.org)}/databases/${encodeURIComponent(dbName)}/auth/tokens`,
+      `/organizations/${encodeURIComponent(this.org)}/databases/${encodeURIComponent(dbName)}/auth/tokens?${q}`,
       this.token,
       { method: "POST" },
     );
@@ -224,7 +265,16 @@ export class TursoTenantProvisioner implements TenantProvisioner {
     return body.jwt;
   }
 
-  async create(tenantId: string): Promise<ProvisionedDatabase> {
+  /**
+   * A new token for an existing tenant database (#746): `expiration: "1h"` for a
+   * one-hour credential, `access: "read-only"` where the caller only reads.
+   */
+  async mintTenantToken(tenantId: string, opts: MintOptions = {}): Promise<string> {
+    assertValidTenantId(tenantId);
+    return this.mintToken(tursoDatabaseName(this.appSlug, tenantId), opts);
+  }
+
+  async create(tenantId: string, opts: MintOptions = {}): Promise<ProvisionedDatabase> {
     assertValidTenantId(tenantId);
     const dbName = tursoDatabaseName(this.appSlug, tenantId);
 
@@ -257,7 +307,11 @@ export class TursoTenantProvisioner implements TenantProvisioner {
       throw new Error(`Turso: could not resolve a hostname for ${dbName}`);
     }
 
-    return { url: `libsql://${hostname}`, authToken: await this.mintToken(dbName) };
+    return {
+      url: `libsql://${hostname}`,
+      authToken: await this.mintToken(dbName, opts),
+      ...(opts.expiration ? { authTokenExpiresAt: expiryOf(opts.expiration) } : {}),
+    };
   }
 }
 
@@ -320,7 +374,27 @@ export async function provisionTenant(
 ): Promise<ProvisionedDatabase> {
   assertValidTenantId(tenantId);
   const provisioner = getProvisioner(env);
-  const created = await provisioner.create(tenantId);
+  // short-lived mode (#746): the token minted here only migrates the new
+  // database and expires within the hour; nothing is stored in the catalog.
+  const { credentialMode, SHORT_LIVED_EXPIRATION } = await import(
+    "@/lib/tenant/db-credentials"
+  );
+  const shortLived = credentialMode(env) === "short-lived";
+  const created = await provisioner.create(
+    tenantId,
+    shortLived ? { expiration: SHORT_LIVED_EXPIRATION } : {},
+  );
+  if (created.authToken != null) {
+    const { recordCredentialEvent } = await import("@/lib/credential-audit");
+    await recordCredentialEvent({
+      event: "issue",
+      credential: "tenant-db",
+      tenantId,
+      service: "sign-up",
+      access: "full-access",
+      expiresAt: created.authTokenExpiresAt ?? null,
+    });
+  }
 
   await migrateTenant(created.url, created.authToken);
 
@@ -340,7 +414,9 @@ export async function provisionTenant(
   // Sealed before the row is written: a missing key throws here, leaving the
   // same recoverable unregistered state as any other pre-registration failure.
   const storedToken =
-    created.authToken == null ? null : sealTenantToken(created.authToken, tenantId, env);
+    created.authToken == null || shortLived
+      ? null
+      : sealTenantToken(created.authToken, tenantId, env);
 
   await getCatalogDb()
     .insert(tenants)

@@ -8,6 +8,7 @@
 // build nor a log-mode preview ever needs EMAIL_PROVIDER_API_KEY.
 
 import { Resend } from "resend";
+import { readSecret } from "@/lib/secrets";
 
 /** A single outbound message. Provider-neutral shape. */
 export interface OutboundEmail {
@@ -27,7 +28,7 @@ let _client: Resend | null = null;
 
 function getResendClient(): Resend {
   if (_client) return _client;
-  const key = process.env.EMAIL_PROVIDER_API_KEY;
+  const key = readSecret("EMAIL_PROVIDER_API_KEY");
   if (!key) {
     throw new Error(
       "lib/email/provider.ts: EMAIL_PROVIDER_API_KEY is not set. It is declared " +

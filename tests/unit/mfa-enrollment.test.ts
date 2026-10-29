@@ -15,7 +15,7 @@
 // catalog handle whose FIRST select returns a stale row (`staleOnce`).
 
 import { randomBytes } from "node:crypto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { drizzle } from "drizzle-orm/libsql";
 import { eq } from "drizzle-orm";
 import { generate } from "otplib";
@@ -452,5 +452,82 @@ describe("resolveSignInFactor — the decision authorize() makes after the passw
         now: at(8),
       }),
     ).toEqual({ status: "invalid" });
+  });
+});
+
+describe("key replacement (decision D7, two-key overlap)", () => {
+  const saved = process.env.MFA_ENCRYPTION_KEY_PREVIOUS;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.MFA_ENCRYPTION_KEY_PREVIOUS;
+    else process.env.MFA_ENCRYPTION_KEY_PREVIOUS = saved;
+  });
+
+  it("verifies a factor sealed under the previous key and re-seals it under the current one", async () => {
+    const uid = await user();
+    const { secret } = await enrolled(uid); // sealed under `key`
+    const next = randomBytes(32);
+    process.env.MFA_ENCRYPTION_KEY_PREVIOUS = key.toString("base64");
+
+    const r = await verifySecondFactor(db, {
+      userId: uid,
+      getKey: () => next,
+      code: await codeFor(secret, at(1)),
+      now: at(1),
+    });
+    expect(r.status).toBe("verified");
+
+    const f = await getTotpFactor(db, uid);
+    if (!f) throw new Error("expected a factor");
+    const box = { ciphertext: f.secretCiphertext, iv: f.secretIv, tag: f.secretTag };
+    expect(openSecret(box, next, uid)).toBe(secret);
+    expect(() => openSecret(box, key, uid)).toThrow();
+  });
+
+  it("still checks the code when the re-seal write fails (the re-seal job catches the row)", async () => {
+    const uid = await user();
+    const { secret } = await enrolled(uid);
+    const next = randomBytes(32);
+    process.env.MFA_ENCRYPTION_KEY_PREVIOUS = key.toString("base64");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    let first = true;
+    const failingUpdate = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "update" && first) {
+          first = false;
+          return () => ({
+            set: () => ({
+              where: () => ({
+                run: async () => {
+                  throw new Error("write failed");
+                },
+              }),
+            }),
+          });
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const r = await verifySecondFactor(failingUpdate, {
+      userId: uid,
+      getKey: () => next,
+      code: await codeFor(secret, at(1)),
+      now: at(1),
+    });
+    expect(r.status).toBe("verified");
+    expect(String(err.mock.calls[0][0])).toMatch(/re-sealing a factor/);
+  });
+
+  it("refuses a factor that neither key opens", async () => {
+    const uid = await user();
+    const { secret } = await enrolled(uid);
+    delete process.env.MFA_ENCRYPTION_KEY_PREVIOUS;
+    await expect(
+      verifySecondFactor(db, {
+        userId: uid,
+        getKey: () => randomBytes(32),
+        code: await codeFor(secret, at(1)),
+        now: at(1),
+      }),
+    ).rejects.toThrow();
   });
 });

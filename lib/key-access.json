@@ -1,0 +1,71 @@
+{
+  "_comment": "Which file may read which key (PiersAG/app-business-core#760, #484). Names only, never a value. lib/secrets.ts takes every `scrub: true` key out of process.env at server start, so a package in the dependency tree that reads process.env finds nothing; the files listed under `readers` get the key through readSecret(). tests/unit/key-access.test.ts fails when a file reads a key it is not listed for, when a scrubbed key is read straight from process.env, or when a `secret` line in .env.contract has no entry here. A new key is one entry in this file plus its line in .env.contract.",
+  "keys": {
+    "AUTH_SECRET": {
+      "readers": ["auth.config.ts"],
+      "scrub": false,
+      "why_not_scrubbed": "The sign-in library reads it in the Edge middleware as well as on the server; the Edge runtime has no start-up hook to hand it over, so it stays in the environment. It is used only by the sign-in library."
+    },
+    "NEXTAUTH_SECRET": {
+      "readers": ["auth.config.ts"],
+      "scrub": false,
+      "why_not_scrubbed": "Older name for AUTH_SECRET; same reason."
+    },
+    "DATABASE_AUTH_TOKEN": {
+      "readers": ["lib/db.ts", "lib/catalog.ts", "instrumentation.ts", "lib/observability/error-log.ts", "scripts/migrate.ts"],
+      "scrub": true
+    },
+    "CATALOG_DATABASE_AUTH_TOKEN": {
+      "readers": ["lib/catalog.ts"],
+      "scrub": true
+    },
+    "MFA_ENCRYPTION_KEY": {
+      "readers": ["lib/crypto/secret-box.ts"],
+      "scrub": true
+    },
+    "MFA_ENCRYPTION_KEY_PREVIOUS": {
+      "readers": ["lib/crypto/secret-box.ts"],
+      "scrub": true
+    },
+    "TENANT_DB_TOKEN_KEY": {
+      "readers": ["lib/crypto/secret-box.ts"],
+      "scrub": true
+    },
+    "TENANT_DB_TOKEN_KEY_PREVIOUS": {
+      "readers": ["lib/crypto/secret-box.ts"],
+      "scrub": true
+    },
+    "TURSO_API_TOKEN": {
+      "readers": ["lib/tenant/provisioner.ts"],
+      "scrub": true
+    },
+    "TURSO_READ_TOKEN": {
+      "readers": ["scripts/verify-tenant-backups.ts"],
+      "scrub": true
+    },
+    "STRIPE_SECRET_KEY": {
+      "readers": ["lib/billing/stripe.ts"],
+      "scrub": true
+    },
+    "STRIPE_WEBHOOK_SECRET": {
+      "readers": ["app/api/billing/webhook/route.ts"],
+      "scrub": true
+    },
+    "EMAIL_PROVIDER_API_KEY": {
+      "readers": ["lib/email/provider.ts"],
+      "scrub": true
+    },
+    "RATE_LIMIT_STORE_URL": {
+      "readers": ["lib/rate-limit.ts"],
+      "scrub": true
+    },
+    "RATE_LIMIT_STORE_TOKEN": {
+      "readers": ["lib/rate-limit.ts"],
+      "scrub": true
+    },
+    "SOCKET_API_KEY": {
+      "readers": ["scripts/socket-report.mjs"],
+      "scrub": true
+    }
+  }
+}

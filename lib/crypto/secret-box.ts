@@ -18,6 +18,7 @@
 // Edge middleware.
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { readSecret } from "@/lib/secrets";
 
 /** The environment variable holding the base64-encoded 32-byte key. */
 export const MFA_KEY_ENV = "MFA_ENCRYPTION_KEY";
@@ -53,20 +54,65 @@ export class SecretBoxKeyError extends Error {
 export function loadSecretBoxKey(
   env: Record<string, string | undefined> = process.env,
 ): Buffer {
-  const raw = (env[MFA_KEY_ENV] ?? "").trim();
+  return decodeKey(MFA_KEY_ENV, readSecret("MFA_ENCRYPTION_KEY", env));
+}
+
+function decodeKey(name: string, value: string | undefined): Buffer {
+  const raw = (value ?? "").trim();
   if (raw.length === 0) {
     throw new SecretBoxKeyError(
-      `${MFA_KEY_ENV} is not set. Generate one with: openssl rand -base64 32`,
+      `${name} is not set. Generate one with: openssl rand -base64 32`,
     );
   }
   const key = Buffer.from(raw, "base64");
   if (key.length !== KEY_BYTES) {
     throw new SecretBoxKeyError(
-      `${MFA_KEY_ENV} must be ${KEY_BYTES} bytes, base64-encoded ` +
+      `${name} must be ${KEY_BYTES} bytes, base64-encoded ` +
         `(openssl rand -base64 32).`,
     );
   }
   return key;
+}
+
+// ── the two-key overlap (decision D7, 2026-10-26; Matt Murphy #268) ──────────
+//
+// App keys are replaced every 30 days. While a key is being replaced the old one
+// stays readable as <NAME>_PREVIOUS, so a value sealed under it still opens.
+// Every value is SEALED under the current key only. A value that opened with
+// the previous key is re-sealed under the current one — by the caller at once
+// (`openedWithPrevious`) and by scripts/reseal-secrets.ts for every stored value,
+// which the replacement runs before it drops the old key.
+
+/** The environment variable holding the previous MFA key during a replacement. */
+export const MFA_PREVIOUS_KEY_ENV = "MFA_ENCRYPTION_KEY_PREVIOUS";
+
+/** The previous MFA key, or null when no replacement is under way. */
+export function loadPreviousSecretBoxKey(
+  env: Record<string, string | undefined> = process.env,
+): Buffer | null {
+  const v = readSecret("MFA_ENCRYPTION_KEY_PREVIOUS", env);
+  return v && v.trim() ? decodeKey(MFA_PREVIOUS_KEY_ENV, v) : null;
+}
+
+/**
+ * Open with `key`, falling back to `previous`. `openedWithPrevious` tells the
+ * caller to re-seal the value under `key`. Throws when neither opens.
+ */
+export function openSecretWithRing(
+  sealed: SealedSecret,
+  key: Buffer,
+  previous: Buffer | null,
+  associatedData: string,
+): { plaintext: string; openedWithPrevious: boolean } {
+  try {
+    return { plaintext: openSecret(sealed, key, associatedData), openedWithPrevious: false };
+  } catch (e) {
+    if (!previous) throw e;
+    return {
+      plaintext: openSecret(sealed, previous, associatedData),
+      openedWithPrevious: true,
+    };
+  }
 }
 
 /** Seal `plaintext` under `key`, bound to `associatedData`. */
@@ -121,8 +167,16 @@ export function openSecret(
 //
 // The catalog's `tenants.db_auth_token` holds every tenant database's
 // credential, so a plaintext column would turn one catalog leak into a leak of
-// every tenant. The token is sealed under the same MFA_ENCRYPTION_KEY and packed
-// into ONE text value so the column shape does not change.
+// every tenant. The token is sealed and packed into ONE text value so the column
+// shape does not change.
+//
+// ITS OWN KEY (#484, one key per purpose). `v2.` values are sealed under
+// TENANT_DB_TOKEN_KEY (and open with TENANT_DB_TOKEN_KEY_PREVIOUS during a
+// replacement). `v1.` values were sealed under MFA_ENCRYPTION_KEY before the
+// dedicated key existed; they still open (with the MFA key ring) and are
+// re-sealed as `v2.` by scripts/reseal-secrets.ts. While a deploy does not yet
+// supply TENANT_DB_TOKEN_KEY, new tokens are still sealed `v1.` — so adopting
+// the dedicated key never breaks a running app (existing keys unaffected).
 //
 // The associated data is the tenant id (domain-separated from the MFA owner
 // ids), so a sealed token copied onto another tenant's row fails to open.
@@ -131,6 +185,26 @@ export function openSecret(
 // does not open, throws. Pre-seal rows are wiped and re-provisioned, never read.
 
 const TENANT_TOKEN_VERSION = "v1";
+const TENANT_TOKEN_VERSION_DEDICATED = "v2";
+
+/** The environment variable holding the dedicated tenant-token key. */
+export const TENANT_KEY_ENV = "TENANT_DB_TOKEN_KEY";
+export const TENANT_PREVIOUS_KEY_ENV = "TENANT_DB_TOKEN_KEY_PREVIOUS";
+
+/** The dedicated tenant-token key, or null when the deploy does not supply one yet. */
+export function loadTenantTokenKey(
+  env: Record<string, string | undefined> = process.env,
+): Buffer | null {
+  const v = readSecret("TENANT_DB_TOKEN_KEY", env);
+  return v && v.trim() ? decodeKey(TENANT_KEY_ENV, v) : null;
+}
+
+function loadPreviousTenantTokenKey(
+  env: Record<string, string | undefined> = process.env,
+): Buffer | null {
+  const v = readSecret("TENANT_DB_TOKEN_KEY_PREVIOUS", env);
+  return v && v.trim() ? decodeKey(TENANT_PREVIOUS_KEY_ENV, v) : null;
+}
 const TENANT_TOKEN_AAD_PREFIX = "tenant-db-token:";
 
 /** Raised when a stored tenant token is not a sealed value that opens. */
@@ -152,19 +226,24 @@ function fromB64url(part: string): string {
   return Buffer.from(part, "base64url").toString("base64");
 }
 
-/** Seal a tenant database token as `v1.<iv>.<tag>.<ciphertext>` (base64url). */
+/**
+ * Seal a tenant database token as `v2.<iv>.<tag>.<ciphertext>` (base64url) under
+ * TENANT_DB_TOKEN_KEY — or `v1.` under MFA_ENCRYPTION_KEY while the deploy does
+ * not supply the dedicated key yet.
+ */
 export function sealTenantToken(
   token: string,
   tenantId: string,
   env: Record<string, string | undefined> = process.env,
 ): string {
+  const dedicated = loadTenantTokenKey(env);
   const sealed = sealSecret(
     token,
-    loadSecretBoxKey(env),
+    dedicated ?? loadSecretBoxKey(env),
     TENANT_TOKEN_AAD_PREFIX + tenantId,
   );
   return [
-    TENANT_TOKEN_VERSION,
+    dedicated ? TENANT_TOKEN_VERSION_DEDICATED : TENANT_TOKEN_VERSION,
     toB64url(sealed.iv),
     toB64url(sealed.tag),
     toB64url(sealed.ciphertext),
@@ -181,21 +260,56 @@ export function openTenantToken(
   tenantId: string,
   env: Record<string, string | undefined> = process.env,
 ): string {
+  return openTenantTokenWithRing(sealed, tenantId, env).plaintext;
+}
+
+/**
+ * As openTenantToken, and says whether the value should be re-sealed: it was
+ * sealed under a previous key, or is a `v1.` value and the dedicated key is now
+ * supplied. scripts/reseal-secrets.ts uses this.
+ */
+export function openTenantTokenWithRing(
+  sealed: string,
+  tenantId: string,
+  env: Record<string, string | undefined> = process.env,
+): { plaintext: string; needsReseal: boolean } {
   const parts = sealed.split(".");
-  if (parts.length !== 4 || parts[0] !== TENANT_TOKEN_VERSION) {
+  const version = parts[0];
+  if (
+    parts.length !== 4 ||
+    (version !== TENANT_TOKEN_VERSION && version !== TENANT_TOKEN_VERSION_DEDICATED)
+  ) {
     throw new TenantTokenSealError(
       `Stored token for tenant ${JSON.stringify(tenantId)} is not a sealed ` +
-        `${TENANT_TOKEN_VERSION} value — refusing to use it.`,
+        `${TENANT_TOKEN_VERSION} or ${TENANT_TOKEN_VERSION_DEDICATED} value — refusing to use it.`,
     );
   }
-  const key = loadSecretBoxKey(env);
   const box: SealedSecret = {
     iv: fromB64url(parts[1]),
     tag: fromB64url(parts[2]),
     ciphertext: fromB64url(parts[3]),
   };
+  let key: Buffer;
+  let previous: Buffer | null;
+  if (version === TENANT_TOKEN_VERSION_DEDICATED) {
+    const dedicated = loadTenantTokenKey(env);
+    if (!dedicated) {
+      throw new SecretBoxKeyError(
+        `${TENANT_KEY_ENV} is not set, but tenant ${JSON.stringify(tenantId)}'s token ` +
+          "was sealed under it. Generate one with: openssl rand -base64 32",
+      );
+    }
+    key = dedicated;
+    previous = loadPreviousTenantTokenKey(env);
+  } else {
+    key = loadSecretBoxKey(env);
+    previous = loadPreviousSecretBoxKey(env);
+  }
   try {
-    return openSecret(box, key, TENANT_TOKEN_AAD_PREFIX + tenantId);
+    const r = openSecretWithRing(box, key, previous, TENANT_TOKEN_AAD_PREFIX + tenantId);
+    const moveToDedicated =
+      version === TENANT_TOKEN_VERSION && loadTenantTokenKey(env) !== null;
+    return { plaintext: r.plaintext, needsReseal: r.openedWithPrevious || moveToDedicated };
   } catch {
     throw new TenantTokenSealError(
       `Stored token for tenant ${JSON.stringify(tenantId)} failed to open ` +

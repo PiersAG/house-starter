@@ -34,6 +34,8 @@
 // This module is pure logic with injectable dependencies (clock, fetch) so it
 // is unit-tested directly. Nothing here runs at module load time.
 
+import { readSecret } from "@/lib/secrets";
+
 export interface RateLimitOptions {
   /** Maximum number of requests permitted within the window. */
   limit: number;
@@ -175,9 +177,9 @@ export function createRateLimitStore(
   env: RateLimitEnv = process.env as RateLimitEnv,
   fetchImpl: FetchLike = fetch as unknown as FetchLike,
 ): RateLimitStore {
-  const url = env.RATE_LIMIT_STORE_URL?.trim();
+  const url = readSecret("RATE_LIMIT_STORE_URL", env)?.trim();
   if (url) {
-    const token = env.RATE_LIMIT_STORE_TOKEN?.trim();
+    const token = readSecret("RATE_LIMIT_STORE_TOKEN", env)?.trim();
     if (!token) {
       throw new Error(
         "RATE_LIMIT_STORE_URL is set but RATE_LIMIT_STORE_TOKEN is missing. " +

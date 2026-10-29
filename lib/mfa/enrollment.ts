@@ -34,7 +34,11 @@
 
 import { and, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { getGrantByUserId, isGrantLive } from "@/lib/billing/grants";
-import { openSecret, sealSecret } from "@/lib/crypto/secret-box";
+import {
+  loadPreviousSecretBoxKey,
+  openSecretWithRing,
+  sealSecret,
+} from "@/lib/crypto/secret-box";
 import {
   generateRecoveryCodeSet,
   hashRecoveryCode,
@@ -165,7 +169,7 @@ export async function confirmTotpEnrollment(
   if (factor.confirmedAt) return { status: "already_active" };
 
   const check = await verifyTotpCode({
-    secret: openFactorSecret(factor, input.key),
+    secret: await openFactorSecret(db, factor, input.key),
     code: input.code,
     lastUsedStep: factor.lastUsedStep,
     now,
@@ -253,7 +257,7 @@ export async function verifySecondFactor(
 
   if (looksLikeTotpCode(input.code)) {
     const check = await verifyTotpCode({
-      secret: openFactorSecret(factor, input.getKey()),
+      secret: await openFactorSecret(db, factor, input.getKey()),
       code: input.code,
       lastUsedStep: factor.lastUsedStep,
       now: input.now,
@@ -321,16 +325,44 @@ export async function remainingRecoveryCodes(
   return rows.length;
 }
 
-function openFactorSecret(factor: UserMfaTotp, key: Buffer): string {
-  return openSecret(
+/**
+ * Open the factor's secret with the current key, or the previous one while the
+ * key is being replaced (D7). A secret that opened with the previous key is
+ * re-sealed under the current one straight away; if that write fails the code
+ * check still goes ahead and scripts/reseal-secrets.ts catches the row.
+ */
+async function openFactorSecret(
+  db: AppDatabase,
+  factor: UserMfaTotp,
+  key: Buffer,
+): Promise<string> {
+  const { plaintext, openedWithPrevious } = openSecretWithRing(
     {
       ciphertext: factor.secretCiphertext,
       iv: factor.secretIv,
       tag: factor.secretTag,
     },
     key,
+    loadPreviousSecretBoxKey(),
     factor.userId,
   );
+  if (openedWithPrevious) {
+    const sealed = sealSecret(plaintext, key, factor.userId);
+    try {
+      await db
+        .update(userMfaTotp)
+        .set({
+          secretCiphertext: sealed.ciphertext,
+          secretIv: sealed.iv,
+          secretTag: sealed.tag,
+        })
+        .where(eq(userMfaTotp.id, factor.id))
+        .run();
+    } catch (e) {
+      console.error("mfa: re-sealing a factor under the current key failed", e);
+    }
+  }
+  return plaintext;
 }
 
 /** Record `step` as used, only if it is newer than the last one. */
