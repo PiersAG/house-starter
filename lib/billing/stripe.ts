@@ -6,13 +6,14 @@
 // name (STRIPE_SECRET_KEY is declared deploy-injected in .env.contract).
 
 import Stripe from "stripe";
+import { readSecret } from "@/lib/secrets";
 
 let _stripe: Stripe | null = null;
 
 /** Get the shared Stripe client, constructing it on first use. */
 export function getStripe(): Stripe {
   if (_stripe) return _stripe;
-  const key = process.env.STRIPE_SECRET_KEY;
+  const key = readSecret("STRIPE_SECRET_KEY");
   if (!key) {
     throw new Error(
       "lib/billing/stripe.ts: STRIPE_SECRET_KEY is not set. It is declared " +

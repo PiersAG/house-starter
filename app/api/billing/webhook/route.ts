@@ -14,6 +14,7 @@ import { catalogDb } from "@/lib/catalog";
 import { getStripe } from "@/lib/billing/stripe";
 import { handleStripeEvent } from "@/lib/billing/webhook";
 import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
+import { readSecret } from "@/lib/secrets";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
   const denied = requireSubscriptionBillingForPath(new URL(request.url).pathname);
   if (denied) return denied;
 
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  const secret = readSecret("STRIPE_WEBHOOK_SECRET");
   if (!secret) {
     // Deterministic misconfiguration — the deploy is contracted to inject this.
     return NextResponse.json(
