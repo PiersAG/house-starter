@@ -24,6 +24,7 @@
 // Node.js runtime only. Never imported by auth.config.ts or the Edge middleware.
 
 import layerFile from "./vault-layer.json";
+import { envValue } from "./secrets";
 
 export type KeyVersion = "current" | "previous";
 type Status = "migrated" | "pending" | "exception";
@@ -246,7 +247,9 @@ export async function getKey(
     }
   } else {
     const v = version === "current" ? name : name + PREVIOUS_SUFFIX;
-    value = process.env[v] ?? "";
+    // the stored copy; a key the server took out of process.env (#760) comes
+    // from lib/secrets.ts
+    value = envValue(v) ?? "";
     if (!value) {
       const where =
         entry.status === "pending"

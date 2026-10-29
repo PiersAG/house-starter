@@ -79,6 +79,8 @@ export function allowList(env: NodeJS.ProcessEnv = process.env): {
     "DATABASE_URL",
     "CATALOG_DATABASE_URL",
     "RATE_LIMIT_STORE_URL",
+    // Vercel's data cache for fetch()/unstable_cache, when the platform sets it
+    "SUSPENSE_CACHE_URL",
   ]) {
     const h = hostOf(env[name]);
     if (h) hosts.add(h);

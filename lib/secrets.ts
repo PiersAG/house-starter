@@ -97,6 +97,15 @@ export function readSecret(
   return process.env[name] ?? store.get(name);
 }
 
+/**
+ * For lib/vault.ts only: the environment value of a register key, whether or not
+ * key-access.json lists it. A listed key comes from the store (it has left
+ * process.env); any other name is read from process.env as before.
+ */
+export function envValue(name: string): string | undefined {
+  return Object.hasOwn(KEYS, name) ? readSecret(name) : process.env[name];
+}
+
 /** Test hook: forget every stored value and the scrubbed flag. */
 export function __resetSecretsForTests(): void {
   store.clear();

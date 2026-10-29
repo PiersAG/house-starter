@@ -114,11 +114,23 @@ async function listTenants(): Promise<TenantRecord[]> {
       out.push({
         tenantId: r.id,
         dbUrl: r.db_url,
-        // Sealed at rest; needs MFA_ENCRYPTION_KEY. A value that won't open
-        // throws, failing the catalog read closed.
+        // stored mode: sealed at rest (MFA_ENCRYPTION_KEY / TENANT_DB_TOKEN_KEY);
+        // a value that won't open throws, failing the catalog read closed.
+        // short-lived mode (#746): nothing is stored, so a one-hour token is
+        // minted for this run below.
         authToken:
           r.db_auth_token == null ? undefined : openTenantToken(r.db_auth_token, r.id),
       });
+      if (r.db_auth_token == null && /^(libsql|https?|wss?):/i.test(r.db_url)) {
+        const { credentialMode, shortLivedTenantToken } = await import(
+          "../lib/tenant/db-credentials"
+        );
+        if (credentialMode() === "short-lived") {
+          out[out.length - 1].authToken = await shortLivedTenantToken(r.id, {
+            service: "migrate-all-tenants",
+          });
+        }
+      }
     }
     return out;
   } finally {

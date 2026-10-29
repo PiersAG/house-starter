@@ -11,9 +11,10 @@
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import manifest from "@/lib/key-access.json";
 import {
+  envValue,
   SCRUBBED_KEYS,
   SecretAccessError,
   __resetSecretsForTests,
@@ -213,5 +214,36 @@ describe("key access — runtime edges", () => {
     expect(own).toEqual({});
     expect(secretsScrubbed()).toBe(false);
     expect(readSecret("EMAIL_PROVIDER_API_KEY")).toBeUndefined();
+  });
+});
+
+describe("envValue (for the vault layer)", () => {
+  afterEach(() => {
+    delete process.env.EMAIL_PROVIDER_API_KEY;
+    delete process.env.SOME_VAULT_ONLY_NAME;
+    __resetSecretsForTests();
+  });
+  it("gives a listed key from the store after the scrub, and any other name from process.env", () => {
+    process.env.EMAIL_PROVIDER_API_KEY = "re_not_real_2";
+    process.env.SOME_VAULT_ONLY_NAME = "plain";
+    scrubSecretsFromEnv();
+    expect(envValue("EMAIL_PROVIDER_API_KEY")).toBe("re_not_real_2");
+    expect(envValue("SOME_VAULT_ONLY_NAME")).toBe("plain");
+  });
+});
+
+describe("the vault layer after the scrub", () => {
+  afterEach(() => {
+    delete process.env.EMAIL_PROVIDER_API_KEY;
+    __resetSecretsForTests();
+  });
+  it("still reads a key kept out of the vault once it has left process.env", async () => {
+    const { getKey, setVaultForTests } = await import("@/lib/vault");
+    setVaultForTests(null);
+    process.env.EMAIL_PROVIDER_API_KEY = "re_not_real_3";
+    scrubSecretsFromEnv();
+    expect(process.env.EMAIL_PROVIDER_API_KEY).toBeUndefined();
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    await expect(getKey("EMAIL_PROVIDER_API_KEY")).resolves.toBe("re_not_real_3");
   });
 });
