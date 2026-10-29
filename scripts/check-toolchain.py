@@ -26,15 +26,22 @@ for pj in pjs():
     rel = os.path.relpath(pj, REPO)
     d = json.load(open(pj))
     eng = d.get("engines") or {}
+    # HARD.08 (app-business-core #464): a MISSING engines.node / engines.npm is a
+    # failure, not a pass. Vercel reads engines.node to pick the deployed Node, so
+    # deleting it would let the deployment drift off the pin with no check firing.
     node = eng.get("node")
-    if node:
+    if not node:
+        fail.append(f"{rel}: engines.node missing - declare \"{CANON}.x\" (Vercel reads it to pick the deployed Node)")
+    else:
         majors = re.findall(r"(\d+)", node)
         if not majors or any(x != CANON for x in majors):
             fail.append(f"{rel}: engines.node '{node}' not locked to major {CANON}")
     npmv = eng.get("npm")
-    if npmv:
+    if not npmv:
+        fail.append(f"{rel}: engines.npm missing - declare \">=11\"")
+    else:
         floor = re.findall(r"(\d+)", npmv)
-        if floor and int(floor[0]) < 11:
+        if not floor or int(floor[0]) < 11:
             fail.append(f"{rel}: engines.npm '{npmv}' floor below 11")
     if d.get("volta"):
         fail.append(f"{rel}: volta block is a second source of truth - remove")
