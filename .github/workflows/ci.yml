@@ -478,3 +478,36 @@ jobs:
           else
             node scripts/check-billing-configured.mjs --expect-stub
           fi
+
+  # ONE stable check for branch protection (app-business-core #776, #450). Every
+  # app repo is born from this template, and build-init requires this check on
+  # its `main` beside the security scan's summary. Listing each job by name
+  # instead would miss a matrix leg or a job added later; this job `needs:`
+  # every job above, so a new job must be added here or
+  # tests/unit/ci-all-passed.test.ts fails. `if: always()` makes it report on a
+  # run where something failed — a required check that is skipped would never
+  # arrive — and it passes only when every needed job succeeded (a skipped or
+  # cancelled job is not a pass).
+  all-ci-passed:
+    name: All CI checks passed
+    needs: [toolchain-guard, ci, capability-matrix, billing-matrix]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every job above succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          if not needs:
+              print("::error::no jobs were checked"); sys.exit(1)
+          bad = {job: r.get("result") for job, r in needs.items() if r.get("result") != "success"}
+          for job, result in sorted(needs.items()):
+              print(f"{job}: {result.get('result')}")
+          if bad:
+              print("::error::not every CI job passed: " + ", ".join(f"{j}={r}" for j, r in sorted(bad.items())))
+              sys.exit(1)
+          print("All CI checks passed")
+          PY
