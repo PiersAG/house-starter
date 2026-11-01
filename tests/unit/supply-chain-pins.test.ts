@@ -8,7 +8,14 @@
 // on the reviewed weekly schedule (#716).
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -44,12 +51,38 @@ describe("check-pins", () => {
   });
 
   it.each([
-    ["an action on a version tag", { ".github/workflows/a.yml": "steps:\n  - uses: actions/checkout@v4\n" }, "actions:"],
-    ["a -latest runner", { ".github/workflows/a.yml": "jobs:\n  x:\n    runs-on: ubuntu-latest\n" }, "runner:"],
-    ["a dependency range", { "package.json": JSON.stringify({ dependencies: { a: "^0.1.1" } }) }, "npm:"],
-    ["an override range", { "package.json": JSON.stringify({ overrides: { a: ">=8.5.23" } }) }, "npm:"],
-    ["an image without a digest", { Dockerfile: "FROM node:24-slim\n" }, "docker:"],
-    ["a pip install by name", { ".github/workflows/a.yml": "run: pip install requests\n" }, "pip:"],
+    [
+      "an action on a version tag",
+      { ".github/workflows/a.yml": "steps:\n  - uses: actions/checkout@v4\n" },
+      "actions:",
+    ],
+    [
+      "a -latest runner",
+      {
+        ".github/workflows/a.yml": "jobs:\n  x:\n    runs-on: ubuntu-latest\n",
+      },
+      "runner:",
+    ],
+    [
+      "a dependency range",
+      { "package.json": JSON.stringify({ dependencies: { a: "^0.1.1" } }) },
+      "npm:",
+    ],
+    [
+      "an override range",
+      { "package.json": JSON.stringify({ overrides: { a: ">=8.5.23" } }) },
+      "npm:",
+    ],
+    [
+      "an image without a digest",
+      { Dockerfile: "FROM node:24-slim\n" },
+      "docker:",
+    ],
+    [
+      "a pip install by name",
+      { ".github/workflows/a.yml": "run: pip install requests\n" },
+      "pip:",
+    ],
   ])("fails %s", (_name, files, rule) => {
     const r = guard(repo(files as Record<string, string>));
     expect(r.code).toBe(1);
@@ -69,23 +102,72 @@ describe("check-pins", () => {
 
 describe("pinned surfaces", () => {
   it("reads the toolchain guard script at its release tag, not main", () => {
-    const wf = readFileSync(join(ROOT, ".github/workflows/toolchain-guard.yml"), "utf8");
-    expect(wf).toMatch(/repository: PiersAG\/house-starter\n\s+ref: toolchain-guard-v1\n/);
+    const wf = readFileSync(
+      join(ROOT, ".github/workflows/toolchain-guard.yml"),
+      "utf8",
+    );
+    expect(wf).toMatch(
+      /repository: PiersAG\/house-starter\n\s+ref: toolchain-guard-v1\n/,
+    );
   });
 
   it("runs the pin guard and the whole-lockfile audit in CI", () => {
     const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
     expect(ci).toContain("python3 scripts/check-pins.py");
-    expect(ci).toContain("python3 scripts/check-deps-existence.py --workspace .");
+    expect(ci).toContain(
+      "python3 scripts/check-deps-existence.py --workspace .",
+    );
+  });
+});
+
+// app-business-core #478: GitHub removes the Node 20 fallback from its runners, so no
+// workflow may pin an Action release that still runs on Node 20.
+const NODE20_LAST: Record<string, number> = {
+  "actions/checkout": 4,
+  "actions/setup-python": 5,
+  "actions/setup-node": 4,
+  "actions/upload-artifact": 4,
+  "actions/download-artifact": 4,
+  "actions/github-script": 7,
+  "github/codeql-action": 3,
+  "actions/cache": 4,
+};
+function node20Uses(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(
+    /uses: ([\w.-]+\/[\w.-]+)[^@\s]*@[0-9a-f]{40} # v(\d+)/g,
+  )) {
+    if (Number(m[2]) <= (NODE20_LAST[m[1]] ?? -1)) out.push(`${m[1]} v${m[2]}`);
+  }
+  return out;
+}
+
+describe("Actions run on Node 24 (#478)", () => {
+  it("pins no Action release that runs on Node 20", () => {
+    const dir = join(ROOT, ".github", "workflows");
+    const bad: Record<string, string[]> = {};
+    for (const f of readdirSync(dir).filter((n) => n.endsWith(".yml"))) {
+      const hits = node20Uses(readFileSync(join(dir, f), "utf8"));
+      if (hits.length) bad[f] = hits;
+    }
+    expect(bad).toEqual({});
+    expect(
+      node20Uses(`uses: actions/checkout@${"a".repeat(40)} # v4.4.0`),
+    ).toEqual(["actions/checkout v4"]);
   });
 });
 
 describe("renovate-base.json (the reviewed update schedule)", () => {
-  const preset = JSON.parse(readFileSync(join(ROOT, "renovate-base.json"), "utf8"));
+  const preset = JSON.parse(
+    readFileSync(join(ROOT, "renovate-base.json"), "utf8"),
+  );
 
   it("keeps every pin exact and updates it only on the weekly schedule", () => {
     expect(preset.extends).toEqual(
-      expect.arrayContaining(["helpers:pinGitHubActionDigests", "docker:pinDigests"]),
+      expect.arrayContaining([
+        "helpers:pinGitHubActionDigests",
+        "docker:pinDigests",
+      ]),
     );
     expect(preset.rangeStrategy).toBe("pin");
     expect(preset.schedule).toEqual(["before 6am on monday"]);
@@ -93,14 +175,18 @@ describe("renovate-base.json (the reviewed update schedule)", () => {
   });
 
   it("compiles the hashed Python lock files and never edits them line by line", () => {
-    expect(preset["pip-compile"].managerFilePatterns.join(" ")).toContain("requirements");
+    expect(preset["pip-compile"].managerFilePatterns.join(" ")).toContain(
+      "requirements",
+    );
     expect(preset.pip_requirements.enabled).toBe(false);
   });
 
   it("merges non-major updates itself and leaves every major to the CEO", () => {
     const rules = preset.packageRules as Array<Record<string, unknown>>;
     const batch = rules.find((r) => r.groupSlug === "all-non-major");
-    const majors = rules.find((r) => JSON.stringify(r.matchUpdateTypes) === '["major"]');
+    const majors = rules.find(
+      (r) => JSON.stringify(r.matchUpdateTypes) === '["major"]',
+    );
     expect(batch?.automerge).toBe(true);
     expect(majors?.automerge).toBe(false);
     expect(preset.platformAutomerge).toBe(true);
