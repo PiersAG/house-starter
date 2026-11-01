@@ -1,48 +1,91 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Shared Renovate preset for house-starter and app-business-core (both extend it). #716: non-major and security updates merge themselves once every required check passes, in one weekly batch per repo; majors open one PR each for the CEO, after Claude Code has checked them.",
-  "extends": ["config:recommended", ":enableVulnerabilityAlerts"],
-  "constraints": { "node": "24.x", "npm": ">=11" },
+  "description": "Shared Renovate preset for house-starter and app-business-core (both extend it). #716: non-major and security updates merge themselves once every required check passes, in one weekly batch per repo; majors open one PR each for the CEO, after Claude Code has checked them. #750: everything is pinned exactly (npm versions, GitHub Actions by commit SHA, Docker images by digest, Python through hashed lock files compiled with uv), and these pins move only through this schedule.",
+  "extends": [
+    "config:recommended",
+    ":enableVulnerabilityAlerts",
+    "helpers:pinGitHubActionDigests",
+    "docker:pinDigests"
+  ],
+  "constraints": {
+    "node": "24.x",
+    "npm": ">=11"
+  },
   "timezone": "Europe/London",
-  "schedule": ["before 6am on monday"],
+  "schedule": [
+    "before 6am on monday"
+  ],
   "minimumReleaseAge": "14 days",
+  "rangeStrategy": "pin",
   "rebaseWhen": "conflicted",
   "automergeType": "pr",
   "platformAutomerge": true,
   "lockFileMaintenance": {
     "enabled": true,
     "automerge": true,
-    "schedule": ["before 6am on monday"]
+    "schedule": [
+      "before 6am on monday"
+    ]
   },
   "vulnerabilityAlerts": {
     "automerge": true,
-    "addLabels": ["security"]
+    "addLabels": [
+      "security"
+    ]
+  },
+  "pip-compile": {
+    "description": "#750: the factory's Python is installed only from hashed lock files (requirements*.txt) compiled from requirements*.in by `uv pip compile ... --generate-hashes`; Renovate updates the .in pin and re-runs the command in each file's header.",
+    "managerFilePatterns": [
+      "/(^|/)requirements[\\w-]*\\.txt$/"
+    ]
+  },
+  "pip_requirements": {
+    "description": "#750: off, so the compiled lock files are never edited line by line; pip-compile (above) owns them and their .in sources.",
+    "enabled": false
   },
   "packageRules": [
     {
       "description": "#716 weekly batch: every non-major update in one PR per repo, merged by GitHub only when the required checks pass. minimumReleaseAge matches the CI anti-slopsquatting gate (versions >= 14 days old), so the batch never proposes a version that gate would reject.",
-      "matchUpdateTypes": ["patch", "minor", "pin", "pinDigest", "digest"],
+      "matchUpdateTypes": [
+        "patch",
+        "minor",
+        "pin",
+        "pinDigest",
+        "digest"
+      ],
       "groupName": "all non-major dependencies",
       "groupSlug": "all-non-major",
       "automerge": true
     },
     {
       "description": "#716 majors: one PR each (monorepo siblings stay together), never automerged, labelled for the CEO. Replaces the HARD.06 G5 Dependency Dashboard approval hold, which kept majors invisible as PRs; the never-automerge, never-in-a-group-PR halves of G5 still hold.",
-      "matchUpdateTypes": ["major"],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false,
-      "addLabels": ["major-upgrade"]
+      "addLabels": [
+        "major-upgrade"
+      ]
     },
     {
       "description": "A language-runtime minor (Python 3.11 -> 3.15) is a breaking upgrade in practice - core #218 broke the semgrep gate - so it is handled like a major: its own PR, never automerged, never in the weekly batch.",
-      "matchDepNames": ["python"],
-      "matchUpdateTypes": ["minor"],
+      "matchDepNames": [
+        "python"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
       "groupName": null,
       "automerge": false,
-      "addLabels": ["major-upgrade"]
+      "addLabels": [
+        "major-upgrade"
+      ]
     },
     {
       "description": "The reusable workflows in PiersAG/app-business-core are called by uses: refs in this repo, but that repo is private and has no Renovate app install, so every lookup fails with no-result and surfaces as an error on the Dependency Dashboard. Nothing to update here - these refs are pinned by hand.",
-      "matchDepNames": ["PiersAG/app-business-core"],
+      "matchDepNames": [
+        "PiersAG/app-business-core"
+      ],
       "enabled": false
     }
   ]
