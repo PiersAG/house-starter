@@ -353,15 +353,24 @@ jobs:
       # run asks npm's rate-limited downloads service about new packages only.
       - name: Restore the download-count cache
         if: always()
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/deps-audit
-          key: deps-audit-${{ github.run_id }}
+          key: deps-audit-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: deps-audit-
 
       - name: Dependency existence check (anti-slopsquatting) and lockfile audit
         if: always()
         run: python3 scripts/check-deps-existence.py --workspace . --cache-dir "$RUNNER_TEMP/deps-audit"
+
+      # Saved even when the audit failed: a run npm rate-limited part-way keeps
+      # the counts it got, so the next run carries on instead of starting over.
+      - name: Save the download-count cache
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/deps-audit
+          key: deps-audit-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Socket supply-chain signal — ADVISORY ONLY, by CEO ruling. It reports;
       # it never fails the job and never blocks a merge. Both guards are

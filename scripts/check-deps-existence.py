@@ -72,7 +72,9 @@ REGISTRY_TIMEOUT_S = 20
 LOCK_DL_FLOOR = 100            # #749 R0393: fewer than 100 weekly downloads
 MAINTAINER_WINDOW_DAYS = 90    # #749 R0394: maintainer change in the last 90 days
 LOCK_WORKERS = 16
-REGISTRY_ATTEMPTS = 6        # backoff 2, 4, 8, 16, 32 s: npm's downloads service rate-limits
+REGISTRY_ATTEMPTS = 6        # backoff 2, 4, 8, 16, 32 s
+DL_ATTEMPTS = 9              # npm's downloads service rate-limits shared CI addresses hard:
+                             # backoff 2, 4, 8, 16, 32, 60, 60, 60 s per lookup
 REVIEWABLE_RULES = ("low downloads", "maintainer change", "new package", "install script")
 
 _HERE = Path(__file__).resolve().parent
@@ -136,30 +138,31 @@ def _load_pkg_json(workspace: Path) -> dict:
     return json.loads(p.read_text())
 
 
-def _http_get_json(url: str) -> dict | None:
+def _http_get_json(url: str, attempts: int = 0) -> dict | None:
     """GET a URL and return parsed JSON. Returns None on 404; raises on other errors.
 
     The registry's own errors (429, 5xx) and network drops are retried with a
     short backoff; the last one is raised, never read as a pass.
     """
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    for attempt in range(1, REGISTRY_ATTEMPTS + 1):
+    attempts = attempts or REGISTRY_ATTEMPTS
+    for attempt in range(1, attempts + 1):
         try:
             with urllib.request.urlopen(req, timeout=REGISTRY_TIMEOUT_S * 3) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return None
-            if (exc.code != 429 and exc.code < 500) or attempt == REGISTRY_ATTEMPTS:
+            if (exc.code != 429 and exc.code < 500) or attempt == attempts:
                 raise
             retry_after = exc.headers.get("Retry-After") if exc.headers else None
             if retry_after and retry_after.isdigit() and int(retry_after) > 2 ** attempt:
                 time.sleep(min(int(retry_after), 60))
                 continue
         except (OSError, http.client.HTTPException):
-            if attempt == REGISTRY_ATTEMPTS:
+            if attempt == attempts:
                 raise
-        time.sleep(2 ** attempt)
+        time.sleep(min(2 ** attempt, 60))
     return None  # unreachable
 
 
@@ -328,8 +331,8 @@ DL_CACHE_MIN = LOCK_DL_FLOOR * 10   # only counts far above the floor are reused
 
 def _weekly_downloads(names: list[str], cache_dir: Path | None = None) -> dict[str, int]:
     """npm's last-week download counts. Unscoped names go 128 to a request (the
-    bulk endpoint); scoped names one each (the bulk endpoint refuses them), two
-    at a time because npm's downloads service rate-limits hard.
+    bulk endpoint); scoped names one each (the bulk endpoint refuses them), one
+    request at a time because npm's downloads service rate-limits hard.
 
     With a cache directory, a count of at least DL_CACHE_MIN is reused for
     DL_CACHE_DAYS days; a count near or under the floor is always asked again,
@@ -361,29 +364,32 @@ def _weekly_downloads(names: list[str], cache_dir: Path | None = None) -> dict[s
     chunks = [unscoped[i:i + 128] for i in range(0, len(unscoped), 128)]
 
     def bulk(chunk: list[str]) -> dict[str, int]:
-        doc = _http_get_json(base + ",".join(chunk)) or {}
+        doc = _http_get_json(base + ",".join(chunk), DL_ATTEMPTS) or {}
         if len(chunk) == 1:  # one name returns the single-package shape
             doc = {chunk[0]: doc}
         return {n: int((doc.get(n) or {}).get("downloads") or 0) for n in chunk}
 
     def single(n: str) -> dict[str, int]:
-        doc = _http_get_json(base + n) or {}
+        doc = _http_get_json(base + n, DL_ATTEMPTS) or {}
         return {n: int(doc.get("downloads") or 0)}
 
+    # One request at a time, and every count is cached as it arrives (also when a
+    # later lookup gives up), so a rate-limited run still saves its progress and
+    # the next run carries on from there.
     fetched: dict[str, int] = {}
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        for part in pool.map(bulk, chunks):
-            fetched.update(part)
-        for part in pool.map(single, scoped):
-            fetched.update(part)
-    out.update(fetched)
-
-    if cache_file:
-        stamp = now.isoformat()
-        for n, weekly in fetched.items():
-            cache[n] = {"weekly": weekly, "at": stamp}
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(json.dumps(cache, indent=0, sort_keys=True))
+    try:
+        for chunk in chunks:
+            fetched.update(bulk(chunk))
+        for n in scoped:
+            fetched.update(single(n))
+    finally:
+        out.update(fetched)
+        if cache_file:
+            stamp = now.isoformat()
+            for n, weekly in fetched.items():
+                cache[n] = {"weekly": weekly, "at": stamp}
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(json.dumps(cache, indent=0, sort_keys=True))
     return out
 
 
