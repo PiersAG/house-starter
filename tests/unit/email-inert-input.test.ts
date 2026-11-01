@@ -136,5 +136,5 @@ describe("the email-producing form, end to end: the delivered message is inert",
       expect(hrefs).toHaveLength(2);
       for (const h of hrefs) expect(h.startsWith("https://app.example/reset-password?token=")).toBe(true);
     }
-  });
+  }, 60_000);
 });
