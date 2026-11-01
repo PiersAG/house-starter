@@ -32,12 +32,13 @@ import { isKernelEnabled } from "@/config/kernel";
  *
  *   /api/billing  — checkout, portal and the Stripe webhook receiver.
  *   /reactivate   — the open pay-or-renew page the paywall redirects to.
+ *   /refund-policy — the public refund policy, linked on the payment page (#354).
  *
  * When the surface is inert these 404; the paywall that would send a user to
  * /reactivate is inert in the same state (lib/billing/enforce.ts), so nothing
  * can route a user into a 404.
  */
-export const BILLING_ROUTE_PREFIXES = ["/api/billing", "/reactivate"] as const;
+export const BILLING_ROUTE_PREFIXES = ["/api/billing", "/reactivate", "/refund-policy"] as const;
 
 /**
  * Whether THIS app's subscription billing is ACTIVE. Two independent conditions,
