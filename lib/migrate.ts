@@ -230,9 +230,24 @@ CREATE TABLE IF NOT EXISTS setting_values (
   scope TEXT NOT NULL CHECK (scope IN ('owner','client')),
   client_id TEXT NOT NULL DEFAULT '',
   value TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
   updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
   PRIMARY KEY (key, scope, client_id)
 );
+
+-- Append-only change history (issue 536): one row per change to a tenant
+-- record, never updated or deleted. lib/records/history.ts.
+CREATE TABLE IF NOT EXISTS record_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  entity TEXT NOT NULL,
+  entity_key TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('created','updated','deleted')),
+  data TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  occurred_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS record_events_by_record ON record_events (entity, entity_key, version);
 `;
 
 /**

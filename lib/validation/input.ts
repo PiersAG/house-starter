@@ -39,9 +39,7 @@ export const MAX_NAME_LENGTH = 100;
 
 // C0 and C1 control characters, zero-width and bidirectional-override marks.
 // Tab and newline are kept only where a field is multi-line.
-// eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F​-‏‪-‮⁦-⁩﻿]/g;
-// eslint-disable-next-line no-control-regex
 const LINE_BREAKS = /[\t\n\r]/g;
 
 /** Normalise, strip control characters, trim. Single-line unless `multiline`. */

@@ -7,6 +7,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { settingValues } from "@/lib/schema";
 import { isSettingKeyEnabled } from "@/lib/capabilities/settings";
 import { CapabilityDisabledError } from "@/lib/settings/errors";
+import { VersionConflictError, appendRecordEvent } from "@/lib/records/history";
 import type { AppDatabase } from "@/lib/users";
 import type { SettingScope } from "@/lib/settings/types";
 
@@ -50,43 +51,115 @@ export async function getStoredValue(
   return JSON.parse(rows[0].value) as unknown;
 }
 
+/**
+ * The stored row's version at one exact level, or 0 when nothing is stored
+ * there. A screen that shows a value sends this version back with its change.
+ */
+export async function getStoredVersion(
+  db: AppDatabase,
+  key: string,
+  scope: SettingScope,
+  clientId: string = OWNER_CLIENT_ID,
+): Promise<number> {
+  const rows = await db
+    .select({ version: settingValues.version })
+    .from(settingValues)
+    .where(
+      and(
+        eq(settingValues.key, key),
+        eq(settingValues.scope, scope),
+        eq(settingValues.clientId, clientId),
+      ),
+    )
+    .limit(1)
+    .all();
+  return rows[0]?.version ?? 0;
+}
+
+export interface WriteOptions {
+  /**
+   * The version this change was based on (0 = nothing was stored). When given,
+   * a row whose version has moved on is NOT overwritten: VersionConflictError.
+   * When absent, last write wins (allowed for settings, issue 536).
+   */
+  expectedVersion?: number;
+  /** Who is making the change, for the history. Defaults to "system". */
+  actor?: string;
+}
+
+function historyKey(key: string, scope: SettingScope, clientId: string): string {
+  return scope === "owner" ? key : `${key}@client:${clientId}`;
+}
+
+/**
+ * Write one row in ONE statement, so the version check and the write cannot be
+ * separated by another save: an insert, or an update guarded by
+ * `version = expected`. Returns the new version.
+ */
 async function upsert(
   db: AppDatabase,
   key: string,
   scope: SettingScope,
   clientId: string,
   value: unknown,
-): Promise<void> {
+  { expectedVersion, actor = "system" }: WriteOptions = {},
+): Promise<number> {
   const encoded = JSON.stringify(value);
-  await db
+  const guard =
+    expectedVersion === undefined
+      ? undefined
+      : sql`${settingValues.version} = ${expectedVersion}`;
+  const written = await db
     .insert(settingValues)
-    .values({ key, scope, clientId, value: encoded })
+    .values({ key, scope, clientId, value: encoded, version: 1 })
     .onConflictDoUpdate({
       target: [settingValues.key, settingValues.scope, settingValues.clientId],
-      set: { value: encoded, updatedAt: sql`(unixepoch())` },
+      set: {
+        value: encoded,
+        version: sql`${settingValues.version} + 1`,
+        updatedAt: sql`(unixepoch())`,
+      },
+      ...(guard ? { setWhere: guard } : {}),
     })
-    .run();
+    .returning({ version: settingValues.version })
+    .all();
+  if (written.length === 0) {
+    const current = await getStoredVersion(db, key, scope, clientId);
+    throw new VersionConflictError("setting", historyKey(key, scope, clientId), expectedVersion ?? 0, current);
+  }
+  const current = written[0].version;
+  await appendRecordEvent(db, {
+    entity: "setting",
+    entityKey: historyKey(key, scope, clientId),
+    version: current,
+    action: current === 1 ? "created" : "updated",
+    data: value,
+    actor,
+  });
+  return current;
 }
 
-/** Set (or replace) the owner override for a key. */
+/** Set (or replace) the owner override for a key. Returns the new version. */
 export async function setOwnerValue(
   db: AppDatabase,
   key: string,
   value: unknown,
-): Promise<void> {
+  options: WriteOptions = {},
+): Promise<number> {
   assertWritable(key);
-  await upsert(db, key, "owner", OWNER_CLIENT_ID, value);
+  return upsert(db, key, "owner", OWNER_CLIENT_ID, value, options);
 }
 
-/** Set (or replace) a client's preference for a key. */
+/** Set (or replace) a client's preference for a key. Returns the new version. */
 export async function setClientValue(
   db: AppDatabase,
   key: string,
   clientId: string,
   value: unknown,
-): Promise<void> {
+  options: WriteOptions = {},
+): Promise<number> {
   assertWritable(key);
-  await upsert(db, key, "client", clientId, value);
+  return upsert(db, key, "client", clientId, value, options);
 }
 
 /**
@@ -98,6 +171,7 @@ export async function deleteValue(
   key: string,
   scope: SettingScope,
   clientId: string = OWNER_CLIENT_ID,
+  { actor = "system" }: Pick<WriteOptions, "actor"> = {},
 ): Promise<boolean> {
   assertWritable(key);
   const existing = await getStoredValue(db, key, scope, clientId);
@@ -112,5 +186,13 @@ export async function deleteValue(
       ),
     )
     .run();
+  await appendRecordEvent(db, {
+    entity: "setting",
+    entityKey: historyKey(key, scope, clientId),
+    version: 0,
+    action: "deleted",
+    data: null,
+    actor,
+  });
   return true;
 }

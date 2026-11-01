@@ -59,6 +59,7 @@ import {
   setClientValue,
   deleteValue,
 } from "@/lib/settings/values";
+import { VersionConflictError } from "@/lib/records/history";
 
 export const runtime = "nodejs";
 
@@ -118,6 +119,10 @@ const putSchema = z.object({
   // made a bare z.unknown() key required, which would turn that into a 400.
   value: z.unknown().optional(),
   scope: z.enum(["owner", "client"]).default("owner"),
+  // The version the screen showed (issue 536). Given, a stale save is refused
+  // with 409 instead of silently overwriting a newer one; absent, last write
+  // wins (allowed for settings).
+  version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
 export async function PUT(
@@ -155,7 +160,7 @@ export async function PUT(
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
-  const { value, scope } = parsed.data;
+  const { value, scope, version: expectedVersion } = parsed.data;
 
   const validation =
     scope === "client"
@@ -178,12 +183,26 @@ export async function PUT(
   if (denied) return denied;
 
   const db = await getTenantDb();
-  if (scope === "client") {
-    await setClientValue(db, key, userId, validation.value);
-  } else {
-    await setOwnerValue(db, key, validation.value);
+  const options = { expectedVersion, actor: userId };
+  let version: number;
+  try {
+    version =
+      scope === "client"
+        ? await setClientValue(db, key, userId, validation.value, options)
+        : await setOwnerValue(db, key, validation.value, options);
+  } catch (error) {
+    if (error instanceof VersionConflictError) {
+      return NextResponse.json(
+        {
+          error: "This setting was changed somewhere else. Reload to see the latest value, then try again.",
+          version: error.current,
+        },
+        { status: 409 },
+      );
+    }
+    throw error;
   }
-  return NextResponse.json({ ok: true, key, scope });
+  return NextResponse.json({ ok: true, key, scope, version });
 }
 
 export async function DELETE(
@@ -228,8 +247,8 @@ export async function DELETE(
   const db = await getTenantDb();
   const removed =
     scope === "client"
-      ? await deleteValue(db, key, "client", userId)
-      : await deleteValue(db, key, "owner");
+      ? await deleteValue(db, key, "client", userId, { actor: userId })
+      : await deleteValue(db, key, "owner", undefined, { actor: userId });
 
   return NextResponse.json({ ok: true, key, scope, reverted: removed });
 }

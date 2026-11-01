@@ -34,6 +34,8 @@ export function SettingControl({
 }) {
   const [value, setValue] = useState<unknown>(setting.effectiveValue);
   const [source, setSource] = useState(setting.source);
+  // The version this screen is showing; sent with every save (issue 536).
+  const [version, setVersion] = useState<number>(setting.version);
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -43,7 +45,7 @@ export function SettingControl({
     const res = await fetch(`/api/settings/${encodeURIComponent(setting.key)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: next, scope }),
+      body: JSON.stringify({ value: next, scope, version }),
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -51,6 +53,8 @@ export function SettingControl({
       setStatus("error");
       return;
     }
+    const saved = (await res.json().catch(() => ({}))) as { version?: number };
+    if (typeof saved.version === "number") setVersion(saved.version);
     setValue(next);
     setSource(scope);
     setStatus("idle");
