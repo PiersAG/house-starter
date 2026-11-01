@@ -199,6 +199,39 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // Sign-in and sessions (bundle S8). An uncovered branch in any of these is
+        // a reset link that outlives its limits, a session that survives a role
+        // change or a sign-out-everywhere, or a forged token nobody hears about.
+        "**/lib/password-reset.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/revoked-sessions.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/account-security.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/security-log.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/session-token-log.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
       },
     },
   },

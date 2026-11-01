@@ -1,6 +1,7 @@
 import type { NextAuthConfig } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import { encode, decode } from "@auth/core/jwt";
+import { logAuthLibraryError } from "@/lib/session-token-log";
 
 const DAY_SECONDS = 24 * 60 * 60;
 const THIRTY_DAY_SECONDS = 30 * DAY_SECONDS;
@@ -33,6 +34,10 @@ export const authConfig: NextAuthConfig = {
   secret: requireAuthSecret(),
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
+  // A modified, expired, wrongly signed or unsigned session token is rejected by
+  // the decoder; this records each rejection as a security event (#798).
+  // lib/auth.ts spreads this config, so the Node server logs the same way.
+  logger: { error: logAuthLibraryError },
   providers: [],
   jwt: {
     // Custom encode so token.maxAge (written at sign-in) controls the actual

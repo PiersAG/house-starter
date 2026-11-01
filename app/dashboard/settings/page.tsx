@@ -41,6 +41,12 @@ export default async function SettingsPage() {
           Every configurable behaviour, in one place. Changes take effect
           immediately — no deploy.
         </p>
+        <p className="mt-2 text-sm">
+          <a href="/account/security" className="font-medium text-primary hover:underline">
+            Sign-in and security
+          </a>{" "}
+          <span className="text-text-secondary">— change your password or sign out everywhere.</span>
+        </p>
       </header>
 
       {view.map((cap) => (

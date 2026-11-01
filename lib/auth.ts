@@ -46,8 +46,10 @@ import {
   handleTokenRenewal,
   isSessionBeforeUserCutoff,
   isSessionRevoked,
+  readSessionRole,
   recordSignOut,
   RENEW_AFTER_SECONDS,
+  revokeSession,
 } from "@/lib/revoked-sessions";
 
 const DAY_SECONDS = 24 * 60 * 60;
@@ -192,13 +194,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
 
       // Subsequent requests: renewal + optional revocation check. One DB hit
-      // per RENEW_AFTER_SECONDS window, not per page load.
+      // per RENEW_AFTER_SECONDS window, not per page load. The fifth argument
+      // re-reads the role from the catalog at that same renewal (#527), and at
+      // a role change replaces the session id and revokes the old one (#798) —
+      // see lib/revoked-sessions.ts.
       const now = Math.floor(Date.now() / 1000);
       return handleTokenRenewal(
         token,
         (jti) => isSessionRevoked(catalogDb, jti),
         now,
         (userId, authTime) => isSessionBeforeUserCutoff(catalogDb, userId, authTime),
+        {
+          readRole: (userId) => readSessionRole(catalogDb, userId),
+          revoke: (jti, userId) => revokeSession(catalogDb, jti, userId),
+        },
       );
     },
 

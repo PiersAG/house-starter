@@ -11,7 +11,13 @@
 //   4. A password reset sets a per-user cutoff (`users.sessions_valid_from`).
 //      At renewal, a session whose sign-in time (`authTime`) predates that
 //      cutoff is rejected — so a reset ends every earlier session within one
-//      renewal window, not instantly.
+//      renewal window, not instantly. "Sign out of all devices" and a
+//      logged-in password change set the same cutoff (lib/account-security.ts).
+//   5. At renewal the user's CURRENT role is re-read from the catalog
+//      (#527, Matt Murphy #179) — a changed or removed role never outlives one
+//      renewal window. When it changed, the session id is replaced and the old
+//      one revoked (#798, Matt Murphy #25: a new identifier at every privilege
+//      change, and the previous one stops working).
 //
 // `handleTokenRenewal` is extracted from the NextAuth jwt callback so it can
 // be unit-tested directly, without mocking NextAuth internals.
@@ -20,6 +26,7 @@ import { eq } from "drizzle-orm";
 import type { JWT } from "next-auth/jwt";
 import type { AppDatabase } from "@/lib/users";
 import { revokedSessions, users } from "@/lib/schema";
+import { logSecurityEvent } from "@/lib/security-log";
 
 /**
  * How long (seconds) between revocation checks. After each check the window
@@ -92,6 +99,32 @@ export async function isSessionBeforeUserCutoff(
 }
 
 /**
+ * The user's current role in the catalog, read at renewal (#527). `null` when
+ * the account no longer exists — the caller fails closed on that.
+ */
+export async function readSessionRole(
+  db: AppDatabase,
+  userId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+    .all();
+  return rows[0]?.role ?? null;
+}
+
+/**
+ * What renewal needs to keep the role claim current (#527, #798): read the
+ * role now held, and revoke a session id that is being replaced.
+ */
+export interface RoleRefresh {
+  readRole: (userId: string) => Promise<string | null>;
+  revoke: (jti: string, userId: string) => Promise<void>;
+}
+
+/**
  * Apply rolling-renewal + revocation logic to a decoded JWT token.
  *
  * Called from the NextAuth `jwt` callback on every non-sign-in request.
@@ -109,17 +142,28 @@ export async function isSessionBeforeUserCutoff(
  * `checkUserCutoff` is optional so the cutoff is inert until the sign-in mint
  * stamps `authTime` — without it every session would be rejected at renewal.
  *
+ * When `roleRefresh` is supplied, the role is re-read after the cutoff check:
+ *     - account gone, or the read fails → `null` (fail closed);
+ *     - role unchanged → renewed as above;
+ *     - role changed → the new role is written to the token, the session id is
+ *       REPLACED with a fresh one and the old id revoked, so a copy of the
+ *       pre-change cookie is refused at its own next renewal. If the revocation
+ *       cannot be written the session is invalidated instead (`null`): a
+ *       privilege change never leaves an old identifier working.
+ *
  * @param token      Decoded JWT (contains sessionId and renewAfter).
  * @param checkRevoked  Async function to check the revocation store.
  * @param nowSeconds Unix timestamp for "now" (injectable for testing).
  * @param checkUserCutoff  Async function: true when the session signed in
  *                   before the user's password-reset cutoff.
+ * @param roleRefresh  Re-read the role and revoke a replaced session id.
  */
 export async function handleTokenRenewal(
   token: JWT,
   checkRevoked: (jti: string) => Promise<boolean>,
   nowSeconds: number,
   checkUserCutoff?: (userId: string, authTime: number | undefined) => Promise<boolean>,
+  roleRefresh?: RoleRefresh,
 ): Promise<JWT | null> {
   const sessionId = token.sessionId as string | undefined;
   const renewAfter = token.renewAfter as number | undefined;
@@ -180,6 +224,48 @@ export async function handleTokenRenewal(
     }
     if (beforeCutoff) {
       return null; // Signed in before the user's last password reset.
+    }
+  }
+
+  if (roleRefresh) {
+    const userId = token.id ?? token.sub;
+    if (!userId) return null;
+    let role: string | null;
+    try {
+      role = await roleRefresh.readRole(userId);
+    } catch (error) {
+      console.error(
+        "session renewal: role read failed — invalidating session " +
+          "(user is sent to /login, never a 500)",
+        error,
+      );
+      return null;
+    }
+    if (role === null) return null; // The account is gone.
+    if (role !== token.role) {
+      try {
+        await roleRefresh.revoke(sessionId, userId);
+      } catch (error) {
+        console.error(
+          "session renewal: could not revoke the replaced session id — " +
+            "invalidating session instead",
+          error,
+        );
+        return null;
+      }
+      const rotated = crypto.randomUUID();
+      logSecurityEvent("session_rotated", {
+        userId,
+        reason: "role_changed",
+        from: token.role ?? null,
+        to: role,
+      });
+      return {
+        ...token,
+        role,
+        sessionId: rotated,
+        renewAfter: nowSeconds + RENEW_AFTER_SECONDS,
+      };
     }
   }
 
