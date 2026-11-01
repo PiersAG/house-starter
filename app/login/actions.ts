@@ -13,6 +13,14 @@ type LoginState = { error: string; mfaRequired?: boolean } | null;
 // credentials schema in the sign-in kernel's authorize step, which the public
 // NextAuth endpoint shares. A malformed value gets the same answer as a wrong
 // password.
+// Only whether a second-factor code was typed, for keeping the code field on
+// screen after a refusal.
+const codeOnly = z.object({ code: z.string().max(64).optional() });
+function codeTyped(formData: FormData): boolean {
+  const form = parseForm(codeOnly, formData);
+  return form.ok && submittedCode(form.data.code) !== "";
+}
+
 const loginForm = z.object({
   email: emailField,
   password: passwordField,
@@ -40,7 +48,7 @@ export async function loginAction(
   if (!form.ok) {
     return {
       error: "Invalid email or password.",
-      mfaRequired: submittedCode(formData.get("code")) !== "",
+      mfaRequired: codeTyped(formData),
     };
   }
   const { email, password, rememberMe, code } = form.data;
@@ -62,7 +70,7 @@ export async function loginAction(
       if (isAuthRateLimitError(error)) {
         return {
           error: "Too many sign-in attempts. Please try again shortly.",
-          mfaRequired: submittedCode(formData.get("code")) !== "",
+          mfaRequired: codeTyped(formData),
         };
       }
       const reason = mfaSignInReason(error);

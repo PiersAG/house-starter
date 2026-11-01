@@ -31,6 +31,7 @@
 
 import { createClient, type Client } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
+import { sqlColumnDef, sqlIdent } from "@/lib/sql-ident";
 import { seedSettingDefinitions } from "@/lib/settings/seed";
 import { seedOwnerAccount } from "@/lib/owner-seed";
 import type { AppDatabase } from "@/lib/users";
@@ -370,12 +371,16 @@ function declaredColumns(input: string): Map<string, { name: string; def: string
  */
 async function reconcileColumns(client: Client, sql: string): Promise<void> {
   for (const [table, cols] of declaredColumns(sql)) {
-    const info = await client.execute(`PRAGMA table_info(${table});`);
+    // Names and definitions come from this file's own SQL, never a request, and
+    // are checked before they are spliced (lib/sql-ident.ts, issue 517).
+    const info = await client.execute(`PRAGMA table_info(${sqlIdent(table)});`);
     if (info.rows.length === 0) continue; // fresh — CREATE TABLE already built it in full
     const existing = new Set(info.rows.map((r) => String((r as Record<string, unknown>).name)));
     for (const { name, def } of cols) {
       if (existing.has(name)) continue;
-      await client.execute(`ALTER TABLE ${table} ADD COLUMN ${name} ${def};`);
+      await client.execute(
+        `ALTER TABLE ${sqlIdent(table)} ADD COLUMN ${sqlIdent(name)} ${sqlColumnDef(def)};`,
+      );
     }
   }
 }
