@@ -8,12 +8,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout caller
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # #750: the script is read at the same release tag callers pin this
       # workflow to (toolchain-guard-v1), never house-starter's moving main, so
       # a change to the guard reaches callers only when the tag is moved.
       - name: Fetch canonical guard script (house-starter, public)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: PiersAG/house-starter
           ref: toolchain-guard-v1
