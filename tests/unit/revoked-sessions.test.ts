@@ -22,9 +22,14 @@ import {
   handleTokenRenewal,
   isSessionBeforeUserCutoff,
   isSessionRevoked,
+  readSessionRole,
   recordSignOut,
   revokeSession,
 } from "@/lib/revoked-sessions";
+import { assertTenantOwner } from "@/lib/authz";
+
+// lib/authz.ts imports the NextAuth instance; only its pure role check is used here.
+vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -442,6 +447,168 @@ describe("recordSignOut", () => {
 
     expect(warn).toHaveBeenCalledTimes(1);
     await expect(isSessionRevoked(db, jti)).resolves.toBe(true);
+    warn.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #527 (Matt Murphy #179): the role is re-read at the 10-minute renewal, so a
+// demoted user loses owner-only writes within one renewal window.
+// #798 (Matt Murphy #25): at a privilege change the session identifier is
+// replaced, and the previous identifier can no longer access the account.
+// ---------------------------------------------------------------------------
+
+describe("#527 / #798 role refresh and id rotation at renewal (real DB)", () => {
+  const NOW = 5000;
+  async function setRole(userId: string, role: string): Promise<void> {
+    await client.execute({ sql: "UPDATE users SET role = ? WHERE id = ?;", args: [role, userId] });
+  }
+  const refresh = () => ({
+    readRole: (id: string) => readSessionRole(db, id),
+    revoke: (jti: string, id: string) => revokeSession(db, jti, id),
+  });
+  const renew = (token: JWT, now = NOW) =>
+    handleTokenRenewal(
+      token,
+      (id) => isSessionRevoked(db, id),
+      now,
+      (userId, authTime) => isSessionBeforeUserCutoff(db, userId, authTime),
+      refresh(),
+    );
+  /** A signed-in owner's token, due for renewal at NOW. */
+  function ownerToken(userId: string): JWT {
+    return { ...makeStampedToken(userId, 1000), role: "owner" } as JWT;
+  }
+
+  it("readSessionRole returns the catalog role, or null for an unknown account", async () => {
+    const userId = await seedUser();
+    await expect(readSessionRole(db, userId)).resolves.toBe("owner");
+    await expect(readSessionRole(db, "no-such-user")).resolves.toBeNull();
+  });
+
+  it("an unchanged role renews with the SAME session id (no needless rotation)", async () => {
+    const userId = await seedUser();
+    const token = ownerToken(userId);
+    const renewed = await renew(token);
+    expect(renewed?.sessionId).toBe(token.sessionId);
+    expect(renewed?.role).toBe("owner");
+    await expect(isSessionRevoked(db, token.sessionId!)).resolves.toBe(false);
+  });
+
+  it("a demoted owner loses owner-only writes at the next renewal", async () => {
+    const userId = await seedUser();
+    const token = ownerToken(userId);
+    expect(() => assertTenantOwner({ user: { role: token.role } })).not.toThrow();
+
+    await setRole(userId, "member");
+    const renewed = await renew(token);
+    expect(renewed?.role).toBe("member");
+    expect(() => assertTenantOwner({ user: { role: renewed?.role } })).toThrow(
+      "Only the workspace owner",
+    );
+  });
+
+  it("before the renewal window ends the role is NOT re-read (one window, no per-page DB hit)", async () => {
+    const userId = await seedUser();
+    const readRole = vi.fn(() => Promise.resolve("member"));
+    const token = { ...ownerToken(userId), renewAfter: NOW + 1 } as JWT;
+    const out = await handleTokenRenewal(token, notRevoked, NOW, undefined, {
+      readRole,
+      revoke: () => Promise.resolve(),
+    });
+    expect(out).toBe(token);
+    expect(readRole).not.toHaveBeenCalled();
+  });
+
+  it("a privilege change replaces the session id and the previous id stops working", async () => {
+    const userId = await seedUser();
+    const before = ownerToken(userId);
+    await setRole(userId, "member");
+
+    const after = await renew(before);
+    expect(after).not.toBeNull();
+    expect(after!.sessionId).toBeTruthy();
+    expect(after!.sessionId).not.toBe(before.sessionId);
+
+    // The previous identifier is revoked: a copy of the pre-change cookie is
+    // refused at its next renewal...
+    await expect(isSessionRevoked(db, before.sessionId!)).resolves.toBe(true);
+    await expect(renew({ ...before }, NOW + 1)).resolves.toBeNull();
+    // ...while the rotated session carries on.
+    const later = await renew({ ...after!, renewAfter: NOW + 600 }, NOW + 600);
+    expect(later?.sessionId).toBe(after!.sessionId);
+  });
+
+  it("a promotion is a privilege change too (pre-claim token without a role)", async () => {
+    const userId = await seedUser();
+    const preClaim = makeStampedToken(userId, 1000);
+    expect(preClaim.role).toBeUndefined();
+    const out = await renew(preClaim);
+    expect(out?.role).toBe("owner");
+    expect(out?.sessionId).not.toBe(preClaim.sessionId);
+  });
+
+  it("logs the rotation with ids and roles only", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const userId = await seedUser();
+    await setRole(userId, "member");
+    await renew(ownerToken(userId));
+    const line = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes("session_rotated"));
+    expect(JSON.parse(line!)).toMatchObject({
+      security_event: "session_rotated",
+      userId,
+      reason: "role_changed",
+      from: "owner",
+      to: "member",
+    });
+    warn.mockRestore();
+  });
+
+  it("fails closed: account gone, no user id, read failure, revoke failure", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const token = ownerToken("gone-user");
+    // Account gone (cutoff check left out here to isolate the role read).
+    await expect(
+      handleTokenRenewal(token, notRevoked, NOW, undefined, refresh()),
+    ).resolves.toBeNull();
+    // No user id on the token.
+    const anon = { ...token, id: undefined, sub: undefined } as JWT;
+    await expect(
+      handleTokenRenewal(anon, notRevoked, NOW, undefined, refresh()),
+    ).resolves.toBeNull();
+    // The role read throws.
+    await expect(
+      handleTokenRenewal(token, notRevoked, NOW, undefined, {
+        readRole: () => Promise.reject(new Error("store down")),
+        revoke: () => Promise.resolve(),
+      }),
+    ).resolves.toBeNull();
+    // The role changed but the old id cannot be revoked → invalidate, never rotate.
+    await expect(
+      handleTokenRenewal(token, notRevoked, NOW, undefined, {
+        readRole: () => Promise.resolve("member"),
+        revoke: () => Promise.reject(new Error("store down")),
+      }),
+    ).resolves.toBeNull();
+    err.mockRestore();
+  });
+});
+
+describe("tokens that carry the user only as `sub`", () => {
+  it("the cutoff check reads the user id from `sub` when `id` is absent", async () => {
+    const userId = await seedUser();
+    await setCutoff(userId, 2000);
+    const token = { ...makeStampedToken(userId, 1999), id: undefined, sub: userId } as JWT;
+    await expect(
+      handleTokenRenewal(token, notRevoked, 5000, (id, t) => isSessionBeforeUserCutoff(db, id, t)),
+    ).resolves.toBeNull();
+  });
+
+  it("sign-out with neither `id` nor `sub` never throws (the record needs a user; logged)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const jti = crypto.randomUUID();
+    await expect(recordSignOut(db, { token: { sessionId: jti } as JWT })).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
 });

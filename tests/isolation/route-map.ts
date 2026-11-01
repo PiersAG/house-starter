@@ -87,6 +87,11 @@ export type DiscoveredRoute = {
   /** Path to the `route.ts` on disk; null for a page route. */
   file: string | null;
   /**
+   * The file that answers this route — `route.ts` or `page.tsx` — so a check
+   * can read the source of pages too (the session-check guard, #516).
+   */
+  source: string;
+  /**
    * HTTP verbs this handler exports, uppercase and sorted. Empty for a page
    * route — a page accepts a POST only as a server action, which carries a
    * build-time action id no test can synthesise.
@@ -285,6 +290,7 @@ export function discoverAllRoutes(appDir: string): DiscoveredRoute[] {
         params: [...params],
         kind: isApi ? "api" : "page",
         file,
+        source: file ?? join(dir, "page.tsx"),
         methods,
       });
     }

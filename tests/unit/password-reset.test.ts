@@ -17,8 +17,12 @@ import { passwordResetTokens } from "@/lib/schema";
 import { clearCapturedEmails, getCapturedEmails } from "@/lib/email/send";
 import {
   PasswordResetError,
+  RESET_REQUEST_WINDOW_SECONDS,
+  RESET_REQUESTS_PER_EMAIL,
   RESET_TOKEN_TTL_SECONDS,
+  cancelOpenResetTokens,
   consumePasswordResetToken,
+  countRecentResetRequests,
   createPasswordResetToken,
   hashResetToken,
   requestPasswordReset,
@@ -45,7 +49,17 @@ beforeEach(async () => {
   clearCapturedEmails();
   process.env.EMAIL_SEND_MODE = "log";
   vi.spyOn(console, "log").mockImplementation(() => {});
+  vi.spyOn(console, "warn").mockImplementation(() => {});
 });
+
+/** The security events written so far (lib/security-log.ts lines on console.warn). */
+function securityEvents(): Array<Record<string, unknown>> {
+  return vi
+    .mocked(console.warn)
+    .mock.calls.map((c) => String(c[0]))
+    .filter((line) => line.startsWith('{"security_event"'))
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
 
 afterEach(() => {
   client.close();
@@ -190,5 +204,163 @@ describe("requestPasswordReset — send + no account enumeration", () => {
     });
     expect(await db.select().from(passwordResetTokens).all()).toHaveLength(0);
     expect(getCapturedEmails()).toHaveLength(0);
+  });
+});
+
+// ── #515 (Matt Murphy #27): old or extra reset links must not become standing
+// account keys. 15-minute expiry; 3 requests per email per hour plus the IP
+// throttle; every other open link cancelled on reset; requests and completions
+// logged. The generic response is unchanged throughout.
+describe("#515 password-reset hardening", () => {
+  const BASE = { baseUrl: "https://app.example.com" };
+
+  it("a link lives 15 minutes: valid just before, refused just after", async () => {
+    expect(RESET_TOKEN_TTL_SECONDS).toBe(15 * 60);
+    const userId = await seedUser();
+    const issuedAt = new Date("2026-11-01T09:00:00Z");
+    const { token, expiresAt } = await createPasswordResetToken(db, userId, issuedAt);
+    expect(expiresAt.getTime() - issuedAt.getTime()).toBe(15 * 60 * 1000);
+
+    const justBefore = new Date(issuedAt.getTime() + (15 * 60 - 1) * 1000);
+    const atExpiry = new Date(issuedAt.getTime() + 15 * 60 * 1000);
+    expect(await verifyPasswordResetToken(db, token, justBefore)).not.toBeNull();
+    expect(await verifyPasswordResetToken(db, token, atExpiry)).toBeNull();
+  });
+
+  it("the reset email states the 15-minute expiry", async () => {
+    await seedUser("known@example.com");
+    await requestPasswordReset(db, "known@example.com", BASE);
+    const [mail] = getCapturedEmails();
+    expect(mail.html).toContain("expires in 15 minutes");
+    expect(mail.html).not.toContain("one hour");
+  });
+
+  it("at most 3 links per email per hour; the 4th is silently not sent", async () => {
+    expect(RESET_REQUESTS_PER_EMAIL).toBe(3);
+    expect(RESET_REQUEST_WINDOW_SECONDS).toBe(60 * 60);
+    const userId = await seedUser("known@example.com");
+    const t0 = new Date("2026-11-01T09:00:00Z");
+    for (let i = 0; i < 4; i++) {
+      // Generic response: resolves with nothing, every time.
+      await expect(
+        requestPasswordReset(db, "known@example.com", BASE, new Date(t0.getTime() + i * 60_000)),
+      ).resolves.toBeUndefined();
+    }
+    expect(getCapturedEmails()).toHaveLength(3);
+    expect(await countRecentResetRequests(db, userId, new Date(t0.getTime() + 4 * 60_000))).toBe(3);
+    const limited = securityEvents().filter((e) => e.security_event === "password_reset_request_limited");
+    expect(limited).toHaveLength(1);
+    expect(limited[0]).toMatchObject({ userId, requestsThisHour: 3 });
+  });
+
+  it("spending a link does not buy another inside the hour", async () => {
+    const userId = await seedUser("known@example.com");
+    const t0 = new Date("2026-11-01T09:00:00Z");
+    for (let i = 0; i < 3; i++) {
+      const { token } = await createPasswordResetToken(db, userId, new Date(t0.getTime() + i * 1000));
+      await consumePasswordResetToken(db, token, new Date(t0.getTime() + i * 1000));
+    }
+    await requestPasswordReset(db, "known@example.com", BASE, new Date(t0.getTime() + 10_000));
+    expect(getCapturedEmails()).toHaveLength(0);
+  });
+
+  it("the per-email budget comes back once the hour has passed", async () => {
+    await seedUser("known@example.com");
+    const t0 = new Date("2026-11-01T09:00:00Z");
+    for (let i = 0; i < 3; i++) await requestPasswordReset(db, "known@example.com", BASE, t0);
+    await requestPasswordReset(db, "known@example.com", BASE, new Date(t0.getTime() + 30 * 60_000));
+    expect(getCapturedEmails()).toHaveLength(3);
+    await requestPasswordReset(
+      db,
+      "known@example.com",
+      BASE,
+      new Date(t0.getTime() + (RESET_REQUEST_WINDOW_SECONDS + 1) * 1000),
+    );
+    expect(getCapturedEmails()).toHaveLength(4);
+  });
+
+  it("the per-email limit is per account: another account is unaffected", async () => {
+    await seedUser("a@example.com");
+    await seedUser("b@example.com");
+    const t0 = new Date("2026-11-01T09:00:00Z");
+    for (let i = 0; i < 4; i++) await requestPasswordReset(db, "a@example.com", BASE, t0);
+    await requestPasswordReset(db, "b@example.com", BASE, t0);
+    expect(getCapturedEmails().map((m) => m.to)).toEqual([
+      "a@example.com",
+      "a@example.com",
+      "a@example.com",
+      "b@example.com",
+    ]);
+  });
+
+  it("a completed reset cancels every other open link for the account", async () => {
+    const userId = await seedUser();
+    const otherId = await seedUser("other@example.com");
+    const now = new Date("2026-11-01T09:00:00Z");
+    const first = await createPasswordResetToken(db, userId, now);
+    const second = await createPasswordResetToken(db, userId, now);
+    const third = await createPasswordResetToken(db, userId, now);
+    const othersLink = await createPasswordResetToken(db, otherId, now);
+
+    await resetPassword(db, second.token, "a brand new strong password", now);
+
+    expect(await verifyPasswordResetToken(db, first.token, now)).toBeNull();
+    expect(await verifyPasswordResetToken(db, third.token, now)).toBeNull();
+    await expect(
+      resetPassword(db, first.token, "another strong password", now),
+    ).rejects.toMatchObject({ code: "invalid_token" });
+    // Another account's open link is untouched.
+    expect(await verifyPasswordResetToken(db, othersLink.token, now)).not.toBeNull();
+  });
+
+  it("cancelOpenResetTokens reports how many it cancelled and leaves used ones alone", async () => {
+    const userId = await seedUser();
+    const now = new Date("2026-11-01T09:00:00Z");
+    const used = await createPasswordResetToken(db, userId, now);
+    await consumePasswordResetToken(db, used.token, now);
+    await createPasswordResetToken(db, userId, now);
+    await createPasswordResetToken(db, userId, now);
+    expect(await cancelOpenResetTokens(db, userId, now)).toBe(2);
+    expect(await cancelOpenResetTokens(db, userId, now)).toBe(0);
+  });
+
+  it("logs requests and completions — ids only, never the token, link or email", async () => {
+    const userId = await seedUser("known@example.com");
+    const now = new Date("2026-11-01T09:00:00Z");
+    await requestPasswordReset(db, "known@example.com", BASE, now);
+    await requestPasswordReset(db, "ghost@example.com", BASE, now);
+    const [mail] = getCapturedEmails();
+    const token = new URL(mail.html.match(/https:\/\/app\.example\.com\/reset-password\?token=[^"\s<]+/)![0])
+      .searchParams.get("token")!;
+    await resetPassword(db, token, "a brand new strong password", now);
+
+    const events = securityEvents();
+    expect(events.map((e) => e.security_event)).toEqual([
+      "password_reset_requested",
+      "password_reset_requested",
+      "password_reset_completed",
+    ]);
+    expect(events[0]).toMatchObject({ knownAccount: true, userId });
+    expect(events[1]).toMatchObject({ knownAccount: false });
+    expect(events[1]).not.toHaveProperty("userId");
+    expect(events[2]).toMatchObject({ userId, otherLinksCancelled: 0 });
+    const all = vi.mocked(console.warn).mock.calls.map((c) => String(c[0])).join("\n");
+    expect(all).not.toContain(token);
+    expect(all).not.toContain("known@example.com");
+    expect(all).not.toContain("ghost@example.com");
+    expect(all).not.toContain("reset-password?token");
+  });
+});
+
+describe("consumePasswordResetToken — two consumers at once", () => {
+  it("only one of two concurrent consumers of the same link succeeds", async () => {
+    const userId = await seedUser();
+    const { token } = await createPasswordResetToken(db, userId);
+    const results = await Promise.all([
+      consumePasswordResetToken(db, token),
+      consumePasswordResetToken(db, token),
+    ]);
+    expect(results.filter((r) => r === userId)).toHaveLength(1);
+    expect(results.filter((r) => r === null)).toHaveLength(1);
   });
 });

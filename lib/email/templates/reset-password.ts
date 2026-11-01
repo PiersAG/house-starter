@@ -23,7 +23,7 @@ export const resetPasswordTemplate: EmailTemplate<ResetPasswordData> = {
       <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3">Reset your password</h1>
       <p style="margin:0 0 16px;font-size:15px;line-height:1.6">
         We received a request to reset the password for ${safeApp}. Click the
-        button below to choose a new one. This link expires in one hour and can
+        button below to choose a new one. This link expires in 15 minutes and can
         be used once.
       </p>
       <p style="margin:0 0 24px">
@@ -47,7 +47,7 @@ export const resetPasswordTemplate: EmailTemplate<ResetPasswordData> = {
       "Reset your password",
       "",
       `We received a request to reset the password for ${appName}.`,
-      "Open this link to choose a new one (expires in one hour, single use):",
+      "Open this link to choose a new one (expires in 15 minutes, single use):",
       "",
       resetUrl,
       "",

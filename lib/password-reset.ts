@@ -6,23 +6,38 @@
 //   - the raw token is returned ONCE (to email) and NEVER stored — only a
 //     SHA-256 hash is persisted, so a DB read yields no usable link;
 //   - tokens are single-use (usedAt claimed atomically on consume);
-//   - tokens expire (expiresAt checked on verify/consume);
+//   - tokens expire after 15 minutes (expiresAt checked on verify/consume);
+//   - at most RESET_REQUESTS_PER_EMAIL links per account per hour, on top of
+//     the per-IP throttle on the route (Matt Murphy #27, #515);
+//   - a completed reset cancels every other open link for that account;
+//   - requests and completions are logged (lib/security-log.ts) — never the
+//     token, the link or the email address;
 //   - forgot-password never reveals whether an email is registered (no
-//     account enumeration).
+//     account enumeration) — a limited request looks exactly like a sent one.
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, count, eq, gt, isNull } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
 import { passwordResetTokens, users } from "@/lib/schema";
 import { getUserByEmail, type AppDatabase } from "@/lib/users";
 import { hashPassword, validatePasswordStrength } from "@/lib/password";
 import { sendEmail } from "@/lib/email/send";
 import { resetPasswordTemplate } from "@/lib/email/templates/reset-password";
+import { logSecurityEvent } from "@/lib/security-log";
 
 /** Raw token entropy in bytes. */
 const TOKEN_BYTES = 32;
 
-/** How long a reset token is valid. */
-export const RESET_TOKEN_TTL_SECONDS = 60 * 60; // one hour
+/** How long a reset token is valid (Matt Murphy #27: 15 minutes). */
+export const RESET_TOKEN_TTL_SECONDS = 15 * 60;
+
+/**
+ * Most reset links one account can be sent per RESET_REQUEST_WINDOW_SECONDS.
+ * Counted per ACCOUNT in the database, so it holds across server instances and
+ * cold starts and is not reset by rotating IP addresses; the per-IP throttle on
+ * the forgot-password route (AUTH_RATE_LIMITS.forgotPassword) still applies.
+ */
+export const RESET_REQUESTS_PER_EMAIL = 3;
+export const RESET_REQUEST_WINDOW_SECONDS = 60 * 60;
 
 /** SHA-256 hash of a raw token — what we store and look up by. */
 export function hashResetToken(rawToken: string): string {
@@ -50,6 +65,9 @@ export async function createPasswordResetToken(
       userId,
       tokenHash: hashResetToken(token),
       expiresAt,
+      // Written from `now` (not the column default) so the per-account request
+      // count below reads the same clock the expiry does.
+      createdAt: now,
     })
     .run();
   return { token, expiresAt };
@@ -110,11 +128,52 @@ export class PasswordResetError extends Error {
 }
 
 /**
+ * How many reset links were issued for this account in the last
+ * RESET_REQUEST_WINDOW_SECONDS — used or not, so spending a link does not buy
+ * another one.
+ */
+export async function countRecentResetRequests(
+  db: AppDatabase,
+  userId: string,
+  now: Date = new Date(),
+): Promise<number> {
+  const since = new Date(now.getTime() - RESET_REQUEST_WINDOW_SECONDS * 1000);
+  const rows = await db
+    .select({ n: count() })
+    .from(passwordResetTokens)
+    .where(
+      and(eq(passwordResetTokens.userId, userId), gt(passwordResetTokens.createdAt, since)),
+    )
+    .all();
+  // An aggregate always returns exactly one row.
+  return rows[0].n;
+}
+
+/**
+ * Cancel every open (unused) reset link for an account by marking it used.
+ * Returns how many were cancelled.
+ */
+export async function cancelOpenResetTokens(
+  db: AppDatabase,
+  userId: string,
+  now: Date = new Date(),
+): Promise<number> {
+  const result = await db
+    .update(passwordResetTokens)
+    .set({ usedAt: now })
+    .where(and(eq(passwordResetTokens.userId, userId), isNull(passwordResetTokens.usedAt)))
+    .run();
+  return result.rowsAffected;
+}
+
+/**
  * Complete a reset: validate the new password, atomically consume the token,
  * and set the user's new password hash. The same write sets the per-user
  * session cutoff (`sessionsValidFrom = now`), so every session that signed in
- * before the reset is rejected at its next renewal. Throws PasswordResetError on a weak
- * password (before any DB write) or an invalid/expired/used token.
+ * before the reset is rejected at its next renewal. Every other open reset link
+ * for the account is then cancelled, so an older or extra email cannot be used
+ * as a standing key. Throws PasswordResetError on a weak password (before any
+ * DB write) or an invalid/expired/used token.
  */
 export async function resetPassword(
   db: AppDatabase,
@@ -139,6 +198,8 @@ export async function resetPassword(
     .set({ passwordHash, sessionsValidFrom: now })
     .where(eq(users.id, userId))
     .run();
+  const cancelled = await cancelOpenResetTokens(db, userId, now);
+  logSecurityEvent("password_reset_completed", { userId, otherLinksCancelled: cancelled }, now);
   return { userId };
 }
 
@@ -155,8 +216,23 @@ export async function requestPasswordReset(
   now: Date = new Date(),
 ): Promise<void> {
   const user = await getUserByEmail(db, email);
-  if (!user) return;
+  if (!user) {
+    logSecurityEvent("password_reset_requested", { knownAccount: false }, now);
+    return;
+  }
+  const recent = await countRecentResetRequests(db, user.id, now);
+  if (recent >= RESET_REQUESTS_PER_EMAIL) {
+    // Same silent return as an unknown email: the caller's response does not
+    // change, so the limit reveals nothing about the account.
+    logSecurityEvent(
+      "password_reset_request_limited",
+      { userId: user.id, requestsThisHour: recent },
+      now,
+    );
+    return;
+  }
   const { token } = await createPasswordResetToken(db, user.id, now);
+  logSecurityEvent("password_reset_requested", { knownAccount: true, userId: user.id }, now);
   const resetUrl = `${options.baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
   await sendEmail(user.email, resetPasswordTemplate, {
     resetUrl,
