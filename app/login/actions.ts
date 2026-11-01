@@ -4,8 +4,21 @@ import { signIn } from "@/lib/auth";
 import { AuthError } from "next-auth";
 import { isAuthRateLimitError } from "@/lib/auth-rate-limit";
 import { mfaSignInReason, submittedCode } from "@/lib/mfa/sign-in";
+import { z } from "zod";
+import { emailField, parseForm, passwordField, textField } from "@/lib/validation/input";
 
 type LoginState = { error: string; mfaRequired?: boolean } | null;
+
+// Checked here before anything is handed to sign-in (issue 442), and again by the
+// credentials schema in the sign-in kernel's authorize step, which the public
+// NextAuth endpoint shares. A malformed value gets the same answer as a wrong
+// password.
+const loginForm = z.object({
+  email: emailField,
+  password: passwordField,
+  rememberMe: z.literal("on").optional(),
+  code: textField({ max: 32 }).optional(),
+});
 
 // The second factor (SEC.15) is checked in lib/auth.ts::authorize, on the path
 // the public NextAuth endpoint shares. It stops a sign-in by THROWING a reason
@@ -23,12 +36,20 @@ export async function loginAction(
   _prev: LoginState,
   formData: FormData,
 ): Promise<LoginState> {
+  const form = parseForm(loginForm, formData);
+  if (!form.ok) {
+    return {
+      error: "Invalid email or password.",
+      mfaRequired: submittedCode(formData.get("code")) !== "",
+    };
+  }
+  const { email, password, rememberMe, code } = form.data;
   try {
     await signIn("credentials", {
-      email: formData.get("email"),
-      password: formData.get("password"),
-      rememberMe: formData.get("rememberMe"),
-      code: formData.get("code") ?? "",
+      email,
+      password,
+      rememberMe,
+      code: code ?? "",
       redirectTo: "/dashboard",
     });
     return null;
