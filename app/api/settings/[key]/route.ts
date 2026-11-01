@@ -53,11 +53,13 @@ import {
   validateOwnerWrite,
   validateClientWrite,
 } from "@/lib/settings/validation";
+import { parseQuery, settingKeyField } from "@/lib/validation/input";
 import {
   setOwnerValue,
   setClientValue,
   deleteValue,
 } from "@/lib/settings/values";
+import { VersionConflictError } from "@/lib/records/history";
 
 export const runtime = "nodejs";
 
@@ -96,19 +98,39 @@ function operatorKeyRefusal(key: string): Response | null {
   return null;
 }
 
+// The route parameter and the query string are checked like the body (issue
+// 517): a key that is not shaped like a registry key is refused before it is
+// looked up, and `scope` must be exactly owner or client.
+const paramsSchema = z.object({ key: settingKeyField });
+const deleteQuerySchema = z.object({ scope: z.enum(["owner", "client"]).default("owner") });
+
+/** The validated key, or the 404 an unknown key gets. */
+async function routeKey(params: Promise<{ key: string }>): Promise<string | Response> {
+  const parsed = paramsSchema.safeParse(await params);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Unknown setting." }, { status: 404 });
+  }
+  return parsed.data.key;
+}
+
 const putSchema = z.object({
   // `.optional()` keeps zod 3's behaviour: a body with no `value` key parses
   // (value undefined) and is judged by the setting's own validator below. zod 4
   // made a bare z.unknown() key required, which would turn that into a 400.
   value: z.unknown().optional(),
   scope: z.enum(["owner", "client"]).default("owner"),
+  // The version the screen showed (issue 536). Given, a stale save is refused
+  // with 409 instead of silently overwriting a newer one; absent, last write
+  // wins (allowed for settings).
+  version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ key: string }> },
 ): Promise<Response> {
-  const { key } = await params;
+  const key = await routeKey(params);
+  if (typeof key !== "string") return key;
 
   // R2: a write to a key whose capability is OFF is answered 404 — the key must
   // look absent, not hidden. Checked BEFORE auth so an off capability leaks
@@ -138,7 +160,7 @@ export async function PUT(
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
-  const { value, scope } = parsed.data;
+  const { value, scope, version: expectedVersion } = parsed.data;
 
   const validation =
     scope === "client"
@@ -161,19 +183,34 @@ export async function PUT(
   if (denied) return denied;
 
   const db = await getTenantDb();
-  if (scope === "client") {
-    await setClientValue(db, key, userId, validation.value);
-  } else {
-    await setOwnerValue(db, key, validation.value);
+  const options = { expectedVersion, actor: userId };
+  let version: number;
+  try {
+    version =
+      scope === "client"
+        ? await setClientValue(db, key, userId, validation.value, options)
+        : await setOwnerValue(db, key, validation.value, options);
+  } catch (error) {
+    if (error instanceof VersionConflictError) {
+      return NextResponse.json(
+        {
+          error: "This setting was changed somewhere else. Reload to see the latest value, then try again.",
+          version: error.current,
+        },
+        { status: 409 },
+      );
+    }
+    throw error;
   }
-  return NextResponse.json({ ok: true, key, scope });
+  return NextResponse.json({ ok: true, key, scope, version });
 }
 
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ key: string }> },
 ): Promise<Response> {
-  const { key } = await params;
+  const key = await routeKey(params);
+  if (typeof key !== "string") return key;
 
   // R2: clearing a value is also a write to the gated surface — 404 when the
   // key's capability is off (same reasoning as PUT), before auth.
@@ -189,10 +226,11 @@ export async function DELETE(
     );
   }
 
-  const scope =
-    new URL(request.url).searchParams.get("scope") === "client"
-      ? "client"
-      : "owner";
+  const query = parseQuery(deleteQuerySchema, new URL(request.url).searchParams);
+  if (!query.ok) {
+    return NextResponse.json({ error: "scope must be owner or client." }, { status: 400 });
+  }
+  const { scope } = query.data;
 
   // Clearing a value CHANGES the effective value, so it is a write and carries
   // the same authorization as PUT. A delete-only privilege hole is still a hole.
@@ -209,8 +247,8 @@ export async function DELETE(
   const db = await getTenantDb();
   const removed =
     scope === "client"
-      ? await deleteValue(db, key, "client", userId)
-      : await deleteValue(db, key, "owner");
+      ? await deleteValue(db, key, "client", userId, { actor: userId })
+      : await deleteValue(db, key, "owner", undefined, { actor: userId });
 
   return NextResponse.json({ ok: true, key, scope, reverted: removed });
 }

@@ -359,6 +359,11 @@ export const settingValues = sqliteTable(
     clientId: text("client_id").notNull().default(""),
     /** JSON-encoded chosen value. */
     value: text("value").notNull(),
+    /**
+     * Starts at 1, +1 on every write. A write naming a stale version is refused
+     * (lib/records/history.ts, issue 536) instead of silently overwriting.
+     */
+    version: integer("version").notNull().default(1),
     updatedAt: integer("updated_at", { mode: "timestamp" })
       .notNull()
       .default(sql`(unixepoch())`),
@@ -575,3 +580,29 @@ export const tenantMeta = sqliteTable("tenant_meta", {
 
 export type TenantMeta = typeof tenantMeta.$inferSelect;
 export type NewTenantMeta = typeof tenantMeta.$inferInsert;
+
+/**
+ * TENANT PLANE. Append-only change history for the tenant's records (issue 536;
+ * Matt Murphy #269: "store every change as an immutable event"). One row per
+ * change, never updated or deleted; the record's own row is the current state.
+ * Written by lib/records/history.ts. A random id, like every id the template
+ * issues (issue 770).
+ */
+export const recordEvents = sqliteTable("record_events", {
+  id: text("id").primaryKey(),
+  /** The kind of record, e.g. "setting". */
+  entity: text("entity").notNull(),
+  /** The record's key or id within its kind. */
+  entityKey: text("entity_key").notNull(),
+  /** The version this change produced (0 for a deletion). */
+  version: integer("version").notNull(),
+  /** created | updated | deleted. */
+  action: text("action").notNull(),
+  /** JSON: the new state, or null for a deletion. */
+  data: text("data").notNull(),
+  /** A user id, or "system". */
+  actor: text("actor").notNull(),
+  occurredAt: integer("occurred_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});

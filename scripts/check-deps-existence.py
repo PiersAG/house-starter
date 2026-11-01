@@ -393,22 +393,19 @@ def _weekly_downloads(names: list[str], cache_dir: Path | None = None) -> dict[s
     return out
 
 
-def _names_all(reviewed_detail, flagged_detail) -> bool:
-    """True when every person in `flagged_detail` is named in `reviewed_detail`."""
-    people = lambda s: {p.strip() for p in (s or "").split(",") if p.strip()}  # noqa: E731
-    flagged = people(flagged_detail)
-    return bool(flagged) and flagged <= people(reviewed_detail)
-
-
 def _is_reviewed(flag: dict, reviewed: list[dict]) -> bool:
     for r in reviewed:
         if r.get("package") != flag["package"] or r.get("rule") != flag["rule"]:
             continue
-        # A review covers the people it names: it passes while every person the
-        # registry now flags is among them, so one ageing out of the 90-day window
-        # does not break it (Dispatch AA). A person it does not name still fails.
-        if flag["rule"] in ("maintainer change", "new package") and not _names_all(r.get("detail"), flag["detail"]):
-            continue
+        if flag["rule"] in ("maintainer change", "new package"):
+            # The review names the people it checked. The 90-day window slides, so
+            # as time passes an earlier addition drops out of the flag and only
+            # later ones remain: the review still covers a flag whose people are
+            # all in it. A person the review did not name fails it (dispatch Z).
+            flagged = {p for p in flag["detail"].split(",") if p}
+            checked = {p for p in (r.get("detail") or "").split(",") if p}
+            if not flagged or not flagged <= checked:
+                continue
         if r.get("reason") and r.get("reviewed_on"):
             return True
     return False

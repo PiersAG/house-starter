@@ -3,7 +3,8 @@
 // template ships; per-app product emails live in the app's own templates dir.
 
 import type { EmailTemplate } from "@/lib/email/send";
-import { escapeHtml, renderLayout } from "@/lib/email/templates/layout";
+import { html, safeUrl } from "@/lib/email/templates/html";
+import { renderLayout } from "@/lib/email/templates/layout";
 
 export interface ResetPasswordData {
   /** Absolute URL the recipient clicks to set a new password. */
@@ -15,19 +16,19 @@ export interface ResetPasswordData {
 export const resetPasswordTemplate: EmailTemplate<ResetPasswordData> = {
   name: "reset-password",
   render({ resetUrl, appName = "your account" }) {
-    const safeUrl = escapeHtml(resetUrl);
-    const safeApp = escapeHtml(appName);
+    // The link and the button are fixed here; the values are escaped by `html`.
+    const link = safeUrl(resetUrl);
     const subject = "Reset your password";
 
-    const bodyHtml = `
+    const bodyHtml = html`
       <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3">Reset your password</h1>
       <p style="margin:0 0 16px;font-size:15px;line-height:1.6">
-        We received a request to reset the password for ${safeApp}. Click the
+        We received a request to reset the password for ${appName}. Click the
         button below to choose a new one. This link expires in 15 minutes and can
         be used once.
       </p>
       <p style="margin:0 0 24px">
-        <a href="${safeUrl}"
+        <a href="${link}"
            style="display:inline-block;background:#18181b;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px">
           Reset password
         </a>
@@ -36,7 +37,7 @@ export const resetPasswordTemplate: EmailTemplate<ResetPasswordData> = {
         If the button doesn't work, copy and paste this link into your browser:
       </p>
       <p style="margin:0 0 24px;font-size:13px;line-height:1.6;word-break:break-all">
-        <a href="${safeUrl}" style="color:#2563eb">${safeUrl}</a>
+        <a href="${link}" style="color:#2563eb">${link}</a>
       </p>
       <p style="margin:0;font-size:13px;line-height:1.6;color:#52525b">
         If you didn't request this, you can safely ignore this email — your

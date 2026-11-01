@@ -80,10 +80,10 @@
     {
       "package": "@testing-library/user-event",
       "rule": "maintainer change",
-      "detail": "snowystinger",
+      "detail": "matanbobi,snowystinger",
       "reviewed_on": "2026-11-01",
-      "by": "Claude Code (Dispatch AA)",
-      "reason": "Testing Library contributor snowystinger added to the organisation's maintainer list, first on 14.6.4 (2026-08-11); the other 17 maintainers remain. The locked 14.6.8 (2026-10-13) is a trusted publish from the project's own CI (GitHub Actions, SLSA provenance). Re-recorded: the registry now names one added person, not the two Dispatch V reviewed."
+      "by": "Claude Code (Dispatch V)",
+      "reason": "Same Testing Library organisation addition as @testing-library/dom."
     },
     {
       "package": "nwsapi",
