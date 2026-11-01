@@ -8,10 +8,13 @@
 //   • disputeOpenedTemplate    — to the app's owner when a customer disputes a charge
 //                                (#370), with the evidence deadline.
 //
-// Every value from Stripe or the customer is escaped before it reaches HTML.
+// Built with the `html` tag (./html.ts, issue 758): every value from Stripe or the
+// customer is escaped as text, and the only links are the template's own, through
+// `safeUrl` (http(s) only).
 
 import type { EmailTemplate } from "@/lib/email/send";
-import { escapeHtml, renderLayout } from "@/lib/email/templates/layout";
+import { html, safeUrl, type SafeHtml } from "@/lib/email/templates/html";
+import { renderLayout } from "@/lib/email/templates/layout";
 
 /** Currencies Stripe counts in whole units (no minor unit), per Stripe's list. */
 const ZERO_DECIMAL = new Set([
@@ -57,13 +60,8 @@ export function formatDay(date: Date): string {
   }).format(date);
 }
 
-const P = 'style="margin:0 0 16px;font-size:15px;line-height:1.6"';
-const SMALL = 'style="margin:0;font-size:13px;line-height:1.6;color:#52525b"';
-const BUTTON =
-  'style="display:inline-block;background:#18181b;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px"';
-
-function button(url: string, label: string): string {
-  return `<p style="margin:0 0 24px"><a href="${escapeHtml(url)}" ${BUTTON}>${escapeHtml(label)}</a></p>`;
+function button(url: string, label: string): SafeHtml {
+  return html`<p style="margin:0 0 24px"><a href="${safeUrl(url)}" style="display:inline-block;background:#18181b;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px">${label}</a></p>`;
 }
 
 // ── Receipt ──────────────────────────────────────────────────────────────────
@@ -83,12 +81,12 @@ export const paymentReceiptTemplate: EmailTemplate<PaymentReceiptData> = {
     const money = formatMoney(amount, currency);
     const day = formatDay(paidAt);
     const subject = `Receipt: ${money} paid to ${appName}`;
-    const bodyHtml = `
+    const bodyHtml = html`
       <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3">Thank you — payment received</h1>
-      <p ${P}>We received your payment of <strong>${escapeHtml(money)}</strong> for
-        ${escapeHtml(appName)} on ${escapeHtml(day)}. Your subscription is active.</p>
-      ${invoiceUrl ? button(invoiceUrl, "View your invoice") : ""}
-      <p ${SMALL}>Keep this email for your records.</p>`;
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6">We received your payment of <strong>${money}</strong> for
+        ${appName} on ${day}. Your subscription is active.</p>
+      ${invoiceUrl ? button(invoiceUrl, "View your invoice") : null}
+      <p style="margin:0;font-size:13px;line-height:1.6;color:#52525b">Keep this email for your records.</p>`;
     const text = [
       "Thank you — payment received",
       "",
@@ -152,13 +150,13 @@ export const paymentFailedTemplate: EmailTemplate<PaymentFailedData> = {
         : step === 2
           ? `Your payment of ${money} for ${appName} still hasn't gone through.`
           : `This is our last reminder: your payment of ${money} for ${appName} has failed again, and your access will be paused if it isn't paid.`;
-    const bodyHtml = `
-      <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3">${escapeHtml(FAILED_SUBJECT[step])}</h1>
-      <p ${P}>${escapeHtml(lead)}</p>
-      <p ${P}>Here's how to fix it: open your billing page and update your card. It takes a minute. ${escapeHtml(retry)}</p>
+    const bodyHtml = html`
+      <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3">${FAILED_SUBJECT[step]}</h1>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6">${lead}</p>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6">Here's how to fix it: open your billing page and update your card. It takes a minute. ${retry}</p>
       ${button(updateCardUrl, "Update your card")}
-      ${payNowUrl ? `<p ${P}>Or <a href="${escapeHtml(payNowUrl)}" style="color:#2563eb">pay this invoice now</a> with any card.</p>` : ""}
-      <p ${SMALL}>If you've already updated your card, you can ignore this email.</p>`;
+      ${payNowUrl ? html`<p style="margin:0 0 16px;font-size:15px;line-height:1.6">Or <a href="${safeUrl(payNowUrl)}" style="color:#2563eb">pay this invoice now</a> with any card.</p>` : null}
+      <p style="margin:0;font-size:13px;line-height:1.6;color:#52525b">If you've already updated your card, you can ignore this email.</p>`;
     const text = [
       FAILED_SUBJECT[step],
       "",
@@ -225,16 +223,16 @@ export const disputeOpenedTemplate: EmailTemplate<DisputeOpenedData> = {
         ? " That is at or above 0.75%, the level at which card networks start monitoring an account."
         : ""
     }`;
-    const bodyHtml = `
+    const bodyHtml = html`
       <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3">A customer disputed a payment</h1>
-      <p ${P}>A charge of <strong>${escapeHtml(money)}</strong> to ${escapeHtml(appName)} was disputed
-        with the customer's bank (reason: ${escapeHtml(reason)}). The money has been held back
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6">A charge of <strong>${money}</strong> to ${appName} was disputed
+        with the customer's bank (reason: ${reason}). The money has been held back
         until the dispute is decided.</p>
-      <p ${P}><strong>Send evidence or accept it by ${escapeHtml(due)}.</strong> After that the
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6"><strong>Send evidence or accept it by ${due}.</strong> After that the
         dispute is lost automatically. The steps are in the app's dispute runbook
         (docs/billing-disputes.md).</p>
-      <p ${P}>${escapeHtml(rateLine)}</p>
-      <p ${SMALL}>Stripe dispute: ${escapeHtml(disputeId)}</p>`;
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6">${rateLine}</p>
+      <p style="margin:0;font-size:13px;line-height:1.6;color:#52525b">Stripe dispute: ${disputeId}</p>`;
     const text = [
       "A customer disputed a payment",
       "",

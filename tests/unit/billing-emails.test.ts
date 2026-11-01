@@ -133,11 +133,29 @@ describe("escaping", () => {
       amount: 1,
       currency: "gbp",
       paidAt: new Date(),
-      invoiceUrl: '"><img src=x>',
+      invoiceUrl: 'https://invoice.stripe.com/i/1?x="><img src=x>',
     });
     for (const html of [d.html, r.html]) {
       expect(html).not.toContain("<script>");
       expect(html).not.toContain('"><img');
+    }
+  });
+
+  it("refuses a link that is not http(s) rather than rendering it (issue 758)", () => {
+    const base = { appName: "App", amount: 1, currency: "gbp" };
+    for (const bad of ['"><img src=x>', "javascript:alert(1)"]) {
+      expect(() =>
+        paymentReceiptTemplate.render({ ...base, paidAt: new Date(), invoiceUrl: bad }),
+      ).toThrow();
+      expect(() =>
+        paymentFailedTemplate.render({
+          ...base,
+          step: 1,
+          updateCardUrl: "https://app.example.com/billing",
+          payNowUrl: bad,
+          nextAttemptAt: null,
+        }),
+      ).toThrow();
     }
   });
 });
