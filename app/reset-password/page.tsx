@@ -1,5 +1,11 @@
 import Link from "next/link";
+import { z } from "zod";
+import { parseQuery, tokenField } from "@/lib/validation/input";
 import { ResetPasswordForm } from "./ResetPasswordForm";
+
+// The link's token is checked for shape before it is used (issue 517); a
+// malformed one is treated as missing.
+const querySchema = z.object({ token: tokenField.optional() });
 
 export const metadata = {
   title: "Reset password",
@@ -8,9 +14,10 @@ export const metadata = {
 export default async function ResetPasswordPage({
   searchParams,
 }: {
-  searchParams: Promise<{ token?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { token } = await searchParams;
+  const query = parseQuery(querySchema, await searchParams);
+  const token = query.ok ? query.data.token : undefined;
 
   return (
     <main className="flex min-h-screen items-center justify-center p-4 sm:p-6">

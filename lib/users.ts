@@ -9,6 +9,13 @@ import { eq } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { users, type User } from "@/lib/schema";
 import { hashPassword, validatePasswordStrength } from "@/lib/password";
+import { z } from "zod";
+import {
+  emailField,
+  firstIssue,
+  newPasswordField,
+  optionalNameField,
+} from "@/lib/validation/input";
 
 /** The Drizzle database type used throughout the app (libSQL driver). */
 export type AppDatabase = LibSQLDatabase<Record<string, never>>;
@@ -72,7 +79,7 @@ export async function createUser(
 }
 
 /** Discriminated error codes for registration failures. */
-export type RegistrationErrorCode = "weak_password" | "email_taken";
+export type RegistrationErrorCode = "weak_password" | "email_taken" | "invalid_input";
 
 /** Thrown by {@link registerUser} when registration cannot proceed. */
 export class RegistrationError extends Error {
@@ -84,6 +91,12 @@ export class RegistrationError extends Error {
     this.name = "RegistrationError";
   }
 }
+
+const registrationFields = z.object({
+  email: emailField,
+  password: newPasswordField,
+  name: z.union([z.null(), optionalNameField]).optional(),
+});
 
 export interface RegisterUserInput {
   email: string;
@@ -104,6 +117,13 @@ export async function registerUser(
   if (strengthError) {
     throw new RegistrationError("weak_password", strengthError);
   }
+  // The same field rules every door uses (lib/validation/input.ts, #442, #758),
+  // here too, so a caller that skipped its own schema still cannot store an
+  // over-long password, a malformed address or a name carrying markup or a link.
+  const fields = registrationFields.safeParse(input);
+  if (!fields.success) {
+    throw new RegistrationError("invalid_input", firstIssue(fields.error));
+  }
   if (await getUserByEmail(db, input.email)) {
     throw new RegistrationError(
       "email_taken",
@@ -112,8 +132,8 @@ export async function registerUser(
   }
   const passwordHash = await hashPassword(input.password);
   return await createUser(db, {
-    email: input.email,
+    email: fields.data.email,
     passwordHash,
-    name: input.name ?? null,
+    name: fields.data.name ?? null,
   });
 }

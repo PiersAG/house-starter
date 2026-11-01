@@ -397,8 +397,15 @@ def _is_reviewed(flag: dict, reviewed: list[dict]) -> bool:
     for r in reviewed:
         if r.get("package") != flag["package"] or r.get("rule") != flag["rule"]:
             continue
-        if flag["rule"] in ("maintainer change", "new package") and r.get("detail") != flag["detail"]:
-            continue
+        if flag["rule"] in ("maintainer change", "new package"):
+            # The review names the people it checked. The 90-day window slides, so
+            # as time passes an earlier addition drops out of the flag and only
+            # later ones remain: the review still covers a flag whose people are
+            # all in it. A person the review did not name fails it (dispatch Z).
+            flagged = {p for p in flag["detail"].split(",") if p}
+            checked = {p for p in (r.get("detail") or "").split(",") if p}
+            if not flagged or not flagged <= checked:
+                continue
         if r.get("reason") and r.get("reviewed_on"):
             return True
     return False

@@ -4,8 +4,17 @@ import { redirect } from "next/navigation";
 import { catalogDb } from "@/lib/catalog";
 import { PasswordResetError, resetPassword } from "@/lib/password-reset";
 import { AUTH_RATE_LIMITS, guardAuthAttempt } from "@/lib/auth-rate-limit";
+import { z } from "zod";
+import { newPasswordField, parseForm, tokenField } from "@/lib/validation/input";
 
 export type ResetPasswordState = { error?: string } | null;
+
+// Checked on the server (issue 442): the token's shape before it is looked up, and
+// the new password's length before it is hashed.
+const resetForm = z.object({
+  token: z.string().min(1, "This reset link is missing its token. Request a new one.").pipe(tokenField),
+  password: z.string().min(1, "Enter a new password.").pipe(newPasswordField),
+});
 
 export async function resetPasswordAction(
   _prev: ResetPasswordState,
@@ -18,15 +27,9 @@ export async function resetPasswordAction(
     return { error: "Too many attempts. Please try again shortly." };
   }
 
-  const token = String(formData.get("token") ?? "");
-  const password = String(formData.get("password") ?? "");
-
-  if (!token) {
-    return { error: "This reset link is missing its token. Request a new one." };
-  }
-  if (!password) {
-    return { error: "Enter a new password." };
-  }
+  const form = parseForm(resetForm, formData);
+  if (!form.ok) return { error: form.error };
+  const { token, password } = form.data;
 
   try {
     await resetPassword(catalogDb, token, password);

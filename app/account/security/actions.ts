@@ -18,8 +18,17 @@ import {
   changePassword,
   signOutEverywhere,
 } from "@/lib/account-security";
+import { z } from "zod";
+import { newPasswordField, parseForm, passwordField } from "@/lib/validation/input";
 
 export type ChangePasswordState = { error?: string } | null;
+
+// Checked on the server (issue 442): both present, neither over-long, the new one
+// long enough.
+const changePasswordForm = z.object({
+  currentPassword: z.string().min(1, "Enter your current and your new password.").pipe(passwordField),
+  newPassword: z.string().min(1, "Enter your current and your new password.").pipe(newPasswordField),
+});
 
 export async function signOutEverywhereAction(): Promise<void> {
   const session = await auth();
@@ -49,9 +58,9 @@ export async function changePasswordAction(
     if (!rate.allowed) return { error: "Too many attempts. Please try again shortly." };
   }
 
-  const current = String(formData.get("currentPassword") ?? "");
-  const next = String(formData.get("newPassword") ?? "");
-  if (!current || !next) return { error: "Enter your current and your new password." };
+  const form = parseForm(changePasswordForm, formData);
+  if (!form.ok) return { error: form.error };
+  const { currentPassword: current, newPassword: next } = form.data;
 
   try {
     await changePassword(catalogDb, userId, current, next);

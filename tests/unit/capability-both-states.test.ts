@@ -139,7 +139,8 @@ describe("capability both-states — settings read/write/seed inertness (step 3,
         await expect(
           resolveSetting({ tenant: db, catalog: db }, sample),
         ).resolves.toBeDefined();
-        await expect(setOwnerValue(db, sample, "x")).resolves.toBeUndefined();
+        // a write that succeeds returns the row's new version (issue 536)
+        await expect(setOwnerValue(db, sample, "x")).resolves.toBe(1);
       } else {
         // READ and WRITE both refuse — the key is absent, not merely hidden.
         await expect(

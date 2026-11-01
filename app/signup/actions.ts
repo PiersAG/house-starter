@@ -6,8 +6,25 @@ import { registerUser, RegistrationError } from "@/lib/users";
 import { startTrialForNewOwner } from "@/lib/billing/trial";
 import { ensureTenantForUser } from "@/lib/tenant/provisioner";
 import { AUTH_RATE_LIMITS, guardAuthAttempt } from "@/lib/auth-rate-limit";
+import { z } from "zod";
+import {
+  emailField,
+  newPasswordField,
+  optionalNameField,
+  parseForm,
+} from "@/lib/validation/input";
 
 export type SignupState = { error?: string } | null;
+
+// The form's fields, checked on the server whatever the browser did (issue 442):
+// email format, password length, and a name with no markup or links (issue 758).
+// Any other field — role, plan, isAdmin — is stripped and never reaches
+// registerUser.
+const signupForm = z.object({
+  email: emailField,
+  password: newPasswordField,
+  name: optionalNameField,
+});
 
 export async function signupAction(
   _prev: SignupState,
@@ -20,21 +37,13 @@ export async function signupAction(
     return { error: "Too many signup attempts. Please try again shortly." };
   }
 
-  const email = String(formData.get("email") ?? "");
-  const password = String(formData.get("password") ?? "");
-  const rawName = String(formData.get("name") ?? "").trim();
-
-  if (!email || !password) {
-    return { error: "Email and password are required." };
-  }
+  const form = parseForm(signupForm, formData);
+  if (!form.ok) return { error: form.error };
+  const { email, password, name } = form.data;
 
   let user;
   try {
-    user = await registerUser(catalogDb, {
-      email,
-      password,
-      name: rawName.length > 0 ? rawName : null,
-    });
+    user = await registerUser(catalogDb, { email, password, name });
   } catch (error) {
     if (error instanceof RegistrationError) {
       return { error: error.message };

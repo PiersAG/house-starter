@@ -10,6 +10,7 @@ import { ALL_DEFINITIONS } from "@/lib/settings/registry";
 import { resolveSetting } from "@/lib/settings/resolver";
 import { isCapabilityEnabled } from "@/lib/capabilities/flags";
 import type { SettingDefinition, SettingSource, SettingsStores } from "@/lib/settings/types";
+import { OWNER_CLIENT_ID, getStoredVersion } from "@/lib/settings/values";
 
 export interface EffectiveSetting {
   key: string;
@@ -27,6 +28,13 @@ export interface EffectiveSetting {
   /** true when factory-locked (owner_editable === false). */
   locked: boolean;
   clientScoped: boolean;
+  /**
+   * The stored row's version at the level this view edits (0 = nothing stored
+   * there). The screen sends it back with a change, so a save based on a value
+   * someone else has since changed is refused (409) instead of overwriting it
+   * (issue 536).
+   */
+  version: number;
 }
 
 export interface FunctionalGroupView {
@@ -84,6 +92,14 @@ async function toEffective(
   clientId?: string,
 ): Promise<EffectiveSetting> {
   const { value, source } = await resolveSetting(stores, def.key, { clientId });
+  const version = stores.tenant
+    ? await getStoredVersion(
+        stores.tenant,
+        def.key,
+        clientId === undefined ? "owner" : "client",
+        clientId ?? OWNER_CLIENT_ID,
+      )
+    : 0;
   return {
     key: def.key,
     capability: def.capability,
@@ -97,6 +113,7 @@ async function toEffective(
     source,
     locked: def.ownerEditable === false,
     clientScoped: def.clientScoped === true,
+    version,
   };
 }
 
