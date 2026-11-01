@@ -118,6 +118,10 @@ export function applyCors(target: Headers, origin: string | null, allowed: reado
     if (name === "Vary") {
       // Added to, never replaced: Next.js varies its own responses on other
       // request headers, and dropping those would let a cache mix them up.
+      // Next.js 15 does the opposite on a page it renders itself: it replaces
+      // Vary after the middleware has run, so a rendered page keeps the CORS
+      // headers but loses Origin from Vary. Those pages are sent no-store, so
+      // no cache holds them (tests/e2e/cors.spec.ts checks both).
       const vary = target.get("Vary");
       if (!vary) target.set("Vary", value);
       else if (!/(^|,)\s*origin\s*(,|$)/i.test(vary)) target.set("Vary", `${vary}, ${value}`);
