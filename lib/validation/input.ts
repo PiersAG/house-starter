@@ -133,6 +133,12 @@ export const tokenField = z
   .max(512, "This link is not valid. Request a new one.")
   .regex(/^[A-Za-z0-9_-]+$/, "This link is not valid. Request a new one.");
 
+/** A settings key as the registry names them: `capability.name`, lower case. */
+export const settingKeyField = z
+  .string()
+  .max(100, "Unknown setting.")
+  .regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/, "Unknown setting.");
+
 /** A checkbox: present ("on", "true", "1") or absent. */
 export const checkboxField = z
   .union([z.string(), z.undefined()])
