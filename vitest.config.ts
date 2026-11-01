@@ -81,6 +81,34 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // CSP, CORS and the public security page (app-business-core S11: #446,
+        // #742, #524). An uncovered branch in lib/cors.ts is a path that could
+        // hand another website a signed-in user's data; in lib/csp.ts, a page
+        // sent without its policy or its violation reporting.
+        "**/lib/cors.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/csp.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/csp-report.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/security-page.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
         "**/lib/users.ts": {
           lines: 100,
           statements: 100,

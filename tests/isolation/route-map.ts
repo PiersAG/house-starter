@@ -143,6 +143,18 @@ export const ROUTE_EXCLUSIONS: { prefix: string; reason: string }[] = [
     prefix: "/api/health",
     reason: "deliberately unauthenticated liveness probe, holds no tenant data",
   },
+  {
+    prefix: "/security",
+    reason: "public by design — the security page buyers and researchers read (app-business-core#524)",
+  },
+  {
+    prefix: "/.well-known",
+    reason: "public by design — security.txt (RFC 9116), static text naming the security contact",
+  },
+  {
+    prefix: "/api/csp-report",
+    reason: "browser CSP violation reports, sent without a session; holds and returns no tenant data",
+  },
 ];
 
 /**
@@ -156,6 +168,13 @@ export const ROUTE_EXCLUSIONS: { prefix: string; reason: string }[] = [
  * tests/unit/isolation-route-coverage.test.ts.
  */
 export const WRITABLE_ROUTE_EXEMPTIONS: { path: string; reason: string }[] = [
+  {
+    path: "/api/csp-report",
+    reason:
+      "Browsers post CSP violation reports here without a session. It reads no session and no " +
+      "tenant, writes only a log line (directive, blocked origin, page path) and answers 204 to " +
+      "everyone, so a signed-in tenant-A caller has no other tenant's data to reach through it.",
+  },
   {
     path: "/api/auth/[...nextauth]",
     reason:

@@ -16,6 +16,9 @@ These are universal — every app from this template has them from the first com
 - **Exact dependency versions + committed lockfile** — no version drift, no deploy-without-lockfile failures
 - **Vercel deploy config** — `vercel.json` with `npm ci` install command
 - **OWASP security headers** — HSTS, CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-Frame-Options
+- **CSP with violation reporting** — nonce-based policy in `lib/csp.ts`, reports to `/api/csp-report`; a new outside source goes into `config/csp.ts`, report-only for at least a week before it is enforced
+- **CORS allowlist** — `lib/cors.ts`: the app's own origin plus `config/cors.ts` (empty by default); no wildcard, no reflected origin, guarded by `tests/unit/cors-guard.test.ts`
+- **Public security page and security.txt** — `/security` and `/.well-known/security.txt` in every app; per-app facts in `config/security-profile.ts`; ready questionnaire answers in [docs/security-questionnaire.md](docs/security-questionnaire.md)
 - **Auth scaffold** — server-action pattern; no `next-auth/react` import (avoids the session-provider crash pattern); edge-safe `auth.config.ts` + full `lib/auth.ts` split; JWT session with correct expiry control
 - **WCAG 2.2 AA compliant default tokens** — all contrast ratios verified; replace with app tokens before any UI
 - **Reusable UI patterns** — `EmptyState`, `LoadingSpinner`, reactive error clearing in forms

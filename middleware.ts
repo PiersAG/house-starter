@@ -1,9 +1,15 @@
-// Edge middleware: nonce-based Content-Security-Policy + route protection.
+// Edge middleware: nonce-based Content-Security-Policy, CORS + route protection.
 //
 // A fresh nonce is generated per request and injected into both the CSP
 // `script-src` directive and (by Next.js, which reads the request CSP header)
 // the framework's own <script> tags. There is no 'unsafe-inline' in
-// script-src — every script must carry the per-request nonce.
+// script-src — every script must carry the per-request nonce. The policy, its
+// violation reporting and its report-only phase live in lib/csp.ts
+// (PiersAG/app-business-core#446).
+//
+// CORS runs in the same pass (lib/cors.ts, #742): a preflight from an origin
+// on the allowlist is answered here, any other preflight is refused, and every
+// response carries CORS headers only for an allowlisted Origin.
 //
 // Route protection runs in the same pass: an unauthenticated request to a
 // protected prefix is redirected to /login. The dashboard page repeats the
@@ -15,42 +21,35 @@ import { authConfig } from "@/auth.config";
 import { decideAccess, currentLifecycleState } from "@/lib/live-eval";
 import { isPathDisabledByCapability } from "@/lib/capabilities/routes";
 import { isPathDisabledByBilling } from "@/lib/billing/routes";
+import { applyCsp, generateNonce } from "@/lib/csp";
+import { allowedOrigins, applyCors, corsPreflight, isPreflight } from "@/lib/cors";
 
 const { auth } = NextAuth(authConfig);
 
 const PROTECTED_PREFIXES = ["/dashboard"];
 
-function generateNonce(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-function buildCsp(nonce: string): string {
-  return [
-    "default-src 'self'",
-    // Nonce-based script-src — no 'unsafe-inline'. 'strict-dynamic' lets
-    // Next.js's nonce'd bootstrap script load its own chunks.
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
-    // Styles may be inlined by Next.js/Tailwind; the baseline only requires a
-    // nonce on scripts.
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self'",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-    "upgrade-insecure-requests",
-  ].join("; ");
-}
-
 export default auth((req) => {
   const nonce = generateNonce();
-  const csp = buildCsp(nonce);
   const { pathname } = req.nextUrl;
+  const origin = req.headers.get("origin");
+  const allowed = allowedOrigins(undefined, req.nextUrl.origin);
+
+  // Every response leaves through here: the CSP headers and, for an
+  // allowlisted Origin only, the CORS headers.
+  const finish = (res: NextResponse): NextResponse => {
+    applyCsp(res.headers, nonce);
+    applyCors(res.headers, origin, allowed);
+    return res;
+  };
+
+  // CORS preflight (#742): answered before anything else, so an unlisted
+  // origin is refused the same way on every path.
+  if (isPreflight(req.method, req.headers)) {
+    const pf = corsPreflight(origin, allowed);
+    const res = new NextResponse(null, { status: pf.status, headers: pf.headers });
+    applyCsp(res.headers, nonce);
+    return res;
+  }
 
   // Capability R2 enforcement (steps 7–9): a request under an OFF capability's
   // registered route prefix (lib/capabilities/routes.ts) is answered 404 — the
@@ -58,9 +57,7 @@ export default auth((req) => {
   // off capability looks identical to a route that was never built, to any
   // caller. A core/kernel path returns false here and falls through untouched.
   if (isPathDisabledByCapability(pathname)) {
-    const notFound = NextResponse.json({ error: "Not found." }, { status: 404 });
-    notFound.headers.set("Content-Security-Policy", csp);
-    return notFound;
+    return finish(NextResponse.json({ error: "Not found." }, { status: 404 }));
   }
 
   // Subscription-billing ACTIVE switch (capability-model-spec §2.1). The
@@ -71,9 +68,7 @@ export default auth((req) => {
   // request can reach a Stripe call. Active apps (the default) fall through
   // untouched. Handlers repeat the check as defence in depth.
   if (isPathDisabledByBilling(pathname)) {
-    const notFound = NextResponse.json({ error: "Not found." }, { status: 404 });
-    notFound.headers.set("Content-Security-Policy", csp);
-    return notFound;
+    return finish(NextResponse.json({ error: "Not found." }, { status: 404 }));
   }
 
   const isProtected = PROTECTED_PREFIXES.some(
@@ -84,9 +79,7 @@ export default auth((req) => {
     const loginUrl = req.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.search = "";
-    const redirectRes = NextResponse.redirect(loginUrl);
-    redirectRes.headers.set("Content-Security-Policy", csp);
-    return redirectRes;
+    return finish(NextResponse.redirect(loginUrl));
   }
 
   // ADR-026 D4 — LIVE-EVAL evaluator allowlist. When the app is in
@@ -99,26 +92,24 @@ export default auth((req) => {
     const decision = decideAccess(email);
     if (!decision.allow) {
       const state = currentLifecycleState();
-      const forbidden = NextResponse.json(
-        {
-          error:            "forbidden",
-          reason:           decision.reason,
-          lifecycle_state:  state,
-        },
-        { status: 403 },
+      return finish(
+        NextResponse.json(
+          {
+            error:            "forbidden",
+            reason:           decision.reason,
+            lifecycle_state:  state,
+          },
+          { status: 403 },
+        ),
       );
-      forbidden.headers.set("Content-Security-Policy", csp);
-      return forbidden;
     }
   }
 
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-nonce", nonce);
-  requestHeaders.set("Content-Security-Policy", csp);
+  applyCsp(requestHeaders, nonce);
 
-  const res = NextResponse.next({ request: { headers: requestHeaders } });
-  res.headers.set("Content-Security-Policy", csp);
-  return res;
+  return finish(NextResponse.next({ request: { headers: requestHeaders } }));
 });
 
 export const config = {
