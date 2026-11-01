@@ -21,7 +21,8 @@ export type SecurityEvent =
   | "password_changed"
   | "signed_out_everywhere"
   | "session_rotated"
-  | "session_token_rejected";
+  | "session_token_rejected"
+  | "csp_violation";
 
 export type SecurityFieldValue = string | number | boolean | null;
 
