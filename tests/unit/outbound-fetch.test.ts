@@ -1,6 +1,6 @@
 // Server-side request forgery, API exposure and internal-network trust
-// (app-business-core issue 448, SEC.31; Matt Murphy #13, #29, #69), and
-// tenant-scoped cache keys (issue 521; Matt Murphy #113).
+// (app-business-core issue 448, SEC.31; Matt Murphy #13, #29, #69). Tenant-scoped
+// cache keys (issue 521) are in tests/unit/cache-key.test.ts.
 
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -12,7 +12,6 @@ import {
   fetchUserUrl,
   isBlockedAddress,
 } from "@/lib/outbound-fetch";
-import { MissingTenantKeyError, tenantCacheKey, tenantCacheKeyParts } from "@/lib/cache-key";
 
 const ALLOW = ["example.com"];
 const PUBLIC = [{ address: "93.184.215.14", family: 4 }];
@@ -156,18 +155,5 @@ describe("nothing is trusted because it comes from the internal network (Matt Mu
       return src.split("\n").some((line) => internal.test(line) && clientAddress.test(line));
     });
     expect(offenders).toEqual([]);
-  });
-});
-
-describe("cache keys always carry the tenant (issue 521)", () => {
-  it("builds tenant-first keys", () => {
-    expect(tenantCacheKey("t1", "dashboard", "summary")).toBe("tenant:t1:dashboard:summary");
-    expect(tenantCacheKeyParts("t1", "x")).toEqual(["tenant", "t1", "x"]);
-  });
-
-  it("refuses a key with no tenant, and a part that tries to smuggle one in", () => {
-    for (const t of [null, undefined, "", "a:b"]) expect(() => tenantCacheKey(t, "x")).toThrow(MissingTenantKeyError);
-    expect(() => tenantCacheKey("t1", "x:tenant:t2")).toThrow();
-    expect(() => tenantCacheKey("t1", "")).toThrow();
   });
 });
