@@ -1,0 +1,129 @@
+{
+  "_comment": "Reviewed flags for the whole-lockfile audit (#749, agents/build/check_deps_existence.py rules 6-8). A flag passes only when an entry here names its package and rule (and, for a maintainer change or a new package, the exact people added) with a reason and a review date. Existence and lockfile-source failures can never be reviewed. This copy is the factory's: the build loop and the dashboard job read it, never a file in an app's workspace, so the build assistant cannot review its own packages. house-starter carries the same entries in scripts/deps-reviewed.json for the template's and every app's CI. Add an entry only after reading the package's registry record, in a reviewed pull request.",
+  "reviewed": [
+    {
+      "package": "esbuild",
+      "rule": "install script",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "`node install.js` selects the platform binary from esbuild's own @esbuild/* optional packages (same publisher, evanw). Used by tsx, vite and drizzle-kit."
+    },
+    {
+      "package": "@swc/core",
+      "rule": "install script",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "`node postinstall.js` checks that SWC's own platform binary (@swc/core-* optional packages) loaded. Dev only, through @vitejs/plugin-react-swc."
+    },
+    {
+      "package": "fsevents",
+      "rule": "install script",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "`node-gyp rebuild` of the macOS file-watch binding. Optional and os: darwin only, so it is never installed on the Linux runners or the build container. Dev only."
+    },
+    {
+      "package": "unrs-resolver",
+      "rule": "install script",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "`node postinstall.js` checks its own prebuilt binary (@unrs/resolver-binding-* optional packages). Dev only, through eslint-config-next's import resolver."
+    },
+    {
+      "package": "@playwright/test",
+      "rule": "maintainer change",
+      "detail": "microsoft-oss-releases,microsoft1es",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "Microsoft's release accounts added to Microsoft's Playwright packages (first on 1.63.0 alphas); existing maintainers pavelfeldman, yurys and dgozman-ms remain."
+    },
+    {
+      "package": "playwright",
+      "rule": "maintainer change",
+      "detail": "microsoft-oss-releases,microsoft1es",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "As @playwright/test: Microsoft release accounts added alongside the existing Playwright team."
+    },
+    {
+      "package": "playwright-core",
+      "rule": "maintainer change",
+      "detail": "microsoft-oss-releases,microsoft1es",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "As @playwright/test: Microsoft release accounts added alongside the existing Playwright team."
+    },
+    {
+      "package": "tslib",
+      "rule": "maintainer change",
+      "detail": "jakebailey,microsoft-oss-releases,microsoft1es",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "TypeScript team member jakebailey and Microsoft's release accounts, first on tslib 2.9.1 (2026-10-30, published by microsoft1es). The locked 2.8.1 (2024-10-31) predates the change."
+    },
+    {
+      "package": "@testing-library/dom",
+      "rule": "maintainer change",
+      "detail": "matanbobi,snowystinger",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "Two Testing Library contributors added to the organisation's maintainer list on 10.4.2 (2026-09-13, a trusted publish from the project's CI); the 16 existing maintainers remain. The locked 10.4.1 predates the change."
+    },
+    {
+      "package": "@testing-library/react",
+      "rule": "maintainer change",
+      "detail": "snowystinger",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "Same Testing Library organisation addition as @testing-library/dom."
+    },
+    {
+      "package": "@testing-library/user-event",
+      "rule": "maintainer change",
+      "detail": "matanbobi,snowystinger",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "Same Testing Library organisation addition as @testing-library/dom."
+    },
+    {
+      "package": "nwsapi",
+      "rule": "maintainer change",
+      "detail": "jdalton",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "jdalton (John-David Dalton, lodash's author) added as co-maintainer on 2.2.28 (2026-09-18); that version was still published by the original author, diego (dperini/nwsapi). The locked 2.2.24 predates the change. Dev only, through jsdom."
+    },
+    {
+      "package": "@rolldown/binding-android-arm-eabi",
+      "rule": "maintainer change",
+      "detail": "sapphi-red",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "sapphi-red is a Vite core team member and a maintainer of every other rolldown package; added to this platform binding with broooooklyn and yyx990803 still listed. Android-only binary, never installed on Linux."
+    },
+    {
+      "package": "@anthropic-ai/sdk",
+      "rule": "maintainer change",
+      "detail": "claude-code-npm,meorphis-anthropic",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "Two Anthropic accounts added on 0.132.0; the dashboard's locked 0.137.0 is the SDK the factory already uses."
+    },
+    {
+      "package": "@opentelemetry/api",
+      "rule": "maintainer change",
+      "detail": "martinkuba,overbalance",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "Two maintainers added on 1.10.0, which the dashboard locks. 1.10.0 (2026-10-20) was published by trusted publishing with the same OIDC configuration as 1.9.1 (open-telemetry/opentelemetry-js), and the existing maintainers dyladan, pichlermarc and trentm remain. Reached through Next.js."
+    },
+    {
+      "package": "@isaacs/nonrecursive-glob-match",
+      "rule": "new package",
+      "detail": "isaacs",
+      "reviewed_on": "2026-11-01",
+      "by": "Claude Code (Dispatch V)",
+      "reason": "Required by every minimatch release that fixes GHSA-g3hv-75wg-m249 (11.0.1 to 11.0.3). Its only maintainer is minimatch's author (isaacs); 259,113 downloads in its first week. Dev only, under @typescript-eslint in the dashboard."
+    }
+  ]
+}

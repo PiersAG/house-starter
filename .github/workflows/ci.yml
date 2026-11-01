@@ -25,10 +25,10 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
           cache: "npm"
@@ -86,6 +86,12 @@ jobs:
           else
             node scripts/check-billing-configured.mjs
           fi
+
+      # app-business-core #750: every infrastructure dependency pinned — Actions
+      # by commit SHA, named runner images, exact Python/npm versions (overrides
+      # included), image digests. Renovate moves the pins in its weekly batch.
+      - name: Infrastructure pins
+        run: python3 scripts/check-pins.py
 
       # Fail fast: lint runs first, blocks type-check and tests if it fails.
       - name: Lint
@@ -258,7 +264,7 @@ jobs:
       # percentage in a log with no way to see WHAT moved.
       - name: Upload layout guardrail report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: layout-guardrail-report
           path: |
@@ -339,9 +345,32 @@ jobs:
       # This runs the check independently of the audit's outcome. It does NOT
       # suppress the audit: that step still fails the job, because those
       # advisories are real and are reported as a finding, not hidden.
-      - name: Dependency existence check (anti-slopsquatting)
+      # #749 (app-business-core): the same check also audits EVERY package in
+      # package-lock.json, transitive ones included — fewer than 100 weekly
+      # downloads, a maintainer added in the last 90 days, or an install script
+      # fails unless scripts/deps-reviewed.json records its review. The cache keeps
+      # npm's download counts for a week (only counts far above the floor), so a
+      # run asks npm's rate-limited downloads service about new packages only.
+      - name: Restore the download-count cache
         if: always()
-        run: python3 scripts/check-deps-existence.py --workspace .
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/deps-audit
+          key: deps-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: deps-audit-
+
+      - name: Dependency existence check (anti-slopsquatting) and lockfile audit
+        if: always()
+        run: python3 scripts/check-deps-existence.py --workspace . --cache-dir "$RUNNER_TEMP/deps-audit"
+
+      # Saved even when the audit failed: a run npm rate-limited part-way keeps
+      # the counts it got, so the next run carries on instead of starting over.
+      - name: Save the download-count cache
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/deps-audit
+          key: deps-audit-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Socket supply-chain signal — ADVISORY ONLY, by CEO ruling. It reports;
       # it never fails the job and never blocks a merge. Both guards are
@@ -388,10 +417,10 @@ jobs:
         state: ["on", "off"]
     name: capability ${{ matrix.flag }} = ${{ matrix.state }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
           cache: "npm"
@@ -436,10 +465,10 @@ jobs:
         state: ["on", "off"]
     name: subscription_active = ${{ matrix.state }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
           cache: "npm"
