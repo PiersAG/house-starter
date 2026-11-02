@@ -17,6 +17,7 @@ import { assembleHealth } from "@/lib/health/checks";
 import { catalogDb } from "@/lib/catalog";
 import { deletionsOverdue } from "@/lib/privacy/retention-job";
 import { pingDatabase } from "@/lib/health/db-ping";
+import { emailHealth } from "@/lib/email/health";
 import { errorCountSince } from "@/lib/observability/error-log";
 import { slowRequestCountSince, slowRequestMs } from "@/lib/observability/log";
 import { withRequestLog } from "@/lib/observability/with-request-log";
@@ -55,6 +56,8 @@ export const GET = withRequestLog("/api/health", withRouteLimit("public.health",
       getTenancyMode() === "shared" ? undefined : (ms) => crossTenantCountSince(ms),
     // An account erasure 72 hours late fails the check (issue 722): the daily job is not running.
     deletionsOverdue: () => deletionsOverdue(catalogDb),
+    // Email setup and delivery (issue 757); nothing in log mode, which sends nothing.
+    emailHealth: () => emailHealth(catalogDb),
     now: () => Date.now(),
     env: process.env,
   });

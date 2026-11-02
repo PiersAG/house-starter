@@ -244,4 +244,8 @@ export const DATA_CLASSIFICATION: Record<string, Record<string, ColumnClass>> = 
     expiresAt: internal,
   },
   erasures: { userId: internal, tenantId: internal, requestedAt: internal, erasedAt: internal },
+  // Issues 358, 857: databases waiting for the factory's sweep. Ids only.
+  tenantOrphans: { tenantId: internal, reason: internal, recordedAt: internal, clearedAt: internal },
+  // Issue 757: the email provider's delivery reports. No address or content.
+  emailEvents: { id: internal, receivedAt: internal, type: internal, messageId: internal, bounceKind: internal },
 };

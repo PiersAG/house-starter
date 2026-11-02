@@ -37,6 +37,7 @@ import { sqlColumnDef, sqlIdent } from "@/lib/sql-ident";
 import { seedSettingDefinitions } from "@/lib/settings/seed";
 import { seedOwnerAccount } from "@/lib/owner-seed";
 import type { AppDatabase } from "@/lib/users";
+import { OPERATIONS_CATALOG_SQL } from "@/lib/migrations/operations-sql";
 
 /**
  * Idempotent DDL for the CATALOG (control-plane) database. Kept in sync with
@@ -327,8 +328,7 @@ CREATE TABLE IF NOT EXISTS erasures (
   tenant_id TEXT,
   requested_at INTEGER NOT NULL,
   erased_at INTEGER NOT NULL
-);
-`;
+);` + OPERATIONS_CATALOG_SQL;
 
 /**
  * Idempotent DDL for a TENANT (data-plane) database — one customer's own rows.

@@ -26,7 +26,9 @@ import { migrateCatalog } from "@/lib/migrate";
 import { __resetCatalogCacheForTests } from "@/lib/catalog";
 import { __resetDbCacheForTests, getDb } from "@/lib/db";
 import {
+  __setRetryPolicyForTests,
   FileTenantProvisioner,
+  isTransientStatus,
   TursoTenantProvisioner,
   ensureTenantForUser,
   getProvisioner,
@@ -365,6 +367,87 @@ describe("ensureTenantForUser", () => {
   it("throws for an account the catalog does not have", async () => {
     await expect(ensureTenantForUser("user-nobody")).rejects.toThrowError(
       /no catalog account/,
+    );
+  });
+});
+
+// ── graceful retry (app-business-core issue 358) ─────────────────────────────
+describe("Turso calls retry Turso's passing errors, and only those", () => {
+  const tursoEnv = () =>
+    env({ TURSO_API_TOKEN: "planted-token", TURSO_ORG: "org", APP_SLUG: "app", TURSO_GROUP: "app" });
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  const waits: number[] = [];
+
+  beforeEach(() => {
+    waits.length = 0;
+    __setRetryPolicyForTests({
+      attempts: 3,
+      delayMs: (a) => a * 10,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+  });
+  afterEach(() => __setRetryPolicyForTests(null));
+
+  it("treats 429 and 5xx as passing, every other answer as final", () => {
+    expect([429, 500, 502, 503].every(isTransientStatus)).toBe(true);
+    expect([200, 400, 401, 403, 404, 409].some(isTransientStatus)).toBe(false);
+  });
+
+  it("creates the database after a 503 and a network error", async () => {
+    const tenantId = newTenantId();
+    let creates = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/databases")) {
+        creates += 1;
+        if (creates === 1) return json(503, { error: "busy" });
+        if (creates === 2) throw new TypeError("fetch failed");
+        return json(200, { database: { Hostname: "db.example.turso.io" } });
+      }
+      if (url.includes("/auth/tokens")) return json(200, { jwt: "planted-jwt" });
+      return json(404, {}); // hostnameOf: not made yet
+    });
+    const made = await new TursoTenantProvisioner(tursoEnv()).create(tenantId);
+    expect(made.url).toBe("libsql://db.example.turso.io");
+    expect(creates).toBe(3);
+    expect(waits).toEqual([10, 20]);
+  });
+
+  it("reads a 409 on create as 'already made' — the first try had reached Turso", async () => {
+    let gets = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/databases")) return json(409, { error: "exists" });
+      if (url.includes("/auth/tokens")) return json(200, { jwt: "planted-jwt" });
+      gets += 1;
+      return gets === 1 ? json(404, {}) : json(200, { database: { Hostname: "db2.example.turso.io" } });
+    });
+    const made = await new TursoTenantProvisioner(tursoEnv()).create(newTenantId());
+    expect(made.url).toBe("libsql://db2.example.turso.io");
+  });
+
+  it("does not retry a refusal, and names it", async () => {
+    let creates = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (init?.method === "POST" && String(input).endsWith("/databases")) {
+        creates += 1;
+        return json(403, { error: "no rights" });
+      }
+      return json(404, {});
+    });
+    await expect(new TursoTenantProvisioner(tursoEnv()).create(newTenantId())).rejects.toThrow(/403/);
+    expect(creates).toBe(1);
+  });
+
+  it("gives up after the last try with a named error", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(new TursoTenantProvisioner(tursoEnv()).create(newTenantId())).rejects.toThrow(
+      /failed after 3 tries — fetch failed/,
     );
   });
 });

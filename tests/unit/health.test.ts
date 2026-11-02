@@ -109,4 +109,29 @@ describe("assembleHealth", () => {
     });
     expect(unreadable.status).toBe("ok");
   });
+
+  // app-business-core issue 757: undelivered resets lock customers out, so a
+  // bad sending setup or a complaint rate over its line drives the 503 the
+  // outside uptime check alerts on.
+  it("adds a critical email check, absent in log mode and never failing on a throw", async () => {
+    const ok = { ...base, pingDb: async () => ({ ok: true }), errorCountSince: async () => 0 };
+    const logMode = await assembleHealth({ ...ok, emailHealth: async () => null });
+    expect(logMode.checks.find((c) => c.name === "email")).toBeUndefined();
+
+    const red = await assembleHealth({
+      ...ok,
+      emailHealth: async () => ({ ok: false, detail: "spam complaint rate at or over 0.1% in 30 days" }),
+    });
+    expect(red.status).toBe("degraded");
+    expect(red.checks.find((c) => c.name === "email")).toMatchObject({ ok: false, critical: true });
+
+    const threw = await assembleHealth({
+      ...ok,
+      emailHealth: async () => {
+        throw new Error("planted");
+      },
+    });
+    expect(threw.status).toBe("ok");
+  });
 });
+

@@ -749,3 +749,46 @@ export const erasures = sqliteTable("erasures", {
 
 export type Erasure = typeof erasures.$inferSelect;
 
+/**
+ * CATALOG. Customer databases that were left behind and still need deleting
+ * (app-business-core issues 358 and 857). A sign-up whose database was made but
+ * whose account could not be finished is rolled back, and an erased account's
+ * database is removed; when Turso refuses that delete (the app's own key may not
+ * hold the delete right, #439), the database's tenant id is written here. The
+ * factory's sweep (app-business-core agents/tenant_db_sweep.py) deletes each one
+ * with its own key and sets `clearedAt`. Tenant ids only: the account is gone.
+ */
+export const tenantOrphans = sqliteTable("tenant_orphans", {
+  tenantId: text("tenant_id").primaryKey(),
+  reason: text("reason", { enum: ["signup-rollback", "erasure"] }).notNull(),
+  recordedAt: integer("recorded_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  clearedAt: integer("cleared_at", { mode: "timestamp" }),
+});
+
+export type TenantOrphan = typeof tenantOrphans.$inferSelect;
+
+/**
+ * CATALOG. What the email provider reports about each message (app-business-core
+ * issue 757: "delivery monitoring that tells you where your emails actually
+ * land"). One row per provider event, keyed by the event's own id so a repeated
+ * delivery of the same event counts once. Never an address, a subject or a body:
+ * the type, the provider's message id and, for a bounce, its kind. Written by
+ * app/api/email/events/route.ts; read by lib/email/delivery.ts for the bounce
+ * and complaint rates /api/health reports.
+ */
+export const emailEvents = sqliteTable("email_events", {
+  id: text("id").primaryKey(),
+  receivedAt: integer("received_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  type: text("type", {
+    enum: ["sent", "delivered", "delayed", "bounced", "complained", "failed", "suppressed", "other"],
+  }).notNull(),
+  messageId: text("message_id"),
+  /** For a bounce: "permanent" (the address does not exist) or "transient". */
+  bounceKind: text("bounce_kind"),
+});
+
+export type EmailEvent = typeof emailEvents.$inferSelect;

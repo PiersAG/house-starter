@@ -12,20 +12,33 @@ import {
   deletionRequestedTemplate,
 } from "@/lib/email/templates/account-deletion";
 import { getProvisioner } from "@/lib/tenant/provisioner";
+import { recordTenantOrphan } from "@/lib/tenant/orphans";
 import type { ErasureResult, TenantPlane } from "@/lib/privacy/deletion";
 
 /** Open and remove tenant databases the way this environment does. */
 export const liveTenantPlane: TenantPlane = {
   open: (tenantId) => getDb(tenantId),
   destroy: async (tenantId) => {
+    let removed = false;
     try {
-      return await getProvisioner().destroy(tenantId);
+      removed = await getProvisioner().destroy(tenantId);
     } catch (e) {
       console.error("privacy: removing the tenant database failed", e instanceof Error ? e.message : e);
-      return false;
     }
+    // Refused or failed: the database is already empty (wiped first), and is
+    // listed so the factory's sweep deletes it (app-business-core issue 857).
+    if (!removed) await listForSweep(tenantId);
+    return removed;
   },
 };
+
+async function listForSweep(tenantId: string): Promise<void> {
+  try {
+    await recordTenantOrphan(tenantId, "erasure");
+  } catch (e) {
+    console.error("privacy: listing the tenant database for the sweep failed", e instanceof Error ? e.message : e);
+  }
+}
 
 /** "2 December 2026": the date as the emails and the page show it. */
 export function longDate(d: Date): string {
