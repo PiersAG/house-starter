@@ -18,6 +18,9 @@ import { enforcePaidPage } from "@/lib/billing/enforce";
 import { AppNav } from "@/components/AppNav";
 import { redirect } from "next/navigation";
 import { deactivationOf } from "@/lib/privacy/deletion";
+import { enforceTwoStep } from "@/lib/mfa/enforce";
+import { SessionExpiryWarning } from "@/components/session/SessionExpiryWarning";
+import { sessionTiming } from "@/lib/session/expiry";
 
 export default async function DashboardLayout({
   children,
@@ -29,8 +32,12 @@ export default async function DashboardLayout({
     // A closed account (issue 722) is locked out at once, not at its session's
     // next renewal: its other devices land on the closed page from the next page.
     if ((await deactivationOf(catalogDb, session.user.id))?.deactivatedAt) redirect("/account-closed");
+    // Owner-grant accounts set up two-step sign-in first (issue 377).
+    enforceTwoStep(session);
     await enforcePaidPage(catalogDb, session.user.id);
   }
+  // The session-expiry warning (issue 525): 60 seconds before the session ends.
+  const timing = session?.user?.id ? await sessionTiming() : null;
   // `@container/page` makes this segment a container context, so any component
   // rendered under /dashboard can size itself against the space the PAGE gives
   // it rather than against the window (card 2.3.15, docs/responsive.md). It is
@@ -48,6 +55,7 @@ export default async function DashboardLayout({
     <div className="@container/page">
       <AppNav />
       <div className="pb-24 @roomy/page:pb-0">{children}</div>
+      {timing ? <SessionExpiryWarning expiresAt={timing.expiresAt} maxAgeSeconds={timing.maxAgeSeconds} /> : null}
     </div>
   );
 }

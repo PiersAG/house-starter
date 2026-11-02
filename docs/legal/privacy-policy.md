@@ -21,7 +21,7 @@ For anything about your personal data, write to [privacy email].
 This list is produced from the app's own data map, so it names everything the app holds.
 
 - Your account details: your workspace's label (usually your email address) and the id of your own database; your email address, your name, your account id, your role and when you signed up.
-- Sign-in security records: your account id against each session you ended; your account id against each password-reset link (the link itself is stored only as a hash); your account id and when you set up your authenticator app (the secret itself is encrypted); your account id against your recovery codes (stored only as hashes).
+- Sign-in security records: your account id against each session you ended; each signed-in device: a random id your browser keeps, the kind of browser and device, the country and rough area your connection came from, and when the session started and was last used; your account id against each password-reset link (the link itself is stored only as a hash); your account id and when you set up your authenticator app (the secret itself is encrypted); your account id against your recovery codes (stored only as hashes).
 - Your subscription: your plan, its status and dates, and your Stripe customer and subscription ids; any free access given to your account, with a note and who gave it.
 - Your invoices: each invoice's amounts, currency, status, dates and link, with your account and Stripe customer id.
 - Payment disputes: each dispute's amount, reason, status and dates, with your Stripe customer id.
@@ -39,7 +39,7 @@ This list is produced from the app's own data map, so it names everything the ap
 ## What we use it for
 
 - Your account details: To find your own database when you sign in. To create your account, sign you in and contact you about it.
-- Sign-in security records: To end a signed-in session when you sign out or change your password. To let you reset a forgotten password. Your second sign-in step (authenticator app). Single-use codes to get back in without your authenticator app.
+- Sign-in security records: To end a signed-in session when you sign out or change your password. To show you where you are signed in and let you sign a device out, to limit how many devices can be signed in, to warn you of a sign-in from a new device and country, and to end a session used from two places no one could travel between. To let you reset a forgotten password. Your second sign-in step (authenticator app). Single-use codes to get back in without your authenticator app.
 - Your subscription: To know whether your subscription is active. To record free access the business has given you.
 - Your invoices: To show your invoices and keep the business's tax records.
 - Payment disputes: To answer a payment dispute raised with your bank.
@@ -89,7 +89,7 @@ These services handle it on our behalf, under a data processing agreement with e
 ## How long we keep it
 
 - Your account details: While your account is open. While your account is open, then 30 days after you ask us to delete it.
-- Sign-in security records: 90 days. 30 days. While your account is open.
+- Sign-in security records: 90 days. 90 days after the session ends. 30 days. While your account is open.
 - Your subscription: While your account is open.
 - Your invoices: While your account is open; after it is deleted, the amounts and dates for 6 years.
 - Payment disputes: While your account is open; after it is deleted, the amounts and dates for 6 years.

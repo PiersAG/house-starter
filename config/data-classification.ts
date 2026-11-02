@@ -57,6 +57,22 @@ export const DATA_CLASSIFICATION: Record<string, Record<string, ColumnClass>> = 
     deletionDueAt: own,
   },
   revokedSessions: { id: internal, jti: internal, userId: internal, revokedAt: internal },
+  // Issues 506, 519, 741: one row per signed-in device. The owner sees their own
+  // devices (label, country, last used) on the security page.
+  userSessions: {
+    id: internal,
+    userId: internal,
+    deviceId: internal,
+    deviceLabel: own,
+    country: own,
+    latitude: internal,
+    longitude: internal,
+    startedAt: own,
+    lastSeenAt: own,
+    riskScore: internal,
+    endedAt: internal,
+    endReason: internal,
+  },
   subscriptions: {
     id: internal,
     userId: internal,

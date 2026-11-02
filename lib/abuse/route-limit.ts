@@ -176,6 +176,31 @@ export async function recordBehaviour(
   }
 }
 
+/**
+ * The connection's standing with the escalation — the "IP reputation" attribute
+ * of the access policy (lib/session/policy.ts, app-business-core #741): "bad"
+ * while banned, "suspect" once throttled (unusual access volume), else "good".
+ * Never throws: an unreadable store reads as "suspect", which asks for a fresh
+ * sign-in on a sensitive action rather than refusing it or waving it through.
+ */
+export async function clientReputation(
+  headers: HeadersLike,
+  deps: RouteLimitDeps = {},
+): Promise<"good" | "suspect" | "bad"> {
+  try {
+    const store = deps.store ?? getRateLimiter();
+    const client = clientKeyFromHeaders(headers);
+    const [bannedUntil, strikes] = await Promise.all([
+      store.heldUntil(BAN(client)),
+      store.add(STRIKES(client), 0, ESCALATION.strikeWindowSeconds),
+    ]);
+    if (bannedUntil > 0) return "bad";
+    return strikes >= ESCALATION.throttleAt * relaxOf(deps) ? "suspect" : "good";
+  } catch {
+    return "suspect";
+  }
+}
+
 function splitUrl(url: string): { path: string; query: string } {
   const rest = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, "") || "/";
   const i = rest.indexOf("?");

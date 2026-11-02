@@ -32,7 +32,7 @@ export class NotAuthorizedError extends Error {
 
 /** The shape this module needs from a session — nothing more. */
 export interface RoleBearingSession {
-  user?: { role?: string | null } | null;
+  user?: { role?: string | null; mfa?: string | null } | null;
 }
 
 /**
@@ -63,6 +63,13 @@ export function assertTenantOwner(
   if (role !== "owner") {
     throw new NotAuthorizedError(
       "Only the workspace owner can change these settings.",
+    );
+  }
+  // Issue 377 (SEC.15): an account holding an owner-type grant must set up
+  // two-step sign-in before it changes anything (lib/mfa/enforce.ts).
+  if (session?.user?.mfa === "enroll_required") {
+    throw new NotAuthorizedError(
+      "Set up two-step sign-in on your sign-in and security page first.",
     );
   }
   return role;

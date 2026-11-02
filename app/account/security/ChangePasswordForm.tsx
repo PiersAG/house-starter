@@ -47,7 +47,12 @@ export function ChangePasswordForm() {
       </div>
       {state?.error && (
         <p role="alert" className="text-sm text-destructive">
-          {state.error}
+          {state.error}{" "}
+          {state.loginPath ? (
+            <a href={state.loginPath} className="underline">
+              Sign in again
+            </a>
+          ) : null}
         </p>
       )}
       <button

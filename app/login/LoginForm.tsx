@@ -6,7 +6,9 @@ import { loginAction } from "./actions";
 
 type State = { error: string; mfaRequired?: boolean } | null;
 
-export function LoginForm() {
+// `callbackUrl`: the page that asked for a sign-in (issue 525). Checked again on
+// the server (lib/session/return-path.ts); an off-site value goes to the dashboard.
+export function LoginForm({ callbackUrl = "" }: { callbackUrl?: string } = {}) {
   const [state, action, pending] = useActionState<State, FormData>(
     loginAction,
     null,
@@ -34,6 +36,7 @@ export function LoginForm() {
 
   return (
     <form action={action} className="space-y-4" noValidate>
+      {callbackUrl ? <input type="hidden" name="callbackUrl" value={callbackUrl} /> : null}
       <div>
         <label
           htmlFor="email"

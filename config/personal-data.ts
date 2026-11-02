@@ -69,6 +69,28 @@ export const PERSONAL_DATA_MAP: Record<string, DataMapEntry> = {
     onErasure: { rule: "delete" },
     notPersonal: { jti: "A random session id." },
   },
+  userSessions: {
+    plane: "catalog",
+    personal: ["userId", "deviceId", "deviceLabel", "country", "latitude", "longitude", "startedAt", "lastSeenAt"],
+    linkedBy: "userId",
+    category: "Sign-in security records",
+    holds:
+      "each signed-in device: a random id your browser keeps, the kind of browser and device, the country and rough area your connection came from, and when the session started and was last used",
+    purpose:
+      "To show you where you are signed in and let you sign a device out, to limit how many devices can be signed in, to warn you of a sign-in from a new device and country, and to end a session used from two places no one could travel between.",
+    lawfulBasis: "legitimate_interests",
+    processors: HOST,
+    retention: "90 days after the session ends.",
+    ageLimitDays: 90,
+    ageColumn: "lastSeenAt",
+    onErasure: { rule: "delete" },
+    notPersonal: {
+      id: "A random session id.",
+      riskScore: "A number worked out from the other fields.",
+      endedAt: "When the session ended.",
+      endReason: "Why the session ended, in words from a fixed list.",
+    },
+  },
   subscriptions: {
     plane: "catalog",
     personal: ["userId", "stripeCustomerId", "stripeSubscriptionId", "status", "currentPeriodEnd", "trialEndsAt", "pastDueAt"],

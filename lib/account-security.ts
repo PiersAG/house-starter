@@ -10,8 +10,9 @@
 // in before the cutoff is refused at its next renewal (at most
 // RENEW_AFTER_SECONDS later); the action that called these signs the current
 // browser out at once. Making OTHER devices stop instantly, rather than within
-// one renewal window, needs a per-request check and is the open CEO decision
-// #559 (it changes the 2026-07-15 session ruling).
+// one renewal window, is the "strict" session policy (config/sessions.ts),
+// which checks on every server request; turning it on is CEO decision #559
+// (it changes the 2026-07-15 session ruling).
 //
 // DI pattern of lib/users.ts: the database is an explicit argument so the flow
 // is unit-tested against an in-memory database.
@@ -24,6 +25,7 @@ import { getUserById, type AppDatabase } from "@/lib/users";
 import { hashPassword, validatePasswordStrength, verifyPassword } from "@/lib/password";
 import { cancelOpenResetTokens } from "@/lib/password-reset";
 import { logSecurityEvent } from "@/lib/security-log";
+import { endAllSessionRecords } from "@/lib/session/records";
 
 /**
  * End every session of this account at its next renewal. Also cancels any open
@@ -36,6 +38,7 @@ export async function signOutEverywhere(
   now: Date = new Date(),
 ): Promise<void> {
   await db.update(users).set({ sessionsValidFrom: now }).where(eq(users.id, userId)).run();
+  await endAllSessionRecords(db, userId, "ended_by_user", now);
   const cancelled = await cancelOpenResetTokens(db, userId, now);
   logSecurityEvent("signed_out_everywhere", { userId, resetLinksCancelled: cancelled }, now);
 }
@@ -84,6 +87,7 @@ export async function changePassword(
     .set({ passwordHash, sessionsValidFrom: now })
     .where(eq(users.id, userId))
     .run();
+  await endAllSessionRecords(db, userId, "ended_by_user", now);
   const cancelled = await cancelOpenResetTokens(db, userId, now);
   logSecurityEvent("password_changed", { userId, resetLinksCancelled: cancelled }, now);
 }

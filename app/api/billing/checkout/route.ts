@@ -15,6 +15,8 @@ import { getStripe } from "@/lib/billing/stripe";
 import { billingConfig } from "@/config/billing";
 import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
 import { serviceFailure } from "@/lib/observability/service-failure";
+import { catalogDb } from "@/lib/catalog";
+import { accessMessage, checkSensitiveAccess } from "@/lib/session/guard";
 import { withRequestLog } from "@/lib/observability/with-request-log";
 
 import { withRouteLimit } from "@/lib/abuse/route-limit";
@@ -35,6 +37,16 @@ async function handlePOST(request: Request): Promise<Response> {
     return NextResponse.json(
       { error: "You must be signed in to subscribe." },
       { status: 401 },
+    );
+  }
+
+  // Context-aware access (app-business-core issue 741): starting a payment.
+  const access = await checkSensitiveAccess(catalogDb, session, "billing.checkout", "/dashboard");
+  const refused = accessMessage(access);
+  if (refused) {
+    return NextResponse.json(
+      { error: refused, loginPath: access.loginPath },
+      { status: access.decision === "deny" ? 403 : 401 },
     );
   }
 
