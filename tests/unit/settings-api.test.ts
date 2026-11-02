@@ -24,6 +24,10 @@ const session = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/auth", () => session);
 
+// The request token (issue 353): passed by default; one test below refuses it.
+const csrf = vi.hoisted(() => ({ verifyCsrf: vi.fn((): Response | null => null) }));
+vi.mock("@/lib/csrf", () => csrf);
+
 // The handler now writes the TENANT database (finding 1), so it resolves a
 // tenant handle. Mocked to a sentinel: what matters here is that the writer is
 // called, and tests/unit/settings-planes.test.ts proves WHICH database receives
@@ -132,6 +136,16 @@ describe("PUT /api/settings/[key] — capability guard (R2)", () => {
     });
     const res = await PUT(...putReq("core.client_self_registration", true));
     expect(res.status).toBe(403);
+    expect(setOwnerValue).not.toHaveBeenCalled();
+  });
+
+  it("a write without this session's request token is refused 403, before the body is read (issue 353)", async () => {
+    const refusal = new Response(JSON.stringify({ error: "not verified" }), { status: 403 });
+    csrf.verifyCsrf.mockImplementationOnce(() => refusal).mockImplementationOnce(() => refusal);
+    const [req, ctx] = putReq("core.client_self_registration", true);
+    expect(await PUT(req, ctx)).toBe(refusal);
+    expect(csrf.verifyCsrf).toHaveBeenCalledWith(req, expect.objectContaining({ user: expect.objectContaining({ id: "owner-1" }) }));
+    expect(await DELETE(...delReq("core.client_self_registration"))).toBe(refusal);
     expect(setOwnerValue).not.toHaveBeenCalled();
   });
 

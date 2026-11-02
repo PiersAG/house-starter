@@ -1,3 +1,5 @@
+// Lets drizzle-kit load lib/schema.ts, which is marked `import "server-only"` (issue 797).
+import "./scripts/server-only-node.cjs";
 // Drizzle Kit configuration — used by the db:generate / db:migrate / db:push
 // scripts to talk to the database.
 //

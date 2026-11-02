@@ -26,6 +26,8 @@
 // In TENANCY_MODE=shared the two collapse onto DATABASE_URL and every table
 // lives in one database — the split is a routing fact, not a schema fork.
 
+import "server-only";
+
 import { sql } from "drizzle-orm";
 import {
   sqliteTable,

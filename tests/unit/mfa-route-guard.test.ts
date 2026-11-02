@@ -1,13 +1,18 @@
 // lib/mfa/route-guard.ts — the one gate in front of every /api/auth/mfa/* route
 // (SEC.15, Slice 1), tested on its own so its per-file 100% gate does not depend
-// on the routes that use it. Order matters and is asserted: session, then rate
-// limit (per client AND per account), then input.
+// on the routes that use it. Order matters and is asserted: session, then the
+// request token (lib/csrf.ts — its own logic is tested in csrf.test.ts; here
+// only that the guard runs it, first, and returns its refusal), then rate limit
+// (per client AND per account), then input.
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { resetRateLimiterForTests } from "@/lib/rate-limit";
 import type { AuthRateLimit } from "@/lib/auth-rate-limit";
 import { guardMfaRequest, NO_STORE } from "@/lib/mfa/route-guard";
+
+const csrf = vi.hoisted(() => ({ verifyCsrf: vi.fn((): Response | null => null) }));
+vi.mock("@/lib/csrf", () => csrf);
 
 const LIMIT: AuthRateLimit = { bucket: "mfa-guard-test", limit: 2, windowSeconds: 60 };
 const schema = z.object({ code: z.string({
@@ -32,6 +37,30 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.RATE_LIMIT_ALLOW_IN_MEMORY;
   resetRateLimiterForTests();
+  csrf.verifyCsrf.mockReset();
+  csrf.verifyCsrf.mockImplementation(() => null);
+});
+
+describe("guardMfaRequest — the request token (issue 353)", () => {
+  it("returns the token check's refusal before spending any rate-limit budget", async () => {
+    const refusal = new Response("{}", { status: 403 });
+    for (let i = 0; i <= LIMIT.limit + 1; i += 1) {
+      csrf.verifyCsrf.mockImplementationOnce(() => refusal);
+      const req = request('{"code":"1"}', "192.0.2.77");
+      const out = await guardMfaRequest({ request: req, session: SESSION, limit: LIMIT, schema });
+      expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.response).toBe(refusal);
+      expect(csrf.verifyCsrf).toHaveBeenLastCalledWith(req, SESSION);
+    }
+    // The budget is untouched: a real request still passes.
+    const ok = await guardMfaRequest({ request: request('{"code":"1"}', "192.0.2.77"), session: SESSION, limit: LIMIT, schema });
+    expect(ok.ok).toBe(true);
+  });
+
+  it("is not reached without a session", async () => {
+    await guardMfaRequest({ request: request("{}"), session: null, limit: LIMIT, schema });
+    expect(csrf.verifyCsrf).not.toHaveBeenCalled();
+  });
 });
 
 describe("guardMfaRequest", () => {

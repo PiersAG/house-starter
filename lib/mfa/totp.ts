@@ -14,6 +14,8 @@
 //
 // Pure: no database, no environment. `now` is injectable for tests.
 
+import "server-only";
+
 import { generateSecret, generateURI, verify } from "otplib";
 
 export const TOTP_PERIOD_SECONDS = 30;

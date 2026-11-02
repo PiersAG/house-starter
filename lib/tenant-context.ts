@@ -18,6 +18,8 @@
 // In TENANCY_MODE=shared the same call returns the single shared database, so
 // code written against this module runs unchanged in either mode.
 
+import "server-only";
+
 import { auth } from "@/lib/auth";
 import { getDb, getTenancyMode } from "@/lib/db";
 import type { AppDatabase } from "@/lib/users";

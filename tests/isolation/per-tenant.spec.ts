@@ -84,6 +84,7 @@ import {
   __resetDbCacheForTests,
 } from "@/lib/db";
 import { tenantMeta } from "@/lib/schema";
+import { requestToken } from "../e2e/session-helpers";
 import {
   DELETE_METHOD,
   WRITE_METHODS,
@@ -443,6 +444,18 @@ type Planted = {
  * Nothing here knows what the app stores. Every id used afterwards came out of
  * the tenant's own database, exactly as the write leg's candidates do.
  */
+/**
+ * The signed-in page's own request token (lib/csrf.ts, app-business-core issue
+ * 353), so a write reaches the handler — and the tenant check — instead of
+ * stopping at the token check. Every attack below is made with the attacker's
+ * own, valid token: that is what a real signed-in attacker holds.
+ */
+async function ownWriteHeaders(page: Page): Promise<Record<string, string>> {
+  const cookie = (await page.context().cookies()).find((c) => c.name === "authjs.session-token");
+  if (!cookie) throw new Error("the page is not signed in, so it has no request token");
+  return { "x-csrf-token": await requestToken(cookie.value) };
+}
+
 async function plantDeletable(
   page: Page,
   dbUrl: string,
@@ -454,7 +467,7 @@ async function plantDeletable(
     const response = await page.request.fetch(url, {
       method,
       data: writeBody(sentinel),
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(await ownWriteHeaders(page)) },
       failOnStatusCode: false,
       timeout: 15_000,
     });
@@ -692,7 +705,7 @@ test.describe("per-tenant data isolation", () => {
             const response = await page.request.fetch(url, {
               method,
               data: writeBody(sentinel),
-              headers: { "content-type": "application/json" },
+              headers: { "content-type": "application/json", ...(await ownWriteHeaders(page)) },
               failOnStatusCode: false,
               timeout: 15_000,
             });
@@ -874,6 +887,7 @@ test.describe("per-tenant data isolation", () => {
       // query string.
       const response = await page.request.fetch(url, {
         method: DELETE_METHOD,
+        headers: await ownWriteHeaders(page),
         failOnStatusCode: false,
         timeout: 15_000,
       });

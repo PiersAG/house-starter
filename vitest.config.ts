@@ -260,12 +260,40 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // Data exposure (bundle S10). lib/dto.ts decides which fields leave the
+        // server; lib/csrf.ts whether a write came from the app's own page in
+        // this session; lib/crypto/field-seal.ts seals a payload field. An
+        // uncovered branch is a field that reaches the browser, a forged write
+        // that passes, or a field that opens when it should not.
+        "**/lib/dto.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/csrf.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/crypto/field-seal.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
       },
     },
   },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "."),
+      // `import "server-only"` marks every server module (issue 797). The
+      // package throws outside Next.js's "react-server" condition, so unit tests
+      // load its empty half — the same module Next.js uses for server code.
+      // tests/unit/server-boundary.test.ts holds the marker itself.
+      "server-only": path.resolve(__dirname, "node_modules/server-only/empty.js"),
     },
   },
 });

@@ -21,6 +21,8 @@
 // `applyCors` on every other response. tests/unit/cors-guard.test.ts fails any
 // other file that sets a CORS header.
 
+import "server-only";
+
 import { CORS_ALLOWED_ORIGINS } from "@/config/cors";
 import { canonicalBaseUrl, type AppUrlEnv } from "@/lib/app-url";
 

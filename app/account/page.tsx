@@ -12,6 +12,8 @@ import { getTenantDb } from "@/lib/tenant-context";
 import { buildClientSettingsView } from "@/lib/settings/service";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SettingControl } from "@/app/dashboard/settings/SettingControl";
+import { SettingRow } from "@/app/dashboard/settings/dto";
+import { csrfTokenFor } from "@/lib/csrf";
 
 export const metadata = { title: "Your preferences" };
 
@@ -24,6 +26,7 @@ export default async function AccountPage() {
     session.user.id,
   );
   const isEmpty = view.length === 0;
+  const csrfToken = csrfTokenFor(session) ?? "";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col p-4 sm:p-6">
@@ -51,7 +54,12 @@ export default async function AccountPage() {
                 </h3>
                 <div className="mt-1">
                   {grp.settings.map((setting) => (
-                    <SettingControl key={setting.key} setting={setting} scope="client" />
+                    <SettingControl
+                      key={setting.key}
+                      setting={SettingRow.from(setting)}
+                      scope="client"
+                      csrfToken={csrfToken}
+                    />
                   ))}
                 </div>
               </div>

@@ -21,6 +21,8 @@
 // brand. The resolver skips the tenant plane for such a key regardless, so this
 // call site and that classification agree rather than merely coexist.
 
+import "server-only";
+
 import { catalogDb } from "@/lib/catalog";
 import { resolveSetting } from "@/lib/settings/resolver";
 

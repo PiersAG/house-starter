@@ -15,6 +15,8 @@
 //
 // Pure: no database, no environment.
 
+import "server-only";
+
 import { createHash, randomBytes } from "node:crypto";
 
 export const RECOVERY_CODE_COUNT = 10;

@@ -5,6 +5,8 @@
 // callback depend on these helpers, and they are exercised directly by unit
 // tests (this module is included in coverage).
 
+import "server-only";
+
 import bcrypt from "bcryptjs";
 
 /** Minimum password length (NIST SP 800-63B Rev 4: 8 char floor, 15 recommended). */

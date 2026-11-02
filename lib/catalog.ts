@@ -28,6 +28,8 @@
 // free, exactly as lib/db.ts is. Schema is applied out-of-band by
 // `npm run db:migrate` / lib/migrate.ts::migrateCatalog.
 
+import "server-only";
+
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import type { AppDatabase } from "@/lib/users";

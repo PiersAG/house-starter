@@ -3,8 +3,12 @@
 // Three routes, one gate, in one order — so no route can skip a step:
 //   1. a signed-in session (the account is ALWAYS session.user.id, never a
 //      value from the request body, and never the tenant);
-//   2. the rate limit, per client AND per account, before any work;
-//   3. a JSON body, parsed defensively and validated with zod, first issue
+//   2. the request token and the origin check (lib/csrf.ts, app-business-core
+//      issue 353): these routes change the account's second factor, so
+//      another website must not be able to call them — checked before the rate
+//      limit, so a forged request cannot spend the account's attempts either;
+//   3. the rate limit, per client AND per account, before any work;
+//   4. a JSON body, parsed defensively and validated with zod, first issue
 //      reported in plain English (the app/api/auth/signup/route.ts pattern).
 //
 // Returns either the validated input or the Response to send. Catalog-only: it
@@ -17,9 +21,12 @@ import {
   checkAuthRateLimit,
   type AuthRateLimit,
 } from "@/lib/auth-rate-limit";
+import { verifyCsrf } from "@/lib/csrf";
 
 /** Session shape this guard needs — the subset of NextAuth's that it reads. */
-export type MfaSession = { user?: { id?: string; email?: string | null } } | null;
+export type MfaSession = {
+  user?: { id?: string; email?: string | null; sessionId?: string | null };
+} | null;
 
 export type GuardResult<T> =
   | { ok: true; userId: string; email: string | null; data: T }
@@ -37,6 +44,9 @@ export async function guardMfaRequest<T>(input: {
   const user = input.session?.user;
   if (!user?.id) return fail(401, "You need to be signed in to do that.");
   const userId = user.id;
+
+  const forged = verifyCsrf(input.request, input.session);
+  if (forged) return { ok: false, response: forged };
 
   for (const rate of [
     await checkAuthRateLimit(input.limit, input.request.headers),

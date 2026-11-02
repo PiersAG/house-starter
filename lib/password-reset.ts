@@ -15,6 +15,8 @@
 //   - forgot-password never reveals whether an email is registered (no
 //     account enumeration) — a limited request looks exactly like a sent one.
 
+import "server-only";
+
 import { and, count, eq, gt, isNull } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
 import { passwordResetTokens, users } from "@/lib/schema";

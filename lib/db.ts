@@ -36,6 +36,8 @@
 // `npm run db:migrate` for the catalog, and by the provisioner
 // (lib/tenant/provisioner.ts) the moment a tenant database is created.
 
+import "server-only";
+
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { eq } from "drizzle-orm";

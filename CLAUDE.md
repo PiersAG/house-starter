@@ -27,3 +27,19 @@ Cache keys: tenantCacheKey() (lib/cache-key.ts). Email HTML: the html tag
 no public storage. Records carry a version; a stale save is a 409
 (lib/records/history.ts).
 Files at most 400 lines of code, functions 200; split into coherent modules.
+
+# What reaches the browser (bundle S10, enforced by the gate and the tests)
+
+Everything a server component passes to a client component, and every route
+answer, is sent to the browser. Query only the columns a page uses; pass and
+answer DTOs: defineDto() / X.from() / dtoJson() (lib/dto.ts). Never a whole row,
+never a spread object, never a field config/data-classification.ts marks
+internal or secret; classify every new column there. Signed-in answers are
+no-store. Modules touching the database, a key or a credential start with
+import "server-only"; a "use client" file imports no server module and reads no
+server env. NEXT_PUBLIC_ names are listed in config/public-env.ts. Every
+POST/PUT/PATCH/DELETE route calls verifyCsrf() (signed out: verifySameOrigin())
+from lib/csrf.ts; pages pass csrfTokenFor(session) to the client, which sends
+x-csrf-token. Third-party scripts: config/third-party.ts and
+components/ThirdPartyScripts.tsx only. Storage is private. Details:
+docs/data-protection.md.

@@ -21,13 +21,22 @@
 // empty; live in an app that lists this path.
 
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { catalogDb } from "@/lib/catalog";
 import { enforcePaidApi } from "@/lib/billing/enforce";
 import { getTenantDb } from "@/lib/tenant-context";
 import { tenantMeta } from "@/lib/schema";
+import { defineDto, dtoJson } from "@/lib/dto";
 
 export const runtime = "nodejs";
+
+// What this answer carries, and nothing else (issues 763, 794): the
+// workspace's id and label. The query names the same two columns, so no other
+// column is even read.
+const TenantResponse = defineDto({
+  tenant: z.object({ id: z.string(), label: z.string().nullable() }),
+});
 
 export async function GET(): Promise<Response> {
   const session = await auth();
@@ -42,7 +51,11 @@ export async function GET(): Promise<Response> {
   if (denied) return denied;
 
   const db = await getTenantDb();
-  const rows = await db.select().from(tenantMeta).limit(1).all();
+  const rows = await db
+    .select({ tenantId: tenantMeta.tenantId, label: tenantMeta.label })
+    .from(tenantMeta)
+    .limit(1)
+    .all();
   const meta = rows[0];
   if (!meta) {
     return NextResponse.json(
@@ -51,7 +64,5 @@ export async function GET(): Promise<Response> {
     );
   }
 
-  return NextResponse.json({
-    tenant: { id: meta.tenantId, label: meta.label },
-  });
+  return dtoJson(TenantResponse, { tenant: { id: meta.tenantId, label: meta.label } });
 }

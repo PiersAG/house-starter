@@ -29,6 +29,8 @@
 // lib/users.ts. Passing a tenant database here would be a bug, and the value it
 // wrote would be invisible to the operator surface — hence the argument name.
 
+import "server-only";
+
 import { eq, sql } from "drizzle-orm";
 import { operatorSettingValues } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";

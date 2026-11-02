@@ -32,6 +32,8 @@
 // DI pattern (like lib/billing/grants.ts): the catalog handle and the key are
 // passed in, so this unit-tests against an in-memory database.
 
+import "server-only";
+
 import { and, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { getGrantByUserId, isGrantLive } from "@/lib/billing/grants";
 import {

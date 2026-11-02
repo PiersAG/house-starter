@@ -27,6 +27,8 @@
 // boot-required set (a boot-required addition would stop dev, CI and the
 // isolation harness from starting — the same trap the rate-limit store fix has).
 
+import "server-only";
+
 export type AppUrlEnv = {
   APP_CANONICAL_URL?: string;
   AUTH_URL?: string;

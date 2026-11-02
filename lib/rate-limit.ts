@@ -34,6 +34,8 @@
 // This module is pure logic with injectable dependencies (clock, fetch) so it
 // is unit-tested directly. Nothing here runs at module load time.
 
+import "server-only";
+
 import { readSecret } from "@/lib/secrets";
 
 export interface RateLimitOptions {

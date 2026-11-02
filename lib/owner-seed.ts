@@ -20,6 +20,8 @@
 // overwritten, a password already set is never reset, and no grant is
 // (re)attached. Safe to run on every boot/migration forever.
 
+import "server-only";
+
 import { createUser, getUserByEmail, type AppDatabase } from "@/lib/users";
 import { grantAccess } from "@/lib/billing/grants";
 

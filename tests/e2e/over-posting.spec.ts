@@ -23,7 +23,7 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { appDir, discoverAllRoutes, isWritable } from "../isolation/route-map";
-import { BASE_URL, client, ensureAccount, readToken, sessionCookie, signIn } from "./session-helpers";
+import { BASE_URL, client, ensureAccount, readToken, sessionCookie, signIn, writeHeaders } from "./session-helpers";
 
 const PRIVILEGED = {
   role: "admin",
@@ -79,12 +79,15 @@ test.describe("malformed and over-posted requests (#448, #442)", () => {
     const email = `malformed-${stamp}@example.com`;
     await ensureAccount(a, email);
     await signIn(a, email);
+    // With this session's request token, so each body reaches the endpoint's
+    // own parsing instead of being refused at the token check (issue 353).
+    const write = await writeHeaders(a);
     for (const route of WRITE_ROUTES) {
       for (const method of route.methods.filter((m) => ["POST", "PUT", "PATCH", "DELETE"].includes(m))) {
         for (const m of MALFORMED) {
           const res = await a.fetch(concrete(route.path), {
             method,
-            headers: { origin: BASE_URL, "content-type": m.type },
+            headers: { ...write, "content-type": m.type },
             data: m.body,
             maxRedirects: 0,
           });
@@ -111,12 +114,13 @@ test.describe("malformed and over-posted requests (#448, #442)", () => {
     const before = await readToken((await sessionCookie(a))!);
     expect(before.role).toBe("owner");
     expect(before.tenantId).not.toBe(PRIVILEGED.tenantId);
+    const write = await writeHeaders(a);
 
     for (const route of WRITE_ROUTES) {
       for (const method of route.methods.filter((m) => ["POST", "PUT", "PATCH"].includes(m))) {
         const res = await a.fetch(concrete(route.path), {
           method,
-          headers: { origin: BASE_URL },
+          headers: write,
           data: { value: `overpost-${stamp}`, scope: "owner", email, ...PRIVILEGED },
           maxRedirects: 0,
         });

@@ -11,6 +11,7 @@ import { registerUser, RegistrationError } from "@/lib/users";
 import { startTrialForNewOwner } from "@/lib/billing/trial";
 import { ensureTenantForUser } from "@/lib/tenant/provisioner";
 import { AUTH_RATE_LIMITS, checkAuthRateLimit } from "@/lib/auth-rate-limit";
+import { verifySameOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,10 @@ const signupSchema = z.object({
 // would drift, and two buckets would hand an attacker two budgets.
 
 export async function POST(request: Request): Promise<Response> {
+  // Issue 353: another website's page cannot create accounts through a visitor.
+  const foreign = verifySameOrigin(request);
+  if (foreign) return foreign;
+
   const rate = await checkAuthRateLimit(
     AUTH_RATE_LIMITS.signup,
     request.headers,

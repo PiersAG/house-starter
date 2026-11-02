@@ -16,6 +16,8 @@
 // DI pattern of lib/users.ts: the database is an explicit argument so the flow
 // is unit-tested against an in-memory database.
 
+import "server-only";
+
 import { eq } from "drizzle-orm";
 import { users } from "@/lib/schema";
 import { getUserById, type AppDatabase } from "@/lib/users";

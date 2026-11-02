@@ -8,6 +8,8 @@
 // Uses the raw libSQL Client (the migration layer's currency), not Drizzle, so
 // seeding stays inside the single migrate() entry point.
 
+import "server-only";
+
 import type { Client, InValue } from "@libsql/client";
 import { ALL_DEFINITIONS } from "@/lib/settings/registry";
 import { isCapabilityEnabled } from "@/lib/capabilities/flags";

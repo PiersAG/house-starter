@@ -7,7 +7,7 @@
 // per-capability hand-built screen (settings-registry-spec §5).
 
 import { useState } from "react";
-import type { EffectiveSetting } from "@/lib/settings/service";
+import type { SettingRowData } from "./dto";
 
 type Scope = "owner" | "client";
 
@@ -28,9 +28,12 @@ const SOURCE_LABEL: Record<string, string> = {
 export function SettingControl({
   setting,
   scope,
+  csrfToken,
 }: {
-  setting: EffectiveSetting;
+  setting: SettingRowData;
   scope: Scope;
+  /** This session's request token (lib/csrf.ts), sent with every change. */
+  csrfToken: string;
 }) {
   const [value, setValue] = useState<unknown>(setting.effectiveValue);
   const [source, setSource] = useState(setting.source);
@@ -44,7 +47,7 @@ export function SettingControl({
     setError(null);
     const res = await fetch(`/api/settings/${encodeURIComponent(setting.key)}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-csrf-token": csrfToken },
       body: JSON.stringify({ value: next, scope, version }),
     });
     if (!res.ok) {
@@ -65,7 +68,7 @@ export function SettingControl({
     setError(null);
     await fetch(
       `/api/settings/${encodeURIComponent(setting.key)}?scope=${scope}`,
-      { method: "DELETE" },
+      { method: "DELETE", headers: { "x-csrf-token": csrfToken } },
     );
     setStatus("idle");
     // Reload so the freshly resolved (fallen-through) value is shown.
@@ -130,7 +133,7 @@ function Editor({
   onCommit,
 }: {
   id: string;
-  setting: EffectiveSetting;
+  setting: SettingRowData;
   value: unknown;
   disabled: boolean;
   onCommit: (v: unknown) => void;

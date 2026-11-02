@@ -3,6 +3,8 @@
 // owner rows use the '' client-id sentinel (see lib/schema.ts). DI pattern: the
 // database is always an explicit argument, like lib/users.ts.
 
+import "server-only";
+
 import { and, eq, sql } from "drizzle-orm";
 import { settingValues } from "@/lib/schema";
 import { isSettingKeyEnabled } from "@/lib/capabilities/settings";

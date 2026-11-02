@@ -17,6 +17,8 @@
 // Node.js runtime only (node:crypto). Never imported by auth.config.ts or the
 // Edge middleware.
 
+import "server-only";
+
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { readSecret } from "@/lib/secrets";
 

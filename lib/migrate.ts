@@ -29,6 +29,8 @@
 // There is still exactly ONE migration mechanism; `role` only selects which
 // half of the same idempotent DDL runs.
 
+import "server-only";
+
 import { createClient, type Client } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { sqlColumnDef, sqlIdent } from "@/lib/sql-ident";

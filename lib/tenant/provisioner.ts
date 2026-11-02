@@ -26,6 +26,8 @@
 // during migration, for instance. It is deliberately NOT part of the migration
 // path: a migration must not make calls to a database platform's control API.
 
+import "server-only";
+
 import { randomUUID } from "node:crypto";
 import { mkdirSync, closeSync, openSync, existsSync } from "node:fs";
 import { isAbsolute, join, resolve as resolvePath } from "node:path";

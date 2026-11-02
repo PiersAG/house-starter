@@ -9,7 +9,9 @@ import { auth } from "@/lib/auth";
 import { catalogDb } from "@/lib/catalog";
 import { getTenantDb } from "@/lib/tenant-context";
 import { buildOwnerSettingsView } from "@/lib/settings/service";
+import { csrfTokenFor } from "@/lib/csrf";
 import { SettingControl } from "./SettingControl";
+import { SettingRow } from "./dto";
 import { PlanCard } from "@/components/billing/PlanCard";
 
 export const metadata = { title: "Settings" };
@@ -24,6 +26,9 @@ const CAPABILITY_LABEL: Record<string, string> = {
 export default async function SettingsPage() {
   const session = await auth();
   if (!session?.user) redirect("/login");
+  // Sent back by each control with its save (issue 353): proves the write came
+  // from this page, in this session.
+  const csrfToken = csrfTokenFor(session) ?? "";
 
   // Both planes: this tenant's chosen values live in its own database, the
   // app-wide operator values in the catalog. Operator keys are not rendered here
@@ -64,7 +69,12 @@ export default async function SettingsPage() {
               </h3>
               <div className="mt-1">
                 {grp.settings.map((setting) => (
-                  <SettingControl key={setting.key} setting={setting} scope="owner" />
+                  <SettingControl
+                    key={setting.key}
+                    setting={SettingRow.from(setting)}
+                    scope="owner"
+                    csrfToken={csrfToken}
+                  />
                 ))}
               </div>
             </div>

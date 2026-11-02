@@ -4,6 +4,8 @@
 // connection/query failure returns { ok: false }, which assembleHealth turns
 // into a degraded (503) report.
 
+import "server-only";
+
 import { sinkClient } from "@/lib/observability/error-log";
 
 export async function pingDatabase(

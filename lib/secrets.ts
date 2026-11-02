@@ -26,6 +26,8 @@
 //
 // Node.js runtime only. Never imported by auth.config.ts or the Edge middleware.
 
+import "server-only";
+
 import manifest from "./key-access.json";
 
 type KeyEntry = { readers: string[]; scrub: boolean };

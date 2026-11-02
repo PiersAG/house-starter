@@ -26,6 +26,8 @@
  * a NEXT_PUBLIC_ variable (ADR-026 D4 explicit).
  */
 
+import "server-only";
+
 export type LifecycleState = "LAUNCHED" | "LIVE_EVAL" | "LIVE_OPEN";
 
 const KNOWN_STATES: readonly LifecycleState[] = ["LAUNCHED", "LIVE_EVAL", "LIVE_OPEN"] as const;
