@@ -5,8 +5,8 @@
 // recent data may be lost (RPO) are set by the CEO from what the business can
 // bear, not from what the infrastructure happens to do (Matt Murphy #88: "define
 // both based on your business requirements not your infrastructure defaults").
-// The values below are the factory's recommended starting values for a small
-// subscription app; the monthly restore drill (lib/backup/drill.ts) and the
+// The CEO set the values below on 2026-11-02 (app-business-core wiki/decisions.md,
+// "Recovery targets (#752)"); the monthly restore drill (lib/backup/drill.ts) and the
 // rollback drill (lib/rollback.ts) measure every run against them and fail when
 // a run misses one.
 //
