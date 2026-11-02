@@ -124,6 +124,14 @@
       "reviewed_on": "2026-11-01",
       "by": "Claude Code (Dispatch V)",
       "reason": "Required by every minimatch release that fixes GHSA-g3hv-75wg-m249 (11.0.1 to 11.0.3). Its only maintainer is minimatch's author (isaacs); 259,113 downloads in its first week. Dev only, under @typescript-eslint in the dashboard."
+    },
+    {
+      "package": "semver",
+      "rule": "maintainer change",
+      "detail": "martinrrm",
+      "reviewed_on": "2026-11-02",
+      "by": "Claude Code (Dispatch AF)",
+      "reason": "Added at 7.8.6 (published 2026-11-02 17:05 UTC). 7.8.6 was published by GitHub Actions through npm trusted publishing with SLSA provenance, from the release commit b37b033b (\"chore: release 7.8.6 (#940)\") in npm/node-semver. martinrrm has 18 commits and 37 pull requests across npm's own repositories (npm/cli, pacote, bin-links, promise-spawn, template-oss) since July 2026: npm CLI team. Existing maintainers npm-cli-ops, reggi and saquibkhan remain. Neither lockfile installs 7.8.6 (both pin 7.8.1)."
     }
   ]
 }

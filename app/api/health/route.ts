@@ -23,6 +23,7 @@ import { getTenancyMode } from "@/lib/db";
 import { z } from "zod";
 import { defineDto } from "@/lib/dto";
 
+import { withRouteLimit } from "@/lib/abuse/route-limit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -42,7 +43,7 @@ const HealthResponse = defineDto({
   time: z.string(),
 });
 
-export const GET = withRequestLog("/api/health", async (): Promise<Response> => {
+export const GET = withRequestLog("/api/health", withRouteLimit("public.health", async (): Promise<Response> => {
   const report = await assembleHealth({
     pingDb: () => pingDatabase(),
     errorCountSince: (ms) => errorCountSince(ms),
@@ -58,4 +59,4 @@ export const GET = withRequestLog("/api/health", async (): Promise<Response> => 
     status: report.status === "ok" ? 200 : 503,
     headers: { "cache-control": "no-store" },
   });
-});
+}));

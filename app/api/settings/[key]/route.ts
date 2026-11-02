@@ -63,6 +63,8 @@ import { VersionConflictError } from "@/lib/records/history";
 import { verifyCsrf } from "@/lib/csrf";
 import { withRequestLog } from "@/lib/observability/with-request-log";
 
+import { withRouteLimit } from "@/lib/abuse/route-limit";
+import { sessionAccount } from "@/lib/abuse/session-account";
 export const runtime = "nodejs";
 
 /**
@@ -264,5 +266,5 @@ async function handleDELETE(
 }
 
 // One structured log line per request, with its id (issue 503).
-export const PUT = withRequestLog("/api/settings/[key]", handlePUT);
-export const DELETE = withRequestLog("/api/settings/[key]", handleDELETE);
+export const PUT = withRequestLog("/api/settings/[key]", withRouteLimit("settings.write", handlePUT, { account: sessionAccount }));
+export const DELETE = withRequestLog("/api/settings/[key]", withRouteLimit("settings.write", handleDELETE, { account: sessionAccount }));

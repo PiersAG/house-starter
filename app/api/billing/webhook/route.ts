@@ -24,6 +24,7 @@ import { getAppName } from "@/lib/branding";
 import { canonicalBaseUrl } from "@/lib/app-url";
 import { withRequestLog } from "@/lib/observability/with-request-log";
 
+import { withRouteLimit } from "@/lib/abuse/route-limit";
 export const runtime = "nodejs";
 
 const ROUTE = "/api/billing/webhook";
@@ -91,4 +92,4 @@ async function handlePOST(request: Request): Promise<Response> {
 }
 
 // One structured log line per request, with its id (issue 503).
-export const POST = withRequestLog("/api/billing/webhook", handlePOST);
+export const POST = withRequestLog("/api/billing/webhook", withRouteLimit("billing.webhook", handlePOST));

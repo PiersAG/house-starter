@@ -348,3 +348,43 @@ describe("clientKeyFromHeaders — the key must not be caller-controlled", () =>
     );
   });
 });
+
+describe("counter operations (route limits, app-business-core issue 787)", () => {
+  const T = Date.parse("2026-11-02T10:00:00Z");
+
+  it("the shared store holds a ban marker with SET … EX and reads it back with GET", async () => {
+    const calls: string[] = [];
+    let held: string | null = null;
+    const fetchImpl: FetchLike = async (url) => {
+      const [cmd, , value] = url.replace("https://store.example/", "").split("/");
+      calls.push(cmd);
+      if (cmd === "set") held = value;
+      return { ok: true, status: 200, json: async () => ({ result: cmd === "get" ? held : "OK" }) };
+    };
+    const redis = new RedisRestRateLimitStore("https://store.example", "t", fetchImpl, () => T);
+    await redis.holdUntil("abuse:ban:x", T / 1000 + 900);
+    expect(await redis.heldUntil("abuse:ban:x")).toBe(T / 1000 + 900);
+    expect(calls).toEqual(["set", "get"]);
+    // a marker whose time has passed reads as none
+    const later = new RedisRestRateLimitStore("https://store.example", "t", fetchImpl, () => T + 901_000);
+    expect(await later.heldUntil("abuse:ban:x")).toBe(0);
+  });
+
+  it("the in-memory stand-in counts per window, resets in the next, and keeps the later of two holds", async () => {
+    let now = T;
+    const store = new InMemoryRateLimitStore(() => now);
+    expect(await store.add("k", 2, 60)).toBe(2);
+    expect(await store.add("k", 3, 60)).toBe(5);
+    now = T + 60_000;
+    expect(await store.add("k", 1, 60)).toBe(1);
+    await store.holdUntil("b", T / 1000 + 100);
+    await store.holdUntil("b", T / 1000 + 50);
+    expect(await store.heldUntil("b")).toBe(T / 1000 + 100);
+    expect(await store.heldUntil("none")).toBe(0);
+  });
+
+  it("the default clock is the real one", async () => {
+    const store = new RedisRestRateLimitStore("https://store.example", "t", async () => ({ ok: true, status: 200, json: async () => ({ result: 1 }) }));
+    expect(await store.add("k", 1, 60)).toBe(1);
+  });
+});

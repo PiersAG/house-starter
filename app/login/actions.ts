@@ -3,6 +3,8 @@
 import { signIn } from "@/lib/auth";
 import { AuthError } from "next-auth";
 import { isAuthRateLimitError } from "@/lib/auth-rate-limit";
+import { guardRouteAction, recordBehaviour, ROUTE_LIMIT_MESSAGE } from "@/lib/abuse/route-limit";
+import { headers } from "next/headers";
 import { mfaSignInReason, submittedCode } from "@/lib/mfa/sign-in";
 import { z } from "zod";
 import { emailField, parseForm, passwordField, textField } from "@/lib/validation/input";
@@ -44,6 +46,11 @@ export async function loginAction(
   _prev: LoginState,
   formData: FormData,
 ): Promise<LoginState> {
+  // The route limit and escalation (app-business-core issues 787 and 748) before
+  // anything else; the per-attempt sign-in limit still runs inside authorize.
+  if (await guardRouteAction("auth.signin")) {
+    return { error: ROUTE_LIMIT_MESSAGE, mfaRequired: codeTyped(formData) };
+  }
   const form = parseForm(loginForm, formData);
   if (!form.ok) {
     return {
@@ -75,6 +82,9 @@ export async function loginAction(
       }
       const reason = mfaSignInReason(error);
       if (reason) return { error: MFA_MESSAGES[reason], mfaRequired: true };
+      // A refused sign-in scores against the client (behaviour, not just
+      // volume): slow password guessing under every limit is still banned.
+      await recordBehaviour(await headers(), "auth_refused");
       return { error: "Invalid email or password." };
     }
     // Re-throw redirect — Next.js needs it to bubble up.

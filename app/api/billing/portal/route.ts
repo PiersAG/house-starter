@@ -14,6 +14,8 @@ import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
 import { serviceFailure } from "@/lib/observability/service-failure";
 import { withRequestLog } from "@/lib/observability/with-request-log";
 
+import { withRouteLimit } from "@/lib/abuse/route-limit";
+import { sessionAccount } from "@/lib/abuse/session-account";
 export const runtime = "nodejs";
 
 async function handlePOST(request: Request): Promise<Response> {
@@ -58,4 +60,4 @@ async function handlePOST(request: Request): Promise<Response> {
 }
 
 // One structured log line per request, with its id (issue 503).
-export const POST = withRequestLog("/api/billing/portal", handlePOST);
+export const POST = withRequestLog("/api/billing/portal", withRouteLimit("billing.session", handlePOST, { account: sessionAccount }));

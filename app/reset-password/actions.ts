@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { catalogDb } from "@/lib/catalog";
 import { PasswordResetError, resetPassword } from "@/lib/password-reset";
 import { AUTH_RATE_LIMITS, guardAuthAttempt } from "@/lib/auth-rate-limit";
+import { guardRouteAction, ROUTE_LIMIT_MESSAGE } from "@/lib/abuse/route-limit";
 import { z } from "zod";
 import { newPasswordField, parseForm, tokenField } from "@/lib/validation/input";
 
@@ -20,6 +21,9 @@ export async function resetPasswordAction(
   _prev: ResetPasswordState,
   formData: FormData,
 ): Promise<ResetPasswordState> {
+  // The route limit and escalation (app-business-core issues 787 and 748).
+  if (await guardRouteAction("auth.password-reset")) return { error: ROUTE_LIMIT_MESSAGE };
+
   // Throttled BEFORE the token is looked at: an unthrottled reset endpoint is
   // an offline-free oracle for guessing reset tokens.
   const rate = await guardAuthAttempt(AUTH_RATE_LIMITS.resetPassword);
