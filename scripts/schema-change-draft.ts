@@ -15,6 +15,7 @@ import { declaredNames } from "../lib/migrations/schema";
 
 let needed = 0;
 const today = new Date().toISOString().slice(0, 10);
+const lastNumber = Math.max(0, ...SCHEMA_CHANGES.map((c) => Number.parseInt(c.id, 10) || 0));
 for (const [plane, ddl] of [
   ["catalog", CATALOG_MIGRATION_SQL],
   ["tenant", TENANT_MIGRATION_SQL],
@@ -26,7 +27,7 @@ for (const [plane, ddl] of [
   console.log(
     JSON.stringify(
       {
-        id: `${String(SCHEMA_CHANGES.length + needed).padStart(4, "0")}-<name>`,
+        id: `${String(lastNumber + needed).padStart(4, "0")}-<name>`,
         date: today,
         plane,
         kind: "expand",
