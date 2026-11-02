@@ -130,8 +130,8 @@
       "rule": "maintainer change",
       "detail": "martinrrm",
       "reviewed_on": "2026-11-02",
-      "by": "Claude Code (Dispatch AD-fix2)",
-      "reason": "martinrrm (npm CLI team: also a maintainer of the npm and bin-links packages, with merged npm/cli pull requests in October 2026) appears on 7.8.6 (2026-11-02), which drops gar, hashtagchris and owlstronaut and keeps saquibkhan, npm-cli-ops and reggi. 7.8.6 was published by trusted publishing with the same OIDC configuration as 7.7.3-7.8.5; its SLSA provenance names npm/node-semver .github/workflows/release.yml on main at b37b033 (run 41486847600, started by reggi). The diff from 7.8.5 is the range-parsing performance fix of npm/node-semver#918 (classes/range.js, internal/constants.js, new internal/trim-comparator-whitespace.js): pure string handling, no new dependency, install script, network, file or process access. The template locks 7.8.5 (and 6.3.1), both published before the change."
+      "by": "Claude Code (Dispatch AF)",
+      "reason": "Added at 7.8.6 (published 2026-11-02 17:05 UTC). 7.8.6 was published by GitHub Actions through npm trusted publishing with SLSA provenance, from the release commit b37b033b (\"chore: release 7.8.6 (#940)\") in npm/node-semver. martinrrm has 18 commits and 37 pull requests across npm's own repositories (npm/cli, pacote, bin-links, promise-spawn, template-oss) since July 2026: npm CLI team. Existing maintainers npm-cli-ops, reggi and saquibkhan remain. Neither lockfile installs 7.8.6 (both pin 7.8.1)."
     }
   ]
 }
