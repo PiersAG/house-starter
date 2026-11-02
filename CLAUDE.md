@@ -43,3 +43,12 @@ from lib/csrf.ts; pages pass csrfTokenFor(session) to the client, which sends
 x-csrf-token. Third-party scripts: config/third-party.ts and
 components/ThirdPartyScripts.tsx only. Storage is private. Details:
 docs/data-protection.md.
+
+# Changing the database (enforced by tests/unit/migration-changes.test.ts)
+
+A release only ADDS tables, columns or indexes: the code can be rolled back on
+its own, the database cannot. Remove or rename something only in a later
+release, once no live version reads it (a `contract` change). Every change to
+lib/migrate.ts's DDL gets its entry in lib/migrations/changes.ts in the same
+commit, with the SQL that reverses it — `npx tsx scripts/schema-change-draft.ts`
+prints it. Recovery steps, targets and the rehearsal: docs/recovery.md.

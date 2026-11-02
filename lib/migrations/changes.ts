@@ -1,0 +1,277 @@
+// The schema change log: every change to the database, with its way back
+// (app-business-core issues 345 and 777).
+//
+// Matt Murphy #103: "write the rollback script at the same time it writes the
+// migration plan if it cannot describe how to reverse it the migration is not
+// ready to run." So every change to CATALOG_MIGRATION_SQL or TENANT_MIGRATION_SQL
+// (lib/migrate.ts) gets an entry here IN THE SAME PR, naming what it adds and the
+// SQL that takes it back out — or, rarely, an explicit `irreversible` reason.
+// tests/unit/migration-changes.test.ts fails the PR when:
+//   • the DDL declares a table, column or index no change lists (no entry);
+//   • an entry has neither `reverse` nor `irreversible`;
+//   • a reverse does not actually remove what its change added (each reverse is
+//     run against a fresh database, then the migration is re-run to put it back);
+//   • something a change added has gone from the DDL without a `contract` change.
+//
+// EXPAND / CONTRACT (issue 345). Code is rolled back on its own — a Vercel
+// rollback does not roll the database back — so a release may only ADD to the
+// schema (expand). Removing or renaming a column (contract) is a later, separate
+// change, made only once no released version reads it: a `contract` entry names
+// the change after which nothing used it (`unusedSince`), and the test refuses
+// it while the app's code still names the column. Then rolling back one version
+// never meets a database it cannot read.
+//
+// `npx tsx scripts/schema-change-draft.ts` prints the entry a new DDL change
+// needs, with its reverse SQL drafted.
+
+export type Plane = "catalog" | "tenant";
+
+export interface SchemaChange {
+  id: string;
+  date: string;
+  plane: Plane;
+  kind: "baseline" | "expand" | "contract";
+  summary: string;
+  /** "table", "table.column" or "index:name". */
+  adds: string[];
+  /** contract changes only: what it takes out of the DDL. */
+  removes?: string[];
+  /** contract changes only: the change after which no released code read `removes`. */
+  unusedSince?: string;
+  /** SQL that takes this change back out of a database. */
+  reverse: string | null;
+  /** Why there is no reverse, when there is none. */
+  irreversible?: string;
+}
+
+const BASELINE_REASON =
+  "The first recorded schema: reversing it is deleting the database. Restore from a backup instead (docs/recovery.md).";
+
+export const SCHEMA_CHANGES: SchemaChange[] = [
+  {
+    id: "0001-baseline-catalog",
+    date: "2026-11-02",
+    plane: "catalog",
+    kind: "baseline",
+    summary: "The catalog schema as it stood when the change log began.",
+    adds: [
+      "access_grants",
+      "access_grants.expires_at",
+      "access_grants.granted_at",
+      "access_grants.granted_by",
+      "access_grants.id",
+      "access_grants.note",
+      "access_grants.type",
+      "access_grants.user_id",
+      "audit_events",
+      "audit_events.action",
+      "audit_events.actor",
+      "audit_events.after",
+      "audit_events.before",
+      "audit_events.id",
+      "audit_events.occurred_at",
+      "audit_events.request_id",
+      "audit_events.subject_user_id",
+      "audit_events.target",
+      "audit_events.tenant_id",
+      "billing_disputes",
+      "billing_disputes.amount",
+      "billing_disputes.closed_at",
+      "billing_disputes.currency",
+      "billing_disputes.evidence_due_by",
+      "billing_disputes.opened_at",
+      "billing_disputes.reason",
+      "billing_disputes.status",
+      "billing_disputes.stripe_charge_id",
+      "billing_disputes.stripe_customer_id",
+      "billing_disputes.stripe_dispute_id",
+      "billing_disputes.updated_at",
+      "billing_invoices",
+      "billing_invoices.amount_due",
+      "billing_invoices.amount_paid",
+      "billing_invoices.attempt_count",
+      "billing_invoices.currency",
+      "billing_invoices.dunning_emails_sent",
+      "billing_invoices.hosted_invoice_url",
+      "billing_invoices.last_failed_at",
+      "billing_invoices.paid_at",
+      "billing_invoices.receipt_sent_at",
+      "billing_invoices.status",
+      "billing_invoices.stripe_customer_id",
+      "billing_invoices.stripe_invoice_id",
+      "billing_invoices.updated_at",
+      "billing_invoices.user_id",
+      "credential_events",
+      "credential_events.access",
+      "credential_events.credential",
+      "credential_events.event",
+      "credential_events.expires_at",
+      "credential_events.id",
+      "credential_events.ip",
+      "credential_events.occurred_at",
+      "credential_events.service",
+      "credential_events.tenant_id",
+      "error_events",
+      "error_events.context",
+      "error_events.digest",
+      "error_events.id",
+      "error_events.level",
+      "error_events.message",
+      "error_events.method",
+      "error_events.occurred_at",
+      "error_events.request_id",
+      "error_events.route",
+      "error_events.stack",
+      "index:audit_events_subject_idx",
+      "index:billing_invoices_customer_idx",
+      "index:credential_events_occurred_idx",
+      "index:error_events_occurred_idx",
+      "index:log_events_occurred_idx",
+      "index:log_events_request_idx",
+      "index:password_reset_tokens_user_idx",
+      "index:revoked_sessions_jti_idx",
+      "index:setting_definitions_capability_idx",
+      "index:subscriptions_customer_idx",
+      "index:tenant_access_events_cross_idx",
+      "index:tenant_access_events_tenant_idx",
+      "index:user_mfa_recovery_codes_user_idx",
+      "log_events",
+      "log_events.action",
+      "log_events.duration_ms",
+      "log_events.event",
+      "log_events.fields",
+      "log_events.id",
+      "log_events.level",
+      "log_events.method",
+      "log_events.occurred_at",
+      "log_events.request_id",
+      "log_events.route",
+      "log_events.status",
+      "log_events.tenant_id",
+      "log_events.user_id",
+      "operator_setting_values",
+      "operator_setting_values.key",
+      "operator_setting_values.updated_at",
+      "operator_setting_values.value",
+      "password_reset_tokens",
+      "password_reset_tokens.created_at",
+      "password_reset_tokens.expires_at",
+      "password_reset_tokens.id",
+      "password_reset_tokens.token_hash",
+      "password_reset_tokens.used_at",
+      "password_reset_tokens.user_id",
+      "revoked_sessions",
+      "revoked_sessions.id",
+      "revoked_sessions.jti",
+      "revoked_sessions.revoked_at",
+      "revoked_sessions.user_id",
+      "setting_definitions",
+      "setting_definitions.bounds",
+      "setting_definitions.capability",
+      "setting_definitions.client_scoped",
+      "setting_definitions.description",
+      "setting_definitions.enum_values",
+      "setting_definitions.factory_default",
+      "setting_definitions.functional_group",
+      "setting_definitions.key",
+      "setting_definitions.label",
+      "setting_definitions.operator_only",
+      "setting_definitions.owner_editable",
+      "setting_definitions.requires_flag",
+      "setting_definitions.value_type",
+      "stripe_events",
+      "stripe_events.claimed_at",
+      "stripe_events.id",
+      "stripe_events.processed_at",
+      "stripe_events.status",
+      "subscriptions",
+      "subscriptions.created_at",
+      "subscriptions.current_period_end",
+      "subscriptions.id",
+      "subscriptions.past_due_at",
+      "subscriptions.price_id",
+      "subscriptions.status",
+      "subscriptions.stripe_customer_id",
+      "subscriptions.stripe_subscription_id",
+      "subscriptions.trial_ends_at",
+      "subscriptions.updated_at",
+      "subscriptions.user_id",
+      "tenant_access_events",
+      "tenant_access_events.cross_tenant",
+      "tenant_access_events.id",
+      "tenant_access_events.occurred_at",
+      "tenant_access_events.request_id",
+      "tenant_access_events.route",
+      "tenant_access_events.session_tenant_id",
+      "tenant_access_events.tenant_id",
+      "tenant_access_events.user_id",
+      "tenants",
+      "tenants.created_at",
+      "tenants.db_auth_token",
+      "tenants.db_url",
+      "tenants.id",
+      "tenants.label",
+      "tenants.provisioner",
+      "user_mfa_recovery_codes",
+      "user_mfa_recovery_codes.code_hash",
+      "user_mfa_recovery_codes.created_at",
+      "user_mfa_recovery_codes.id",
+      "user_mfa_recovery_codes.used_at",
+      "user_mfa_recovery_codes.user_id",
+      "user_mfa_totp",
+      "user_mfa_totp.confirmed_at",
+      "user_mfa_totp.created_at",
+      "user_mfa_totp.failed_attempts",
+      "user_mfa_totp.id",
+      "user_mfa_totp.last_used_step",
+      "user_mfa_totp.secret_ciphertext",
+      "user_mfa_totp.secret_iv",
+      "user_mfa_totp.secret_tag",
+      "user_mfa_totp.user_id",
+      "users",
+      "users.created_at",
+      "users.email",
+      "users.id",
+      "users.name",
+      "users.password_hash",
+      "users.role",
+      "users.sessions_valid_from",
+      "users.tenant_id",
+    ],
+    reverse: null,
+    irreversible: BASELINE_REASON,
+  },
+  {
+    id: "0001-baseline-tenant",
+    date: "2026-11-02",
+    plane: "tenant",
+    kind: "baseline",
+    summary: "The tenant schema as it stood when the change log began.",
+    adds: [
+      "index:record_events_by_record",
+      "record_events",
+      "record_events.action",
+      "record_events.actor",
+      "record_events.data",
+      "record_events.entity",
+      "record_events.entity_key",
+      "record_events.id",
+      "record_events.occurred_at",
+      "record_events.version",
+      "setting_values",
+      "setting_values.client_id",
+      "setting_values.key",
+      "setting_values.scope",
+      "setting_values.updated_at",
+      "setting_values.value",
+      "setting_values.version",
+      "tenant_meta",
+      "tenant_meta.created_at",
+      "tenant_meta.id",
+      "tenant_meta.label",
+      "tenant_meta.tenant_id",
+    ],
+    reverse: null,
+    irreversible: BASELINE_REASON,
+  },
+];
