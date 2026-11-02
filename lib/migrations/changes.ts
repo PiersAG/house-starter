@@ -274,4 +274,32 @@ export const SCHEMA_CHANGES: SchemaChange[] = [
     reverse: null,
     irreversible: BASELINE_REASON,
   },
+  {
+    id: "0002-account-deletion-and-retention",
+    date: "2026-11-02",
+    plane: "catalog",
+    kind: "expand",
+    summary:
+      "Account deletion and the retention engine (Dispatch AE, house-starter #152; app-business-core #722, #791): the erasure ledger, records kept after deletion, and when an account was deactivated and is due to be erased.",
+    adds: [
+      "erasures",
+      "erasures.erased_at",
+      "erasures.requested_at",
+      "erasures.tenant_id",
+      "erasures.user_id",
+      "retained_records",
+      "retained_records.clock_started_at",
+      "retained_records.data",
+      "retained_records.expires_at",
+      "retained_records.id",
+      "retained_records.legal_basis",
+      "retained_records.record_key",
+      "retained_records.source_table",
+      "retained_records.subject_user_id",
+      "users.deactivated_at",
+      "users.deletion_due_at",
+    ],
+    reverse:
+      "ALTER TABLE users DROP COLUMN deactivated_at;\nALTER TABLE users DROP COLUMN deletion_due_at;\nDROP TABLE IF EXISTS erasures;\nDROP TABLE IF EXISTS retained_records;",
+  },
 ];
