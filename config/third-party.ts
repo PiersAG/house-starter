@@ -33,6 +33,16 @@ export interface ThirdPartyResource {
   /** For a script: the address of the file loaded. */
   src?: string;
   reason: string;
+  /**
+   * True when it reads or sends personal data (an IP address, cookies, what the
+   * person types or does). Such a resource loads ONLY after the person agrees
+   * (issue 745; Matt Murphy #203: "users should understand what they're
+   * agreeing to in plain language before the data moves anywhere"), and must
+   * also be on config/subprocessors.ts and in config/personal-data.ts.
+   */
+  personalData?: boolean;
+  /** The plain-language question asked before it loads; required with personalData. */
+  consent?: string;
 }
 
 export const THIRD_PARTY: readonly ThirdPartyResource[] = [];

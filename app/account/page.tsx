@@ -5,6 +5,7 @@
 // capability is enabled (comms is flag-off by default) this view is empty by
 // design, not broken.
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { catalogDb } from "@/lib/catalog";
@@ -34,6 +35,11 @@ export default async function AccountPage() {
         <h1 className="text-xl font-semibold text-text-primary">Your preferences</h1>
         <p className="mt-1 text-sm text-text-secondary">
           Preferences that apply to your account.
+        </p>
+        <p className="mt-2 text-sm">
+          <Link href="/account/privacy" className="font-medium text-link underline">
+            Your data: download it or delete your account
+          </Link>
         </p>
       </header>
 

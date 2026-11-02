@@ -29,7 +29,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, closeSync, openSync, existsSync } from "node:fs";
+import { mkdirSync, closeSync, openSync, existsSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve as resolvePath } from "node:path";
 import { eq } from "drizzle-orm";
 import { getCatalogDb } from "@/lib/catalog";
@@ -61,6 +61,13 @@ export interface TenantProvisioner {
   readonly name: ProvisionerName;
   /** Create (or return the existing) database for this tenant. Idempotent. */
   create(tenantId: string, opts?: MintOptions): Promise<ProvisionedDatabase>;
+  /**
+   * Remove this tenant's database at its platform, with its restore history
+   * (account erasure, app-business-core issue 722). True when it is gone (or was
+   * never there); false when the platform refused — the caller has already
+   * wiped its rows, so a refusal leaves an empty database, never data.
+   */
+  destroy(tenantId: string): Promise<boolean>;
 }
 
 /** When a token minted now with Turso duration `d` (e.g. "1h", "2w1d30m") expires. */
@@ -126,6 +133,12 @@ export class FileTenantProvisioner implements TenantProvisioner {
       closeSync(openSync(path, "w"));
     }
     return { url: `file:${path}` };
+  }
+
+  async destroy(tenantId: string): Promise<boolean> {
+    assertValidTenantId(tenantId);
+    rmSync(join(tenantFileDir(this.env), `${tenantId}.db`), { force: true });
+    return true;
   }
 }
 
@@ -314,6 +327,22 @@ export class TursoTenantProvisioner implements TenantProvisioner {
       authToken: await this.mintToken(dbName, opts),
       ...(opts.expiration ? { authTokenExpiresAt: expiryOf(opts.expiration) } : {}),
     };
+  }
+
+  /**
+   * Delete the tenant's hosted database, and with it Turso's restore history for
+   * it. Needs the token's db:delete scope; without it Turso answers 403 and this
+   * returns false (the rows are already wiped by the caller).
+   */
+  async destroy(tenantId: string): Promise<boolean> {
+    assertValidTenantId(tenantId);
+    const dbName = tursoDatabaseName(this.appSlug, tenantId);
+    const r = await tursoFetch(
+      `/organizations/${encodeURIComponent(this.org)}/databases/${encodeURIComponent(dbName)}`,
+      this.token,
+      { method: "DELETE" },
+    );
+    return r.ok || r.status === 404;
   }
 }
 

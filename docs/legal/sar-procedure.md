@@ -24,11 +24,11 @@ Name the identity-verification step (typically: the request must come from the e
 
 For each right, name the concrete steps:
 
-- **Access**: how the personal data is exported (which fields, which format) and how it is delivered.
+- **Access**: self-serve. Signed in, Account → Your data → **Download my data** returns one JSON file with every row the app holds on the account, its own database included, built from `config/personal-data.ts` (`lib/privacy/data-report.ts`); secrets are never included and internal ids are named as held. For a request made outside the app, the operator signs in as nobody: verify the requester (below), then produce the same report with `buildDataReport` and send it to the account's address.
 - **Rectification**: which fields are self-serve in the app; which require a support action.
-- **Erasure**: is deletion "hard" (row removed) or "soft" (row anonymised)? What data is retained under a lawful basis to override erasure (billing records, unresolved disputes)?
+- **Erasure**: self-serve. Account → Your data → **Delete my account** closes the account at once (sign-in refused, sessions ended) and erases it 30 days later through the daily retention job (`lib/privacy/retention-job.ts`): rows are deleted or anonymised table by table as `config/personal-data.ts` says, invoices and payment disputes keep only their amounts and dates for 6 years in the retention layer, the account's own database is wiped and removed, the erasure is checked and the owner is emailed (`docs/legal/retention-policy.md`).
 - **Restriction**: how processing is paused without deletion.
-- **Portability**: which fields are portable and in what format (CSV, JSON).
+- **Portability**: the same JSON file as Access.
 - **Objection**: which purposes accept an objection (marketing always does; legitimate-interest ones assess the balance).
 
 ### Logging
