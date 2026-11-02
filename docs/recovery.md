@@ -103,12 +103,13 @@ Use this for a bad change, a wrong deletion or a migration that damaged data.
 A restore to an earlier point brings back accounts that were erased after it.
 
 1. Before the restore, while the live catalog can be read, save the deletion
-   record.
-2. After the restore, before the app reopens, replay it on the restored catalog.
+   record: `npm run privacy:export-ledger > ledger.json`.
+2. After the restore, before the app reopens, replay it on the restored catalog:
+   `npm run privacy:replay-erasures -- ledger.json`. The drill does this itself
+   when given the record: `npx tsx scripts/restore-drill.ts --src ... --ledger ledger.json --boot`.
 
-The commands for both steps are the app's deletion-record tool, from the
-account-deletion work. A copy in the outside bucket expires after 30 days. So
-no erased customer's data outlives the published retention period.
+A copy in the outside bucket expires after 30 days. So no erased customer's data
+outlives the published retention period.
 
 ## E. Changing the database safely
 

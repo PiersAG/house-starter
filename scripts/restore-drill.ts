@@ -7,6 +7,10 @@
 // --src     an export folder (scripts/backup-export.ts output, as downloaded
 //           from the locked bucket).
 // --build   build the app first, with the drill-only values.
+// --ledger  the deletion record exported from the live catalog BEFORE the
+//           restore (`npm run privacy:export-ledger > ledger.json`): replayed on
+//           the restored catalog before the app starts, so accounts erased after
+//           the backup stay erased (docs/recovery.md § D).
 // --boot    start the built app on the restored data
 //           and require /api/health to answer 200 with every check passing:
 //           "the application runs" (Matt Murphy #88), seen, not assumed.
@@ -18,7 +22,8 @@
 
 // First: lets this script load lib/ modules marked `import "server-only"` (issue 797).
 import "./server-only-node.cjs";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDrill } from "../lib/backup/drill";
@@ -32,7 +37,7 @@ function arg(name: string): string | undefined {
 async function main(): Promise<void> {
   const src = arg("--src");
   if (!src) {
-    console.error("Usage: restore-drill.ts --src <export folder> [--target <dir>] [--build] [--boot] [--report <file>]");
+    console.error("Usage: restore-drill.ts --src <export folder> [--target <dir>] [--build] [--ledger <file>] [--boot] [--report <file>]");
     process.exit(2);
   }
   if (process.argv.includes("--build")) {
@@ -44,10 +49,26 @@ async function main(): Promise<void> {
   }
   const target = arg("--target") ?? mkdtempSync(join(tmpdir(), "restore-drill-"));
   const port = Number(arg("--port") ?? 3100);
+  const ledger = arg("--ledger");
   const report = await runDrill({
     app: process.env.APP_SLUG ?? "app",
     fetchExport: async () => src,
     targetDir: join(target, "restored"),
+    afterRestore: ledger
+      ? [
+          {
+            name: "replay the deletion record on the restored catalog",
+            run: async (restored) => {
+              if (!existsSync("scripts/erasure-ledger.ts")) throw new Error("this app has no scripts/erasure-ledger.ts");
+              const r = spawnSync("npx", ["tsx", "scripts/erasure-ledger.ts", "replay", ledger], {
+                env: { ...process.env, CATALOG_DATABASE_URL: restored.catalogUrl, DATABASE_URL: restored.catalogUrl },
+                stdio: ["ignore", "inherit", "inherit"],
+              });
+              if (r.status !== 0) throw new Error(`the deletion record did not replay (exit code ${r.status})`);
+            },
+          },
+        ]
+      : undefined,
     boot: process.argv.includes("--boot") ? (r) => bootAndCheck(r, port) : undefined,
   });
   const out = arg("--report");
