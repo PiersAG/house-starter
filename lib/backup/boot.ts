@@ -10,11 +10,28 @@ import "server-only";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type { RestoreResult } from "@/lib/backup/restore";
 
+/** The only values the drilled app takes from the drill's own environment: what a
+ *  program needs to run at all (where programs and the home folder are, the temp
+ *  folder, language and time zone). Everything else is left behind: no cloud key
+ *  (AWS_*), no GitHub sign-in value (GITHUB_TOKEN, ACTIONS_*), no database token
+ *  reaches the app (app-business-core #528 review, finding 2). An allow-list, never
+ *  a copy of `process.env`, so a value added to the job later cannot leak in. */
+export const DRILL_ENV_PASSTHROUGH = ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TZ"] as const;
+
 /** Drill-only values: never a real key; the drill reaches no outside service. */
-export function drillEnv(restored: RestoreResult, port: number): NodeJS.ProcessEnv {
+export function drillEnv(
+  restored: RestoreResult,
+  port: number,
+  from: Record<string, string | undefined> = process.env,
+): NodeJS.ProcessEnv {
   const drillOnly = "restore-drill-only-not-a-real-value";
+  const passed: Record<string, string | undefined> = {};
+  for (const k of DRILL_ENV_PASSTHROUGH) {
+    if (from[k] !== undefined) passed[k] = from[k];
+  }
   return {
-    ...process.env,
+    ...passed,
+    NEXT_TELEMETRY_DISABLED: "1",
     NODE_ENV: "production",
     PORT: String(port),
     CATALOG_DATABASE_URL: restored.catalogUrl,
@@ -26,7 +43,7 @@ export function drillEnv(restored: RestoreResult, port: number): NodeJS.ProcessE
     STRIPE_WEBHOOK_SECRET: `whsec_${drillOnly}`,
     EMAIL_PROVIDER_API_KEY: `re_${drillOnly}`,
     EMAIL_SEND_MODE: "log",
-    APP_LIFECYCLE_STATE: process.env.APP_LIFECYCLE_STATE || "LAUNCHED",
+    APP_LIFECYCLE_STATE: from.APP_LIFECYCLE_STATE || "LAUNCHED",
     MFA_ENCRYPTION_KEY: Buffer.from("restore-drill-only-key-32-bytes!").toString("base64"),
   };
 }

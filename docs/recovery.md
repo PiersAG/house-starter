@@ -30,9 +30,12 @@ target. A miss is a CEO decision: change the target, or pay for a faster setup.
   or delete it in that time, including the owner. Then it expires. A tenant
   that could not be exported turns the job red.
 - **The monthly restore drill (#752).** On the 1st of each month the factory's
-  `app-restore-drill.yml` restores the newest outside copy into an empty,
-  throwaway place. It checks every row, starts the app on the restored data,
-  times it all and saves the result.
+  `app-restore-drill.yml` restores the newest outside copy that is complete
+  and intact (no missing tenant, every file matching its checksum) into an
+  empty, throwaway place. It checks every row, starts the app on the restored
+  data, times it all and saves the result. Each app is drilled in a run of its
+  own, and the app's code runs with no key: only the values in
+  `lib/backup/boot.ts` `drillEnv` reach it.
 
 ## A. Undo a bad deploy (seconds)
 
@@ -84,6 +87,9 @@ Use this for a bad change, a wrong deletion or a migration that damaged data.
    older ones are still intact.
    `aws s3 sync s3://<bucket>/apps/<app>/<stamp>/ ./restore-src/`
    This needs the restore role. In the factory it is the restore-drill job.
+   Check the copy's date against the nightly backup run that made it (the
+   factory's `app-backup.yml` run list): the lock stops a copy being deleted,
+   not a forged one being added, so a copy no nightly run made is not restored.
 3. Check it and restore it into a clean place:
    `npx tsx scripts/restore-drill.ts --src ./restore-src --boot --report drill.json`
    It checks every file's fingerprint and SQLite's own checks. It checks every
