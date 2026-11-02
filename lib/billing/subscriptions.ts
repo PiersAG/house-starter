@@ -4,8 +4,14 @@
 // takes the Drizzle database as an explicit argument, so the webhook handler
 // and the paid-gate can be unit-tested against an in-memory database without
 // importing the live singleton in lib/db.ts.
+//
+// Every change of plan (price) or status is written to the audit trail
+// (lib/audit/trail.ts, PiersAG/app-business-core#796: "users upgrading plans …
+// none of it is logged"), with what it was before and after — the evidence for
+// a billing dispute (#370).
 
 import { eq } from "drizzle-orm";
+import { recordAuditEvent } from "@/lib/audit/trail";
 import { subscriptions, type NewSubscription, type Subscription } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";
 
@@ -35,6 +41,34 @@ export async function getSubscriptionByStripeCustomerId(
     .limit(1)
     .all();
   return rows[0];
+}
+
+type PlanState = { status: string | null; priceId: string | null };
+
+function planOf(row: Subscription | undefined): PlanState {
+  return { status: row?.status ?? null, priceId: row?.priceId ?? null };
+}
+
+/** Audit a plan or status change (#796). No row when nothing that matters moved. */
+async function auditPlanChange(
+  db: AppDatabase,
+  before: Subscription | undefined,
+  after: Subscription | undefined,
+): Promise<void> {
+  const was = planOf(before);
+  const now = planOf(after);
+  if (!after || (was.status === now.status && was.priceId === now.priceId)) return;
+  await recordAuditEvent(
+    {
+      action: "plan_changed",
+      actor: "system",
+      subjectUserId: after.userId,
+      target: "subscription",
+      before: before ? was : null,
+      after: now,
+    },
+    db,
+  );
 }
 
 export interface UpsertSubscriptionInput {
@@ -68,6 +102,7 @@ export async function upsertSubscriptionByUserId(
   if (input.trialEndsAt !== undefined) set.trialEndsAt = input.trialEndsAt;
   if (input.pastDueAt !== undefined) set.pastDueAt = input.pastDueAt;
 
+  const before = await getSubscriptionByUserId(db, input.userId);
   const rows = await db
     .insert(subscriptions)
     .values({
@@ -84,6 +119,7 @@ export async function upsertSubscriptionByUserId(
     .onConflictDoUpdate({ target: subscriptions.userId, set })
     .returning()
     .all();
+  await auditPlanChange(db, before, rows[0]);
   return rows[0];
 }
 
@@ -107,10 +143,15 @@ export async function updateSubscriptionByStripeCustomerId(
   stripeCustomerId: string,
   patch: SubscriptionPatch,
 ): Promise<number> {
+  const watched = patch.status !== undefined || patch.priceId !== undefined;
+  const before = watched ? await getSubscriptionByStripeCustomerId(db, stripeCustomerId) : undefined;
   const result = await db
     .update(subscriptions)
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(subscriptions.stripeCustomerId, stripeCustomerId))
     .run();
+  if (watched && result.rowsAffected > 0) {
+    await auditPlanChange(db, before, await getSubscriptionByStripeCustomerId(db, stripeCustomerId));
+  }
   return result.rowsAffected;
 }
