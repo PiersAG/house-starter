@@ -16,6 +16,7 @@ import { AUTH_RATE_LIMITS, checkAccountRateLimit, guardAuthAttempt } from "@/lib
 import { verifyPassword } from "@/lib/password";
 import { getUserById } from "@/lib/users";
 import { getTenantDb } from "@/lib/tenant-context";
+import { guardRouteAction, ROUTE_LIMIT_MESSAGE } from "@/lib/abuse/route-limit";
 import { buildDataReport } from "@/lib/privacy/data-report";
 import { DeletionError, requestAccountDeletion } from "@/lib/privacy/deletion";
 import { sendDeletionRequested } from "@/lib/privacy/runtime";
@@ -43,6 +44,7 @@ export async function downloadMyDataAction(): Promise<DownloadState> {
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) return { error: "Your session has ended. Sign in again." };
+  if (await guardRouteAction("account.write", { accountId: userId })) return { error: ROUTE_LIMIT_MESSAGE };
   if (await limited(userId)) return { error: "Too many attempts. Please try again shortly." };
   let tenant = null;
   try {
@@ -69,6 +71,7 @@ export async function deleteMyAccountAction(_prev: DeleteState, formData: FormDa
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) return { error: "Your session has ended. Sign in again." };
+  if (await guardRouteAction("account.write", { accountId: userId })) return { error: ROUTE_LIMIT_MESSAGE };
   // The password check is a password guess, so it is limited like one.
   if (await limited(userId)) return { error: "Too many attempts. Please try again shortly." };
 

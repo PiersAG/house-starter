@@ -14,6 +14,7 @@ import { NextResponse } from "next/server";
 import { isKernelEnabled } from "@/config/kernel";
 import { catalogDb } from "@/lib/catalog";
 import { withRequestLog } from "@/lib/observability/with-request-log";
+import { withRouteLimit } from "@/lib/abuse/route-limit";
 import { cronAuthorised } from "@/lib/privacy/cron-auth";
 import { runRetentionJob } from "@/lib/privacy/retention-job";
 import { liveTenantPlane, sendErasureConfirmation } from "@/lib/privacy/runtime";
@@ -45,4 +46,4 @@ async function handleGET(request: Request): Promise<Response> {
   );
 }
 
-export const GET = withRequestLog("/api/cron/retention", handleGET);
+export const GET = withRequestLog("/api/cron/retention", withRouteLimit("jobs.retention", handleGET));
