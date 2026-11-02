@@ -21,6 +21,7 @@ import { clientKeyFromHeaders, getRateLimiter } from "@/lib/rate-limit";
 import { logSecurityEvent } from "@/lib/security-log";
 import { withRequestLog } from "@/lib/observability/with-request-log";
 
+import { withRouteLimit } from "@/lib/abuse/route-limit";
 export const runtime = "nodejs";
 
 const reportSchema = z.union([
@@ -72,4 +73,4 @@ async function handlePOST(request: Request): Promise<Response> {
 }
 
 // One structured log line per request, with its id (issue 503).
-export const POST = withRequestLog("/api/csp-report", handlePOST);
+export const POST = withRequestLog("/api/csp-report", withRouteLimit("public.csp-report", handlePOST));

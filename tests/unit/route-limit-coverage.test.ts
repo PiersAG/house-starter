@@ -33,19 +33,6 @@ function files(dir: string, keep: (name: string) => boolean): string[] {
  * by dispatch AC (request logging) when this landed. Nothing may be ADDED here.
  */
 export const PENDING_CEO_WIRING: readonly string[] = [
-  "app/api/auth/[...nextauth]/route.ts",
-  "app/api/auth/forgot-password/route.ts",
-  "app/api/auth/mfa/confirm/route.ts",
-  "app/api/auth/mfa/enroll/route.ts",
-  "app/api/auth/mfa/verify/route.ts",
-  "app/api/auth/signup/route.ts",
-  "app/api/billing/checkout/route.ts",
-  "app/api/billing/portal/route.ts",
-  "app/api/billing/webhook/route.ts",
-  "app/api/csp-report/route.ts",
-  "app/api/health/route.ts",
-  "app/api/settings/[key]/route.ts",
-  "app/api/tenant/route.ts",
 ];
 
 /** Files that may stay without a route limit, and why. */
