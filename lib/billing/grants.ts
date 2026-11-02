@@ -15,8 +15,13 @@
 //
 // DI pattern (like lib/billing/subscriptions.ts): every function takes the
 // Drizzle db explicitly, so it unit-tests against an in-memory database.
+//
+// Every grant made, changed or revoked is written to the audit trail
+// (lib/audit/trail.ts, PiersAG/app-business-core#796: "modifying permissions …
+// none of it is logged") as permissions_changed, with the grant before and after.
 
 import { eq } from "drizzle-orm";
+import { recordAuditEvent } from "@/lib/audit/trail";
 import { accessGrants, type AccessGrant } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";
 
@@ -79,6 +84,7 @@ export async function grantAccess(db: AppDatabase, input: GrantInput): Promise<A
       `grantAccess: unknown grant type ${JSON.stringify(input.type)} — must be one of ${GRANT_TYPES.join(", ")}.`,
     );
   }
+  const before = await getGrantByUserId(db, input.userId);
   const row = {
     id: globalThis.crypto?.randomUUID?.() ?? `grant_${input.userId}`,
     userId: input.userId,
@@ -101,12 +107,46 @@ export async function grantAccess(db: AppDatabase, input: GrantInput): Promise<A
         expiresAt: row.expiresAt,
       },
     });
-  return (await getGrantByUserId(db, input.userId))!;
+  const after = (await getGrantByUserId(db, input.userId))!;
+  await recordAuditEvent(
+    {
+      action: "permissions_changed",
+      actor: input.grantedBy ?? "operator",
+      subjectUserId: input.userId,
+      target: "grant",
+      before: before ? grantSummary(before) : null,
+      after: grantSummary(after),
+    },
+    db,
+  );
+  return after;
+}
+
+function grantSummary(g: AccessGrant): Record<string, string | null> {
+  return { type: g.type, expiresAt: g.expiresAt ? g.expiresAt.toISOString() : null };
 }
 
 /** Remove an account's grant (revoke). No-op when the account has none. */
-export async function revokeGrant(db: AppDatabase, userId: string): Promise<void> {
+export async function revokeGrant(
+  db: AppDatabase,
+  userId: string,
+  actor: string = "operator",
+): Promise<void> {
+  const before = await getGrantByUserId(db, userId);
   await db.delete(accessGrants).where(eq(accessGrants.userId, userId));
+  if (before) {
+    await recordAuditEvent(
+      {
+        action: "permissions_changed",
+        actor,
+        subjectUserId: userId,
+        target: "grant",
+        before: grantSummary(before),
+        after: null,
+      },
+      db,
+    );
+  }
 }
 
 /**

@@ -25,6 +25,8 @@
 import "server-only";
 
 import { and, eq, sql } from "drizzle-orm";
+import { recordAuditEvent } from "@/lib/audit/trail";
+import { currentRequest } from "@/lib/observability/request-context";
 import { recordEvents } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";
 
@@ -73,6 +75,17 @@ export async function appendRecordEvent(db: AppDatabase, event: RecordEventInput
       actor: event.actor,
     })
     .run();
+  // A deletion of customer data is a sensitive action (#796): it also goes in
+  // the catalog's append-only audit trail, with who did it and from which tenant.
+  if (event.action === "deleted") {
+    await recordAuditEvent({
+      action: "data_deleted",
+      actor: event.actor,
+      subjectUserId: event.actor === "system" ? null : event.actor,
+      tenantId: currentRequest()?.tenantId ?? null,
+      target: `${event.entity}:${event.entityKey}`,
+    });
+  }
 }
 
 export interface RecordEvent extends Omit<RecordEventInput, "data"> {

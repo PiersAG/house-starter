@@ -28,6 +28,7 @@ import { enforcePaidApi } from "@/lib/billing/enforce";
 import { getTenantDb } from "@/lib/tenant-context";
 import { tenantMeta } from "@/lib/schema";
 import { defineDto, dtoJson } from "@/lib/dto";
+import { withRequestLog } from "@/lib/observability/with-request-log";
 
 export const runtime = "nodejs";
 
@@ -38,7 +39,7 @@ const TenantResponse = defineDto({
   tenant: z.object({ id: z.string(), label: z.string().nullable() }),
 });
 
-export async function GET(): Promise<Response> {
+async function handleGET(): Promise<Response> {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json(
@@ -66,3 +67,6 @@ export async function GET(): Promise<Response> {
 
   return dtoJson(TenantResponse, { tenant: { id: meta.tenantId, label: meta.label } });
 }
+
+// One structured log line per request, with its id (issue 503).
+export const GET = withRequestLog("/api/tenant", handleGET);

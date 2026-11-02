@@ -12,10 +12,11 @@ import { getStripe } from "@/lib/billing/stripe";
 import { getSubscriptionByUserId } from "@/lib/billing/subscriptions";
 import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
 import { serviceFailure } from "@/lib/observability/service-failure";
+import { withRequestLog } from "@/lib/observability/with-request-log";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
   // Defence in depth behind the edge middleware — 404 before the session, the
   // DB read or any Stripe call when this app sells no subscription.
   const denied = requireSubscriptionBillingForPath(new URL(request.url).pathname);
@@ -55,3 +56,6 @@ export async function POST(request: Request): Promise<Response> {
 
   return NextResponse.json({ url: portal.url });
 }
+
+// One structured log line per request, with its id (issue 503).
+export const POST = withRequestLog("/api/billing/portal", handlePOST);

@@ -105,7 +105,7 @@ const CHECKED = /\b(verifyCsrf|verifySameOrigin|guardMfaRequest)\s*\(/;
 
 describe("every state-changing endpoint is checked (#353)", () => {
   const writes = routes("app/api").filter((f) =>
-    /export\s+(async\s+)?function\s+(POST|PUT|PATCH|DELETE)\b|export\s+const\s+\{[^}]*\b(POST|PUT|PATCH|DELETE)\b/.test(
+    /export\s+(async\s+)?function\s+(POST|PUT|PATCH|DELETE)\b|export\s+const\s+\{[^}]*\b(POST|PUT|PATCH|DELETE)\b|export\s+const\s+(POST|PUT|PATCH|DELETE)\s*=/.test(
       readFileSync(join(ROOT, f), "utf8"),
     ),
   );

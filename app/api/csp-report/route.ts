@@ -19,6 +19,7 @@ import { z } from "zod";
 import { CSP_REPORT_MAX_BYTES, parseCspReport } from "@/lib/csp-report";
 import { clientKeyFromHeaders, getRateLimiter } from "@/lib/rate-limit";
 import { logSecurityEvent } from "@/lib/security-log";
+import { withRequestLog } from "@/lib/observability/with-request-log";
 
 export const runtime = "nodejs";
 
@@ -42,7 +43,7 @@ async function underLimit(headers: Headers): Promise<boolean> {
   }
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (declared > CSP_REPORT_MAX_BYTES) return NO_CONTENT();
   if (!(await underLimit(request.headers))) return NO_CONTENT();
@@ -69,3 +70,6 @@ export async function POST(request: Request): Promise<Response> {
   }
   return NO_CONTENT();
 }
+
+// One structured log line per request, with its id (issue 503).
+export const POST = withRequestLog("/api/csp-report", handlePOST);

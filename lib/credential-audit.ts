@@ -73,8 +73,9 @@ export async function recordCredentialEvent(input: CredentialEventInput): Promis
       })
       .run();
   } catch (e) {
+    const kind = input.credential; // the credential's kind ("tenant-db"), never a value
     console.error(
-      `credential-audit: could not record a ${input.event} of ${input.credential}` +
+      `credential-audit: could not record a ${input.event} of ${kind}` +
         (input.tenantId ? ` for tenant ${input.tenantId}` : ""),
       e instanceof Error ? e.message : e,
     );
