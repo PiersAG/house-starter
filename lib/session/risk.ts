@@ -79,6 +79,7 @@ export function localHour(timezone: string | null, atMs: number): number | null 
     const h = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone: timezone })
       .format(new Date(atMs));
     const n = Number(h);
+    /* v8 ignore next -- defensive: an h23 hour is always "00"–"23" */
     return Number.isInteger(n) ? n : null;
   } catch {
     return null;

@@ -22,7 +22,7 @@ import "server-only";
 import type { JWT } from "next-auth/jwt";
 import { headers } from "next/headers";
 import type { AppDatabase } from "@/lib/users";
-import { CONTEXT_AWARE_ACCESS, SIGN_IN_RISK_CHECKS } from "@/config/sessions";
+import { CONTEXT_AWARE_ACCESS, SESSION_POLICY, SIGN_IN_RISK_CHECKS, type SessionPolicy } from "@/config/sessions";
 import { currentRequestContext, type RequestContext } from "@/lib/session/context";
 import { endSessionRecord, getSessionRecord, startSessionRecord, touchSessionRecord } from "@/lib/session/records";
 import { isImpossibleTravel, scoreSession } from "@/lib/session/risk";
@@ -44,6 +44,8 @@ export type SessionHookDeps = {
   appName?: () => Promise<string>;
   riskChecks?: boolean;
   contextAccess?: boolean;
+  /** The session setting (config/sessions.ts); tests pin both states. */
+  policy?: SessionPolicy;
 };
 
 async function requestReputation(): Promise<"good" | "suspect" | "bad"> {
@@ -76,7 +78,8 @@ export async function onSessionStart(db: AppDatabase, token: JWT, deps: SessionH
         await (deps.sendEmail ?? sendNewSignInEmail)(email, {
           appName: await (deps.appName ?? getAppName)(),
           device: context.deviceLabel ?? "an unknown browser",
-          country: context.country ?? "an unknown country",
+          // an unfamiliar sign-in always has a country (lib/session/risk.ts assessSignIn)
+          country: String(context.country),
           whenUtc: new Date().toISOString().slice(0, 16).replace("T", " "),
           revokeUrl: `${base}/sessions/revoke?t=${encodeURIComponent(revokeToken(sessionId, userId))}`,
           securityUrl: `${base}/account/security`,
@@ -109,7 +112,7 @@ export async function checkSessionRecord(
     }
     if (record.userId !== userId || record.endedAt) return "end";
 
-    if (pastAbsoluteLife(token.authTime as number | undefined, token.rememberMe === true, nowSeconds)) {
+    if (pastAbsoluteLife(token.authTime as number | undefined, token.rememberMe === true, nowSeconds, deps.policy ?? SESSION_POLICY)) {
       await endSessionRecord(db, { userId, sessionId, reason: "expired", now });
       logSecurityEvent("session_ended", { userId, reason: "expired" });
       return "end";

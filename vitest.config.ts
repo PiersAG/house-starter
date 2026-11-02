@@ -247,6 +247,50 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // Sessions, sign-in risk and context-aware access (app-business-core
+        // issues 506, 519, 525, 741): every branch is a sign-in or access decision.
+        "**/lib/session/policy.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/session/risk.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/session/return-path.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/session/lifetime.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/session/records.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/session/hooks.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/session/guard.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
         "**/lib/account-security.ts": {
           lines: 100,
           statements: 100,
