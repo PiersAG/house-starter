@@ -33,6 +33,10 @@ export interface ErrorEventInput {
   method?: string | null;
   digest?: string | null;
   context?: Record<string, unknown> | null;
+  /** The request's id (x-request-id, #503), so the row matches the response header. */
+  requestId?: string | null;
+  /** A level from lib/observability/log.ts's scale; default "error". */
+  level?: "debug" | "info" | "warn" | "error" | null;
 }
 
 // A remote libSQL/Turso URL needs an auth token; a local file:/:memory: URL does
@@ -78,12 +82,19 @@ const ENSURE_SQL = `CREATE TABLE IF NOT EXISTS error_events (
   route TEXT,
   method TEXT,
   digest TEXT,
-  context TEXT
+  context TEXT,
+  request_id TEXT,
+  level TEXT
 );`;
 
 async function ensureTable(client: Client): Promise<void> {
   if (ensured) return;
   await client.execute(ENSURE_SQL);
+  // A table made before #503 has no request_id / level: add them (idempotent).
+  const cols = await client.execute("PRAGMA table_info(error_events)");
+  const have = new Set(cols.rows.map((r) => String((r as Record<string, unknown>).name)));
+  if (!have.has("request_id")) await client.execute("ALTER TABLE error_events ADD COLUMN request_id TEXT");
+  if (!have.has("level")) await client.execute("ALTER TABLE error_events ADD COLUMN level TEXT");
   await client.execute(
     "CREATE INDEX IF NOT EXISTS error_events_occurred_idx ON error_events(occurred_at);",
   );
@@ -114,8 +125,8 @@ export async function recordError(
     await ensureTable(client);
     await client.execute({
       sql:
-        "INSERT INTO error_events (id, message, stack, route, method, digest, context) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO error_events (id, message, stack, route, method, digest, context, request_id, level) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       args: [
         newId(),
         String(input.message).slice(0, 4000),
@@ -124,6 +135,8 @@ export async function recordError(
         input.method ?? null,
         input.digest ?? null,
         input.context ? JSON.stringify(input.context).slice(0, 4000) : null,
+        input.requestId ?? null,
+        input.level ?? "error",
       ],
     });
     return true;

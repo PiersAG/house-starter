@@ -185,7 +185,9 @@ CREATE TABLE IF NOT EXISTS error_events (
   route TEXT,
   method TEXT,
   digest TEXT,
-  context TEXT
+  context TEXT,
+  request_id TEXT,
+  level TEXT
 );
 
 CREATE INDEX IF NOT EXISTS error_events_occurred_idx ON error_events(occurred_at);
@@ -241,6 +243,70 @@ CREATE TABLE IF NOT EXISTS credential_events (
 );
 
 CREATE INDEX IF NOT EXISTS credential_events_occurred_idx ON credential_events(occurred_at);
+
+-- Structured log (#503): request lines, audit and alert events. Never a body or
+-- a header. Written by lib/observability/log.ts's default sink.
+CREATE TABLE IF NOT EXISTS log_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  occurred_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  level TEXT NOT NULL,
+  event TEXT NOT NULL,
+  request_id TEXT,
+  route TEXT,
+  method TEXT,
+  status INTEGER,
+  duration_ms INTEGER,
+  user_id TEXT,
+  tenant_id TEXT,
+  action TEXT,
+  fields TEXT
+);
+
+CREATE INDEX IF NOT EXISTS log_events_occurred_idx ON log_events(occurred_at);
+CREATE INDEX IF NOT EXISTS log_events_request_idx ON log_events(request_id);
+
+-- Audit trail of sensitive customer actions (#796): append-only — the two
+-- triggers refuse every UPDATE and DELETE. lib/audit/trail.ts.
+CREATE TABLE IF NOT EXISTS audit_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  occurred_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  action TEXT NOT NULL CHECK (action IN ('plan_changed','email_changed','data_deleted','permissions_changed')),
+  actor TEXT NOT NULL,
+  subject_user_id TEXT,
+  tenant_id TEXT,
+  target TEXT NOT NULL,
+  before TEXT,
+  after TEXT,
+  request_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS audit_events_subject_idx ON audit_events(subject_user_id, occurred_at);
+
+CREATE TRIGGER IF NOT EXISTS audit_events_no_update BEFORE UPDATE ON audit_events
+BEGIN
+  SELECT RAISE(ABORT, 'audit_events is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_events_no_delete BEFORE DELETE ON audit_events
+BEGIN
+  SELECT RAISE(ABORT, 'audit_events is append-only');
+END;
+
+-- Tenant data access log (#806): who opened whose data, when; cross_tenant = 1
+-- is a detected cross-tenant exposure. lib/tenant/access-log.ts.
+CREATE TABLE IF NOT EXISTS tenant_access_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  occurred_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  tenant_id TEXT NOT NULL,
+  session_tenant_id TEXT,
+  user_id TEXT,
+  request_id TEXT,
+  route TEXT,
+  cross_tenant INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS tenant_access_events_tenant_idx ON tenant_access_events(tenant_id, occurred_at);
+CREATE INDEX IF NOT EXISTS tenant_access_events_cross_idx ON tenant_access_events(cross_tenant, occurred_at);
 `;
 
 /**

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { getAppName } from "@/lib/branding";
+import { OfflineNotice } from "@/components/OfflineNotice";
 import "./globals.css";
 
 // Title comes from the owner-set app name (settings registry), neutral
@@ -25,6 +26,7 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body className="bg-background text-text-primary">
+        <OfflineNotice />
         {children}
         <footer className="border-t border-border py-6 text-center text-sm text-text-secondary">
           <a href="/contact" className="underline underline-offset-4">Contact</a>

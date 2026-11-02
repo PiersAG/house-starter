@@ -15,10 +15,11 @@ import { getStripe } from "@/lib/billing/stripe";
 import { billingConfig } from "@/config/billing";
 import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
 import { serviceFailure } from "@/lib/observability/service-failure";
+import { withRequestLog } from "@/lib/observability/with-request-log";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
   // Defence in depth behind the edge middleware: an app whose commission
   // declared no subscription answers 404 here BEFORE the session lookup and
   // before any Stripe call, so no code path can reach checkout with the
@@ -73,3 +74,6 @@ export async function POST(request: Request): Promise<Response> {
 
   return NextResponse.json({ url: checkout.url });
 }
+
+// One structured log line per request, with its id (issue 503).
+export const POST = withRequestLog("/api/billing/checkout", handlePOST);

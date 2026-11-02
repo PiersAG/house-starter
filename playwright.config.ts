@@ -113,6 +113,8 @@ export default defineConfig({
         process.env.STRIPE_WEBHOOK_SECRET ||
         "whsec_ci-e2e-only-dummy-not-a-real-secret",
       APP_LIFECYCLE_STATE: process.env.APP_LIFECYCLE_STATE || "LAUNCHED",
+      // The crash-screen test route (app/crash-check, issue 502) exists only here.
+      E2E_CRASH_ROUTE: "1",
       EMAIL_PROVIDER_API_KEY:
         process.env.EMAIL_PROVIDER_API_KEY ||
         "re_ci-e2e-only-dummy-not-a-real-key",
