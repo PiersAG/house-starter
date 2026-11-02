@@ -112,3 +112,24 @@ async function stopGroup(child: ChildProcess): Promise<void> {
   signal("SIGKILL"); // anything in the group that outlived its parent
 }
 
+/** The step that replays the deletion record on the restored catalog before the app
+ *  reopens (docs/recovery.md § D). It runs the app's own scripts/erasure-ledger.ts with
+ *  the same allow-listed drill values as the app itself (drillEnv), never a copy of the
+ *  job's `process.env` (app-business-core #528 second review, finding 9). */
+export function ledgerReplayStep(
+  ledger: string,
+  port: number,
+  run: typeof spawnSync = spawnSync,
+  from: Record<string, string | undefined> = process.env,
+): { name: string; run: (restored: RestoreResult) => Promise<void> } {
+  return {
+    name: "replay the deletion record on the restored catalog",
+    run: async (restored) => {
+      const r = run("npx", ["tsx", "scripts/erasure-ledger.ts", "replay", ledger], {
+        env: drillEnv(restored, port, from),
+        stdio: ["ignore", "inherit", "inherit"],
+      });
+      if (r.status !== 0) throw new Error(`the deletion record did not replay (exit code ${r.status})`);
+    },
+  };
+}

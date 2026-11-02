@@ -22,12 +22,11 @@
 
 // First: lets this script load lib/ modules marked `import "server-only"` (issue 797).
 import "./server-only-node.cjs";
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDrill } from "../lib/backup/drill";
-import { bootAndCheck, buildForDrill } from "../lib/backup/boot";
+import { bootAndCheck, buildForDrill, ledgerReplayStep } from "../lib/backup/boot";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -60,11 +59,7 @@ async function main(): Promise<void> {
             name: "replay the deletion record on the restored catalog",
             run: async (restored) => {
               if (!existsSync("scripts/erasure-ledger.ts")) throw new Error("this app has no scripts/erasure-ledger.ts");
-              const r = spawnSync("npx", ["tsx", "scripts/erasure-ledger.ts", "replay", ledger], {
-                env: { ...process.env, CATALOG_DATABASE_URL: restored.catalogUrl, DATABASE_URL: restored.catalogUrl },
-                stdio: ["ignore", "inherit", "inherit"],
-              });
-              if (r.status !== 0) throw new Error(`the deletion record did not replay (exit code ${r.status})`);
+              await ledgerReplayStep(ledger, port).run(restored);
             },
           },
         ]

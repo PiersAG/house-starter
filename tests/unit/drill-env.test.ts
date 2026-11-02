@@ -4,8 +4,9 @@
 // no cloud key, no GitHub sign-in value, no database token reaches it
 // (app-business-core #528 review, finding 2). drillEnv is an allow-list.
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { DRILL_ENV_PASSTHROUGH, drillEnv } from "@/lib/backup/boot";
+import { DRILL_ENV_PASSTHROUGH, drillEnv, ledgerReplayStep } from "@/lib/backup/boot";
 import type { RestoreResult } from "@/lib/backup/restore";
 
 const restored = { catalogUrl: "file:restored.db", manifest: { tenancy: "per_tenant" } } as RestoreResult;
@@ -49,5 +50,28 @@ describe("drill environment", () => {
     } finally {
       delete process.env.AWS_SECRET_ACCESS_KEY;
     }
+  });
+
+  // #528 second review, finding 9: the deletion-record replay ran with the whole job
+  // environment ({ ...process.env }), not the allow-list.
+  it("replays the deletion record with the allow-listed drill values only", async () => {
+    let seen: NodeJS.ProcessEnv | undefined;
+    const fakeRun = ((_cmd: string, _args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
+      seen = opts.env;
+      return { status: 0 };
+    }) as unknown as Parameters<typeof ledgerReplayStep>[2];
+    await ledgerReplayStep("ledger.json", 3100, fakeRun, job).run(restored);
+    expect(seen).toEqual(drillEnv(restored, 3100, job));
+    for (const k of Object.keys(job)) {
+      if (!(DRILL_ENV_PASSTHROUGH as readonly string[]).includes(k)) {
+        expect(seen?.[k], `${k} must not reach the replay`).toBeUndefined();
+      }
+    }
+  });
+
+  it("the drill script never hands the replay a copy of process.env", () => {
+    const src = readFileSync("scripts/restore-drill.ts", "utf8");
+    expect(src).not.toMatch(/\.\.\.process\.env/);
+    expect(src).toContain("ledgerReplayStep(");
   });
 });
