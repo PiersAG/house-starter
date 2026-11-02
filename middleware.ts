@@ -14,6 +14,11 @@
 // Route protection runs in the same pass: an unauthenticated request to a
 // protected prefix is redirected to /login. The dashboard page repeats the
 // check server-side as defence in depth.
+//
+// Request id (PiersAG/app-business-core#503): every request gets a fresh
+// x-request-id here — on the request passed on (so the route's log line and any
+// error row carry it) and on every response (so the browser and support can
+// quote it). A caller-sent x-request-id is replaced, never trusted.
 
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
@@ -23,6 +28,7 @@ import { isPathDisabledByCapability } from "@/lib/capabilities/routes";
 import { isPathDisabledByBilling } from "@/lib/billing/routes";
 import { applyCsp, generateNonce } from "@/lib/csp";
 import { allowedOrigins, applyCors, corsPreflight, isPreflight } from "@/lib/cors";
+import { REQUEST_ID_HEADER, newRequestId } from "@/lib/observability/request-id";
 
 const { auth } = NextAuth(authConfig);
 
@@ -30,6 +36,7 @@ const PROTECTED_PREFIXES = ["/dashboard"];
 
 export default auth((req) => {
   const nonce = generateNonce();
+  const requestId = newRequestId();
   const { pathname } = req.nextUrl;
   const origin = req.headers.get("origin");
   const allowed = allowedOrigins(undefined, req.nextUrl.origin);
@@ -39,6 +46,7 @@ export default auth((req) => {
   const finish = (res: NextResponse): NextResponse => {
     applyCsp(res.headers, nonce);
     applyCors(res.headers, origin, allowed);
+    res.headers.set(REQUEST_ID_HEADER, requestId);
     return res;
   };
 
@@ -48,6 +56,7 @@ export default auth((req) => {
     const pf = corsPreflight(origin, allowed);
     const res = new NextResponse(null, { status: pf.status, headers: pf.headers });
     applyCsp(res.headers, nonce);
+    res.headers.set(REQUEST_ID_HEADER, requestId);
     return res;
   }
 
@@ -107,6 +116,7 @@ export default auth((req) => {
 
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set(REQUEST_ID_HEADER, requestId);
   applyCsp(requestHeaders, nonce);
 
   return finish(NextResponse.next({ request: { headers: requestHeaders } }));

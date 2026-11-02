@@ -43,7 +43,9 @@ describe("assembleHealth", () => {
       errorCountSince: async () => 0,
     });
     expect(r.status).toBe("degraded");
-    expect(r.checks.find((c) => c.name === "database")?.detail).toBe("boom");
+    // Issue 444: the public answer carries a fixed reason, never the thrown text.
+    expect(r.checks.find((c) => c.name === "database")?.detail).toBe("database check failed");
+    expect(JSON.stringify(r)).not.toContain("boom");
   });
 
   it("keeps recent-errors informational — a count failure does not degrade a healthy app", async () => {
@@ -67,5 +69,44 @@ describe("assembleHealth", () => {
     });
     expect(r.lifecycle_state).toBeNull();
     expect(r.commit).toBeNull();
+  });
+
+  it("reports slow requests in the last hour when the count is wired (#503)", async () => {
+    const r = await assembleHealth({
+      ...base,
+      pingDb: async () => ({ ok: true }),
+      errorCountSince: async () => 0,
+      slowRequestCountSince: async () => 4,
+    });
+    expect(r.slow_requests_1h).toBe(4);
+    const unknown = await assembleHealth({
+      ...base,
+      pingDb: async () => ({ ok: true }),
+      errorCountSince: async () => 0,
+      slowRequestCountSince: async () => {
+        throw new Error("no table");
+      },
+    });
+    expect(unknown.slow_requests_1h).toBeNull();
+    expect(unknown.status).toBe("ok");
+  });
+
+  it("tenant isolation (#806): passes with no cross-tenant access; an unreadable count is not a detection", async () => {
+    const r = await assembleHealth({
+      ...base,
+      pingDb: async () => ({ ok: true }),
+      errorCountSince: async () => 0,
+      crossTenantCountSince: async () => 0,
+    });
+    expect(r.checks.find((c) => c.name === "tenant_isolation")).toMatchObject({ ok: true, critical: true });
+    const unreadable = await assembleHealth({
+      ...base,
+      pingDb: async () => ({ ok: true }),
+      errorCountSince: async () => 0,
+      crossTenantCountSince: async () => {
+        throw new Error("down");
+      },
+    });
+    expect(unreadable.status).toBe("ok");
   });
 });

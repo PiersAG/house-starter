@@ -22,6 +22,7 @@ import "server-only";
 
 import { auth } from "@/lib/auth";
 import { getDb, getTenancyMode } from "@/lib/db";
+import { noteRequestUser } from "@/lib/observability/request-context";
 import type { AppDatabase } from "@/lib/users";
 
 /**
@@ -34,7 +35,10 @@ export const SHARED_TENANT_ID = "__shared__";
 export async function currentTenantId(): Promise<string | null> {
   if (getTenancyMode() === "shared") return SHARED_TENANT_ID;
   const session = await auth();
-  return session?.user?.tenantId ?? null;
+  const tenantId = session?.user?.tenantId ?? null;
+  // The request's log line and access records name the caller (#503, #806).
+  noteRequestUser(session?.user?.id ?? null, tenantId);
+  return tenantId;
 }
 
 /**

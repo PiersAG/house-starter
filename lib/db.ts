@@ -186,6 +186,11 @@ const cache: Map<string, { db: AppDatabase; authToken?: string }> =
  */
 export async function getDb(tenantId: string): Promise<AppDatabase> {
   const { url, authToken } = await resolveTenant(tenantId);
+  if (getTenancyMode() !== "shared") {
+    // Who opened whose data, and the cross-tenant alert (#806).
+    const { noteTenantAccess } = await import("@/lib/tenant/access-log");
+    await noteTenantAccess(tenantId);
+  }
   const existing = cache.get(url);
   if (existing && existing.authToken === authToken) return existing.db;
   const client = createClient({ url, authToken });

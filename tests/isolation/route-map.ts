@@ -156,6 +156,11 @@ export const ROUTE_EXCLUSIONS: { prefix: string; reason: string }[] = [
     reason: "public by design — security.txt (RFC 9116), static text naming the security contact",
   },
   {
+    prefix: "/crash-check",
+    reason:
+      "a page that only throws, for the crash-screen test (issue 502); 404 unless the test server sets E2E_CRASH_ROUTE=1, and it reads no data",
+  },
+  {
     prefix: "/api/csp-report",
     reason: "browser CSP violation reports, sent without a session; holds and returns no tenant data",
   },

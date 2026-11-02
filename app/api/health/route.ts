@@ -16,15 +16,20 @@
 import { assembleHealth } from "@/lib/health/checks";
 import { pingDatabase } from "@/lib/health/db-ping";
 import { errorCountSince } from "@/lib/observability/error-log";
+import { slowRequestCountSince, slowRequestMs } from "@/lib/observability/log";
+import { withRequestLog } from "@/lib/observability/with-request-log";
+import { crossTenantCountSince } from "@/lib/tenant/access-log";
+import { getTenancyMode } from "@/lib/db";
 import { z } from "zod";
 import { defineDto } from "@/lib/dto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// The fields the external prober reads, named (issue 763). `detail` still
-// carries the raw database error text on failure: removing it from the public
-// answer is issue 444 (bundle S12).
+// The fields the external prober reads, named (issue 763). `detail` is a fixed
+// reason, never the database's own error text (issue 444).
+// slow_requests_1h: requests slower than SLOW_REQUEST_MS (issue 503).
+// tenant_isolation check: a cross-tenant access in 24h fails it (issue 806).
 const HealthResponse = defineDto({
   status: z.enum(["ok", "degraded"]),
   checks: z.array(
@@ -33,13 +38,18 @@ const HealthResponse = defineDto({
   lifecycle_state: z.string().nullable(),
   commit: z.string().nullable(),
   recent_errors_1h: z.number().nullable(),
+  slow_requests_1h: z.number().nullable(),
   time: z.string(),
 });
 
-export async function GET(): Promise<Response> {
+export const GET = withRequestLog("/api/health", async (): Promise<Response> => {
   const report = await assembleHealth({
     pingDb: () => pingDatabase(),
     errorCountSince: (ms) => errorCountSince(ms),
+    slowRequestCountSince: (ms) => slowRequestCountSince(ms, slowRequestMs()),
+    // Shared tenancy has one database for everyone: no per-tenant access to watch.
+    crossTenantCountSince:
+      getTenancyMode() === "shared" ? undefined : (ms) => crossTenantCountSince(ms),
     now: () => Date.now(),
     env: process.env,
   });
@@ -48,4 +58,4 @@ export async function GET(): Promise<Response> {
     status: report.status === "ok" ? 200 : 503,
     headers: { "cache-control": "no-store" },
   });
-}
+});

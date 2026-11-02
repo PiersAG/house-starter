@@ -13,7 +13,8 @@
 //     tenants, users, revoked_sessions, subscriptions, stripe_events,
 //     billing_invoices, billing_disputes,
 //     password_reset_tokens, access_grants, setting_definitions,
-//     setting_values, error_events, user_mfa_totp, user_mfa_recovery_codes.
+//     setting_values, error_events, log_events, audit_events,
+//     tenant_access_events, user_mfa_totp, user_mfa_recovery_codes.
 //     Everything needed to IDENTIFY and BILL a caller, and to route them to
 //     their tenant, BEFORE any tenant database is opened. Queried through
 //     `catalogDb` / `getCatalogDb()` in lib/catalog.ts.
@@ -447,6 +448,10 @@ export const errorEvents = sqliteTable("error_events", {
   method: text("method"),
   digest: text("digest"),
   context: text("context"),
+  /** The request's id (x-request-id, #503): the same value the browser got. */
+  requestId: text("request_id"),
+  /** One level of the log scale (lib/observability/log.ts); errors are "error". */
+  level: text("level"),
 });
 
 export type ErrorEvent = typeof errorEvents.$inferSelect;
@@ -472,6 +477,86 @@ export const credentialEvents = sqliteTable("credential_events", {
 });
 
 export type CredentialEvent = typeof credentialEvents.$inferSelect;
+
+/**
+ * Structured log (#503): one row per event written by lib/observability/log.ts's
+ * default ("durable") sink — request lines with their id, route, status and
+ * duration, audit and alert events. Never a body or a header. Catalog only.
+ */
+export const logEvents = sqliteTable("log_events", {
+  id: text("id").primaryKey(),
+  occurredAt: integer("occurred_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  level: text("level").notNull(),
+  event: text("event").notNull(),
+  requestId: text("request_id"),
+  route: text("route"),
+  method: text("method"),
+  status: integer("status"),
+  durationMs: integer("duration_ms"),
+  userId: text("user_id"),
+  tenantId: text("tenant_id"),
+  action: text("action"),
+  fields: text("fields"),
+});
+
+/**
+ * Audit trail of sensitive customer actions (#796, Matt Murphy #126): plan
+ * changes, email changes, deletions, permission changes. Append-only — the
+ * migration adds triggers that refuse UPDATE and DELETE. Catalog only.
+ * Written by lib/audit/trail.ts.
+ */
+export const AUDIT_ACTIONS = [
+  "plan_changed",
+  "email_changed",
+  "data_deleted",
+  "permissions_changed",
+] as const;
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+export const auditEvents = sqliteTable("audit_events", {
+  id: text("id").primaryKey(),
+  occurredAt: integer("occurred_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  action: text("action", { enum: AUDIT_ACTIONS }).notNull(),
+  /** Who did it: a user id, "system" (a webhook, a job) or "operator" (a CLI). */
+  actor: text("actor").notNull(),
+  /** Whose account it changed. */
+  subjectUserId: text("subject_user_id"),
+  tenantId: text("tenant_id"),
+  /** What it changed, e.g. "subscription", "email", "setting:theme", "grant". */
+  target: text("target").notNull(),
+  before: text("before"),
+  after: text("after"),
+  requestId: text("request_id"),
+});
+
+export type AuditEvent = typeof auditEvents.$inferSelect;
+
+/**
+ * Tenant data access log (#806, Matt Murphy #171): one row per request per
+ * tenant database opened — whose data, by which signed-in user from which
+ * tenant, when, on which route. `cross_tenant` = 1 when the caller's tenant is
+ * not the data's tenant: the runtime detection of a cross-tenant exposure.
+ * Answers "how long was this happening" and "who else could have seen my
+ * data". Catalog only. Written by lib/tenant/access-log.ts.
+ */
+export const tenantAccessEvents = sqliteTable("tenant_access_events", {
+  id: text("id").primaryKey(),
+  occurredAt: integer("occurred_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  tenantId: text("tenant_id").notNull(),
+  sessionTenantId: text("session_tenant_id"),
+  userId: text("user_id"),
+  requestId: text("request_id"),
+  route: text("route"),
+  crossTenant: integer("cross_tenant").notNull().default(0),
+});
+
+export type TenantAccessEvent = typeof tenantAccessEvents.$inferSelect;
 
 /**
  * Access grants (owner-account-paywall-exemption). The single audited path

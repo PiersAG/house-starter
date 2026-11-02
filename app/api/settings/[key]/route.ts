@@ -61,6 +61,7 @@ import {
 } from "@/lib/settings/values";
 import { VersionConflictError } from "@/lib/records/history";
 import { verifyCsrf } from "@/lib/csrf";
+import { withRequestLog } from "@/lib/observability/with-request-log";
 
 export const runtime = "nodejs";
 
@@ -126,7 +127,7 @@ const putSchema = z.object({
   version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
-export async function PUT(
+async function handlePUT(
   request: Request,
   { params }: { params: Promise<{ key: string }> },
 ): Promise<Response> {
@@ -211,7 +212,7 @@ export async function PUT(
   return NextResponse.json({ ok: true, key, scope, version });
 }
 
-export async function DELETE(
+async function handleDELETE(
   request: Request,
   { params }: { params: Promise<{ key: string }> },
 ): Promise<Response> {
@@ -261,3 +262,7 @@ export async function DELETE(
 
   return NextResponse.json({ ok: true, key, scope, reverted: removed });
 }
+
+// One structured log line per request, with its id (issue 503).
+export const PUT = withRequestLog("/api/settings/[key]", handlePUT);
+export const DELETE = withRequestLog("/api/settings/[key]", handleDELETE);

@@ -119,9 +119,18 @@ export function assertBootEnv(contractText: string): void {
  * in. Never throws: an error while recording an error must not mask the
  * original.
  */
+/** The request id from Next.js's plain header object, when it has the expected shape. */
+export function requestIdOf(
+  headers: Record<string, string | string[] | undefined> | undefined,
+): string | null {
+  const raw = headers?.["x-request-id"];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value && /^[A-Za-z0-9-]{8,64}$/.test(value) ? value : null;
+}
+
 export async function onRequestError(
   error: unknown,
-  request: { path?: string; method?: string },
+  request: { path?: string; method?: string; headers?: Record<string, string | string[] | undefined> },
   context: { routerKind?: string; routePath?: string; renderSource?: string },
 ): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
@@ -134,6 +143,10 @@ export async function onRequestError(
       route: request?.path ?? context?.routePath ?? null,
       method: request?.method ?? null,
       digest: err?.digest ?? null,
+      // The id the middleware set and returned to the browser (#503), so the
+      // error row and the response carry the same value.
+      requestId: requestIdOf(request?.headers),
+      level: "error",
       context: {
         routerKind: context?.routerKind,
         routePath: context?.routePath,

@@ -256,10 +256,11 @@ export async function handleTokenRenewal(
         return null;
       }
       const rotated = crypto.randomUUID();
+      const previousRole = token.role ?? null;
       logSecurityEvent("session_rotated", {
         userId,
         reason: "role_changed",
-        from: token.role ?? null,
+        from: previousRole,
         to: role,
       });
       return {

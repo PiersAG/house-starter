@@ -22,12 +22,13 @@ import { readSecret } from "@/lib/secrets";
 import { recordError } from "@/lib/observability/error-log";
 import { getAppName } from "@/lib/branding";
 import { canonicalBaseUrl } from "@/lib/app-url";
+import { withRequestLog } from "@/lib/observability/with-request-log";
 
 export const runtime = "nodejs";
 
 const ROUTE = "/api/billing/webhook";
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
   // Defence in depth behind the edge middleware. An app that sells no
   // subscription has no Stripe account sending it events; the receiver answers
   // 404 rather than the "not configured" 500 below, which would otherwise
@@ -88,3 +89,6 @@ export async function POST(request: Request): Promise<Response> {
   }
   return NextResponse.json({ received: true });
 }
+
+// One structured log line per request, with its id (issue 503).
+export const POST = withRequestLog("/api/billing/webhook", handlePOST);
