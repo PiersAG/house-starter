@@ -34,6 +34,7 @@ import { getTenancyMode } from "@/lib/db";
 import { ensureTenantForUser } from "@/lib/tenant/provisioner";
 import { SHARED_TENANT_ID } from "@/lib/tenant-context";
 import { getUserByEmail } from "@/lib/users";
+import { isDeactivated } from "@/lib/privacy/deactivation";
 import { verifyPassword } from "@/lib/password";
 import {
   AUTH_RATE_LIMITS,
@@ -94,6 +95,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         const user = await getUserByEmail(catalogDb, parsed.data.email);
         if (!user) return null;
+        // A closed account (issue 722) is refused like an unknown one: its owner
+        // asked to delete it, so no password opens it again (lib/privacy/deactivation.ts).
+        if (isDeactivated(user)) return null;
 
         const valid = await verifyPassword(
           parsed.data.password,

@@ -351,7 +351,7 @@ describe("the daily job's door (#722)", () => {
 // CEO's script writes (the safety gate protects it). Until it runs, the line
 // must be ABSENT (no half-applied state); after it, PRESENT, right after the
 // account lookup. The CEO script sets this flag to false.
-const SIGN_IN_REFUSAL_PENDING = true;
+const SIGN_IN_REFUSAL_PENDING = false;
 
 describe("a closed account is refused at sign-in (#722)", () => {
   const src = readFileSync(join(ROOT, "lib", "auth.ts"), "utf8");
