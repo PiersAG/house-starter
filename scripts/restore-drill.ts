@@ -6,7 +6,8 @@
 //
 // --src     an export folder (scripts/backup-export.ts output, as downloaded
 //           from the locked bucket).
-// --boot    start the built app (`npm run build` first) on the restored data
+// --build   build the app first, with the drill-only values.
+// --boot    start the built app on the restored data
 //           and require /api/health to answer 200 with every check passing:
 //           "the application runs" (Matt Murphy #88), seen, not assumed.
 //
@@ -21,7 +22,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDrill } from "../lib/backup/drill";
-import { bootAndCheck } from "../lib/backup/boot";
+import { bootAndCheck, buildForDrill } from "../lib/backup/boot";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -31,8 +32,15 @@ function arg(name: string): string | undefined {
 async function main(): Promise<void> {
   const src = arg("--src");
   if (!src) {
-    console.error("Usage: restore-drill.ts --src <export folder> [--target <dir>] [--boot] [--report <file>]");
+    console.error("Usage: restore-drill.ts --src <export folder> [--target <dir>] [--build] [--boot] [--report <file>]");
     process.exit(2);
+  }
+  if (process.argv.includes("--build")) {
+    const built = buildForDrill();
+    if (!built.ok) {
+      console.error(`[restore-drill] ${built.detail}`);
+      process.exit(1);
+    }
   }
   const target = arg("--target") ?? mkdtempSync(join(tmpdir(), "restore-drill-"));
   const port = Number(arg("--port") ?? 3100);

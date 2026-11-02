@@ -5,7 +5,7 @@
 //   npx tsx scripts/backup-export.ts --out <dir> --app <slug>
 //
 // Env: CATALOG_DATABASE_URL (or DATABASE_URL) and its auth token, TENANCY_MODE.
-// Database tokens: when BACKUP_DB_READ_TOKEN is set — a READ-ONLY token for the
+// Database tokens: when DB_READ_TOKEN is set — a READ-ONLY token for the
 // app's database group, minted for one hour by the factory's job — it is used
 // for every remote database, so the export can never write to a customer
 // database. Otherwise the catalog's stored (sealed) tenant tokens are opened as
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     console.error("Usage: backup-export.ts --out <dir> --app <slug>");
     process.exit(2);
   }
-  const readToken = (process.env.BACKUP_DB_READ_TOKEN ?? "").trim();
+  const readToken = (process.env.DB_READ_TOKEN ?? "").trim();
   const tenancy = (process.env.TENANCY_MODE ?? "per_tenant").trim().toLowerCase() === "shared" ? "shared" : "per_tenant";
   const { url, authToken } = resolveCatalog();
   const catalogToken = readToken && /^(libsql|https?|wss?):/i.test(url) ? readToken : authToken;

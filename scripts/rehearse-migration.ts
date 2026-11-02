@@ -4,8 +4,10 @@
 //
 //   npx tsx scripts/rehearse-migration.ts [--tenant <id>] [--report rehearsal.json]
 //
-// Env: as scripts/migrate-all-tenants.ts (CATALOG_DATABASE_URL and its token;
-// the tenants' sealed tokens open with MFA_ENCRYPTION_KEY / TENANT_DB_TOKEN_KEY).
+// Env: CATALOG_DATABASE_URL and its token. Database tokens: DB_READ_TOKEN when
+// set — a READ-ONLY token for the app's database group, minted for one hour by
+// the factory's migration workflow — for every remote database; otherwise the
+// tenants' sealed tokens, opened as scripts/migrate-all-tenants.ts does.
 // The live databases are only READ: each is copied into a throwaway local file,
 // and the migration, its reverse and the re-run all happen on the copy.
 //
@@ -35,7 +37,9 @@ async function main(): Promise<void> {
   const work = mkdtempSync(join(tmpdir(), "rehearse-"));
   const reports: RehearsalReport[] = [];
   const { url, authToken } = resolveCatalog();
-  const catalog = createClient({ url, authToken });
+  const readToken = (process.env.DB_READ_TOKEN ?? "").trim();
+  const remote = (u: string) => /^(libsql|https?|wss?):/i.test(u);
+  const catalog = createClient({ url, authToken: readToken && remote(url) ? readToken : authToken });
   try {
     if (!only) {
       reports.push(
@@ -55,7 +59,12 @@ async function main(): Promise<void> {
       if (!TENANT_ID.test(r.id) || (only && r.id !== only)) continue;
       const source = createClient({
         url: r.db_url,
-        authToken: r.db_auth_token == null ? undefined : openTenantToken(r.db_auth_token, r.id),
+        authToken:
+          readToken && remote(r.db_url)
+            ? readToken
+            : r.db_auth_token == null
+              ? undefined
+              : openTenantToken(r.db_auth_token, r.id),
       });
       try {
         reports.push(
