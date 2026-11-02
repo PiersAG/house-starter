@@ -50,6 +50,8 @@ beforeEach(async () => {
   userId = (await registerUser(db, { email: "owner@example.com", password: PASSWORD })).id;
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
+  // the sign-out link in the alert is signed with a key derived from it
+  process.env.AUTH_SECRET ??= "unit-test-secret";
 });
 afterEach(() => {
   client.close();

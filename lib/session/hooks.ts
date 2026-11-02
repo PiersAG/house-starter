@@ -33,6 +33,9 @@ import { logSecurityEvent } from "@/lib/security-log";
 import { canonicalBaseUrl } from "@/lib/app-url";
 import { getAppName } from "@/lib/branding";
 
+/** How often an unchanged session's "last seen" is written. */
+export const TOUCH_EVERY_MS = 60_000;
+
 export type SessionHookDeps = {
   context?: () => Promise<RequestContext>;
   reputation?: () => Promise<"good" | "suspect" | "bad">;
@@ -149,7 +152,13 @@ export async function checkSessionRecord(
       }
     }
 
-    await touchSessionRecord(db, sessionId, { context, riskScore, now });
+    // One write a minute at most while nothing changes: under the strict policy
+    // this check runs on every server request, and writes are what the database's
+    // free tier counts most tightly.
+    const moved = Boolean(context.country && context.country !== record.country);
+    if (moved || riskScore !== record.riskScore || now.getTime() - record.lastSeenAt.getTime() >= TOUCH_EVERY_MS) {
+      await touchSessionRecord(db, sessionId, { context, riskScore, now });
+    }
     return "ok";
   } catch (error) {
     console.error("session check: the session record could not be checked — ending the session", error);
