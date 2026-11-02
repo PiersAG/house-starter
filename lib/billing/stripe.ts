@@ -4,9 +4,14 @@
 // never at module load, so importing this module is side-effect free and neither
 // the edge runtime nor the build step needs the key. A missing key throws by
 // name (STRIPE_SECRET_KEY is declared deploy-injected in .env.contract).
+//
+// In production the key must be a RESTRICTED key (rk_…) holding only the
+// permissions in lib/billing/permissions.ts; a full-power secret key is refused
+// with a plain reason (PiersAG/app-business-core#544).
 
 import Stripe from "stripe";
 import { readSecret } from "@/lib/secrets";
+import { checkStripeKeyScope } from "@/lib/billing/permissions";
 
 let _stripe: Stripe | null = null;
 
@@ -20,6 +25,8 @@ export function getStripe(): Stripe {
         "deploy-injected in .env.contract (source=secret) — set it and redeploy.",
     );
   }
+  const scope = checkStripeKeyScope(key, process.env.VERCEL_ENV);
+  if (!scope.ok) throw new Error(scope.reason);
   // apiVersion omitted deliberately: the SDK pins its own tested version, and
   // the account's default is used for any call that doesn't override it.
   _stripe = new Stripe(key);

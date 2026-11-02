@@ -31,6 +31,8 @@ export const SHARED_NAMES = new Set([
   // text) into every page's RSC payload by design; the stored error log's
   // column of the same name never leaves the server.
   "digest",
+  // Ordinary words that also name internal columns of the payment-dispute table.
+  "amount", "reason", "currency",
 ]);
 
 /** Field names that only ever hold internal or secret data. */

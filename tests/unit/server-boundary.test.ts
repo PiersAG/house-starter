@@ -67,6 +67,10 @@ const PENDING: Record<string, string> = {
   "lib/billing/stripe.ts": "payments dispatch",
   "lib/billing/subscriptions.ts": "payments dispatch",
   "lib/billing/webhook.ts": "payments dispatch",
+  // A payments component (bundle S13): a server component that reads the
+  // subscription; the payments dispatch adds the marker.
+  "components/billing/PlanCard.tsx": "payments dispatch",
+  "lib/billing/ledger.ts": "payments dispatch",
   // Sign-in kernel files the safety gate keeps from Claude Code: the CEO script
   // of Dispatch AB applies the marker (and removes these two lines).
   "lib/auth.ts": "kernel edit in the CEO script",

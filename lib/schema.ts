@@ -11,6 +11,7 @@
 //
 //   CATALOG / control plane — one shared database per app, CATALOG_DATABASE_URL.
 //     tenants, users, revoked_sessions, subscriptions, stripe_events,
+//     billing_invoices, billing_disputes,
 //     password_reset_tokens, access_grants, setting_definitions,
 //     setting_values, error_events, user_mfa_totp, user_mfa_recovery_codes.
 //     Everything needed to IDENTIFY and BILL a caller, and to route them to
@@ -179,14 +180,70 @@ export const subscriptions = sqliteTable("subscriptions", {
 });
 
 /**
- * Processed Stripe webhook event ids — the idempotency ledger. The webhook
- * inserts an id after handling an event and skips any event whose id is already
- * present, so Stripe's at-least-once delivery never double-applies. `id` is the
- * Stripe event id (evt_...).
+ * Stripe webhook event ids — the idempotency ledger (PiersAG/app-business-core
+ * #542, Matt Murphy #15/#37). The webhook CLAIMS an event id with one insert
+ * BEFORE acting (`status` "processing"); only the delivery whose insert won
+ * acts, so two copies of one event arriving together apply once. A finished
+ * event is "done". A claim whose handler failed is released so Stripe's retry
+ * runs it; one left behind by a crash (`claimedAt` older than the takeover
+ * window) is taken over by the next delivery. `id` is the Stripe event id.
  */
 export const stripeEvents = sqliteTable("stripe_events", {
   id: text("id").primaryKey(),
   processedAt: integer("processed_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  status: text("status").notNull().default("done"),
+  claimedAt: integer("claimed_at", { mode: "timestamp" }),
+});
+
+/**
+ * One row per Stripe invoice the app has heard about (#788, #753): the app's
+ * own record that an invoice was paid or failed, the receipt and the dunning
+ * emails it sent, and the amounts — evidence for a billing question or a
+ * dispute without opening Stripe. Written only by the webhook handler.
+ */
+export const billingInvoices = sqliteTable("billing_invoices", {
+  stripeInvoiceId: text("stripe_invoice_id").primaryKey(),
+  stripeCustomerId: text("stripe_customer_id"),
+  userId: text("user_id"),
+  /** "paid" or "payment_failed" — the latest outcome Stripe reported. */
+  status: text("status").notNull(),
+  amountPaid: integer("amount_paid"),
+  amountDue: integer("amount_due"),
+  currency: text("currency"),
+  attemptCount: integer("attempt_count"),
+  hostedInvoiceUrl: text("hosted_invoice_url"),
+  paidAt: integer("paid_at", { mode: "timestamp" }),
+  lastFailedAt: integer("last_failed_at", { mode: "timestamp" }),
+  /** How many failed-payment emails went out for this invoice (at most 3). */
+  dunningEmailsSent: integer("dunning_emails_sent").notNull().default(0),
+  receiptSentAt: integer("receipt_sent_at", { mode: "timestamp" }),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/**
+ * Card disputes (chargebacks) raised against the app's charges (#370): opened,
+ * the evidence deadline, and the outcome. Written only by the webhook handler;
+ * the owner is emailed when one opens. Runbook: docs/billing-disputes.md.
+ */
+export const billingDisputes = sqliteTable("billing_disputes", {
+  stripeDisputeId: text("stripe_dispute_id").primaryKey(),
+  stripeChargeId: text("stripe_charge_id"),
+  stripeCustomerId: text("stripe_customer_id"),
+  amount: integer("amount"),
+  currency: text("currency"),
+  reason: text("reason"),
+  /** Stripe's dispute status, verbatim (needs_response, won, lost, …). */
+  status: text("status").notNull(),
+  evidenceDueBy: integer("evidence_due_by", { mode: "timestamp" }),
+  openedAt: integer("opened_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  closedAt: integer("closed_at", { mode: "timestamp" }),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
 });
@@ -365,6 +422,9 @@ export type NewSubscription = typeof subscriptions.$inferInsert;
 
 export type StripeEvent = typeof stripeEvents.$inferSelect;
 export type NewStripeEvent = typeof stripeEvents.$inferInsert;
+
+export type BillingInvoice = typeof billingInvoices.$inferSelect;
+export type BillingDispute = typeof billingDisputes.$inferSelect;
 
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 export type NewPasswordResetToken = typeof passwordResetTokens.$inferInsert;
