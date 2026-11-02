@@ -93,3 +93,29 @@ payments dispatch; `tests/unit/csrf-routes.ts`).
   `components/ThirdPartyScripts.tsx`, which refuses sign-in, account, dashboard
   and billing pages. `tests/unit/third-party.test.ts` keeps the list, the CSP
   sources (`config/csp.ts`) and the source in agreement.
+
+## 8. Personal data, deletion and the legal documents (issues 349, 350, 722, 745, 774, 791)
+
+- `config/personal-data.ts` is the personal-data map: every table and every place
+  outside the database, with what it holds, why, the lawful basis, the services it
+  goes to, how long it is kept and what account deletion does to it.
+  `tests/unit/personal-data-map.test.ts` fails when a table or an identifying
+  column is missing, or a service is not on `config/subprocessors.ts`. A builder
+  adding a table adds its entry in the same change.
+- The privacy policy, terms, subprocessor list, customer DPA, service agreement
+  and retention policy are built from that map, `config/subprocessors.ts` and the
+  business details in `config/legal.ts` (`lib/legal/`), shown at `/privacy`,
+  `/terms`, `/subprocessors`, `/legal/dpa`, `/legal/service-agreement`, and
+  written to `docs/legal/` by `npm run legal:render`. They are templates, not
+  legal advice: each says so until the CEO records a qualified review in
+  `config/legal.ts`.
+- Account deletion: Account → Your data. Closed at once, erased after 30 days by
+  the daily job (`/api/cron/retention`, `vercel.json`, needs `CRON_SECRET`),
+  checked, confirmed by email, written to the audit trail and to the erasure
+  ledger. `/api/health` fails its `deletions` check when an erasure is 72 hours
+  late. After a database restore, replay the ledger before reopening
+  (`docs/legal/retention-policy.md` § Backups).
+- An outside script that reads personal data (`personalData: true` in
+  `config/third-party.ts`) loads only after the person answers its plain-language
+  question (`components/ConsentPrompt.tsx`).
+

@@ -19,6 +19,10 @@
       "readers": ["lib/catalog.ts"],
       "scrub": true
     },
+    "CRON_SECRET": {
+      "readers": ["app/api/cron/retention/route.ts"],
+      "scrub": true
+    },
     "MFA_ENCRYPTION_KEY": {
       "readers": ["lib/crypto/secret-box.ts"],
       "scrub": true

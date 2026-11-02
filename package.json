@@ -27,6 +27,10 @@
     "db:verify-tenant-backups": "tsx scripts/verify-tenant-backups.ts",
     "db:reseal-secrets": "tsx scripts/reseal-secrets.ts",
     "db:push": "drizzle-kit push",
+    "legal:render": "tsx scripts/render-legal.ts",
+    "privacy:run-retention": "tsx scripts/run-retention.ts",
+    "privacy:export-ledger": "tsx scripts/erasure-ledger.ts export",
+    "privacy:replay-erasures": "tsx scripts/erasure-ledger.ts replay",
     "prepare": "husky"
   },
   "dependencies": {

@@ -36,6 +36,8 @@ export interface HealthDeps {
   slowRequestCountSince?: (sinceEpochMs: number) => Promise<number>;
   /** Cross-tenant accesses since a time (#806). Optional: absent → no check. */
   crossTenantCountSince?: (sinceEpochMs: number) => Promise<number>;
+  /** Accounts still not erased 72h after their deletion was due (#722). Optional: absent → no check. */
+  deletionsOverdue?: () => Promise<number>;
   now: () => number;
   env: NodeJS.ProcessEnv;
 }
@@ -72,6 +74,26 @@ export async function assembleHealth(deps: HealthDeps): Promise<HealthReport> {
       ok: crossTenant === 0,
       critical: true,
       detail: crossTenant === 0 ? "no cross-tenant access in 24h" : "cross-tenant access detected",
+    });
+  }
+
+  // Account deletion (#722) — critical. An account still not erased 72 hours
+  // after its 30 days were up means the daily retention job is not running (or
+  // CRON_SECRET is not set): the app has broken its own deletion promise, so it
+  // answers 503 and the external prober raises the alert. A count that cannot
+  // be read does not fail the check.
+  if (deps.deletionsOverdue) {
+    let overdue = 0;
+    try {
+      overdue = await deps.deletionsOverdue();
+    } catch {
+      overdue = 0;
+    }
+    checks.push({
+      name: "deletions",
+      ok: overdue === 0,
+      critical: true,
+      detail: overdue === 0 ? "no account deletion overdue" : "account deletion overdue",
     });
   }
 

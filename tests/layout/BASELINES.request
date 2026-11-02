@@ -19,3 +19,6 @@ accepted it.
   its bar arrangement the nav's only child is `fixed`, leaving the <nav> with a
   zero-height box that Playwright rightly calls invisible. The suite now waits
   on a nav LINK, which is on screen in both arrangements.
+- 2026-11-02 — /account gains the "Your data: download it or delete your
+  account" link under its heading (app-business-core issue 722, Dispatch AE).
+  An intended layout change: the 320px picture differs by that one line.

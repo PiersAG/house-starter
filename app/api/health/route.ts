@@ -14,6 +14,8 @@
 // assembler is unit-tested directly in tests/unit/health.test.ts.
 
 import { assembleHealth } from "@/lib/health/checks";
+import { catalogDb } from "@/lib/catalog";
+import { deletionsOverdue } from "@/lib/privacy/retention-job";
 import { pingDatabase } from "@/lib/health/db-ping";
 import { errorCountSince } from "@/lib/observability/error-log";
 import { slowRequestCountSince, slowRequestMs } from "@/lib/observability/log";
@@ -51,6 +53,8 @@ export const GET = withRequestLog("/api/health", withRouteLimit("public.health",
     // Shared tenancy has one database for everyone: no per-tenant access to watch.
     crossTenantCountSince:
       getTenancyMode() === "shared" ? undefined : (ms) => crossTenantCountSince(ms),
+    // An account erasure 72 hours late fails the check (issue 722): the daily job is not running.
+    deletionsOverdue: () => deletionsOverdue(catalogDb),
     now: () => Date.now(),
     env: process.env,
   });
