@@ -1,0 +1,174 @@
+{
+ "_comment": "Attack payloads and ordinary requests for the edge firewall (app-business-core #511 acceptance). Read by tests/unit/edge-firewall.test.ts (every attack trips its rule, every ordinary request passes) and by scripts/edge-check.mjs (sent to a deployed address once a provider applies the rules).",
+ "attacks": [
+  {
+   "rule": "sqli",
+   "path": "/api/tenant",
+   "query": "id=1' OR '1'='1",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "sqli",
+   "path": "/search",
+   "query": "q=1 UNION ALL SELECT password FROM users",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "sqli",
+   "path": "/search",
+   "query": "q=1%27%20OR%201%3D1--",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "sqli",
+   "path": "/api/x",
+   "query": "id=1;DROP TABLE users",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "sqli",
+   "path": "/api/x",
+   "query": "id=sleep(5)",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "xss",
+   "path": "/search",
+   "query": "q=<script>alert(1)</script>",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "xss",
+   "path": "/search",
+   "query": "q=%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "xss",
+   "path": "/r",
+   "query": "next=javascript:alert(1)",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "path-traversal",
+   "path": "/static/../../etc/passwd",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "path-traversal",
+   "path": "/static/%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "path-traversal",
+   "path": "/.env",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "path-traversal",
+   "path": "/.git/config",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "scanner-paths",
+   "path": "/wp-login.php",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "scanner-paths",
+   "path": "/wp-admin/",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "scanner-paths",
+   "path": "/phpmyadmin/index.php",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "rule": "bad-bots",
+   "path": "/",
+   "query": "",
+   "userAgent": "sqlmap/1.7.2#stable (https://sqlmap.org)"
+  },
+  {
+   "rule": "bad-bots",
+   "path": "/login",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (compatible; Nuclei - Open-source project)"
+  }
+ ],
+ "normal": [
+  {
+   "path": "/",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/dashboard",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/login",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/pricing",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/search",
+   "query": "q=O'Brien's dog training",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/search",
+   "query": "q=select a puppy class",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/search",
+   "query": "q=union street",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/api/settings/theme",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/reset-password",
+   "query": "token=abc123_-XYZ",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/_next/static/chunks/app.js",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/api/auth/session",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/blog/how-to-1-2-3",
+   "query": "utm_source=newsletter&utm_campaign=nov",
+   "userAgent": "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+  },
+  {
+   "path": "/",
+   "query": "",
+   "userAgent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+  }
+ ]
+}

@@ -13,6 +13,7 @@ import {
   checkAccountRateLimit,
   guardAuthAttempt,
 } from "@/lib/auth-rate-limit";
+import { guardRouteAction, ROUTE_LIMIT_MESSAGE } from "@/lib/abuse/route-limit";
 import {
   ChangePasswordError,
   changePassword,
@@ -37,6 +38,8 @@ export async function signOutEverywhereAction(): Promise<void> {
     await signOut({ redirectTo: "/login" });
     return;
   }
+  // The route limit (app-business-core issue 787): a refusal leaves the sessions as they are.
+  if (await guardRouteAction("account.write", { accountId: userId })) return;
   await signOutEverywhere(catalogDb, userId);
   await signOut({ redirectTo: "/login?signedOut=all" });
 }
@@ -48,6 +51,7 @@ export async function changePasswordAction(
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) return { error: "Your session has ended. Sign in again." };
+  if (await guardRouteAction("account.write", { accountId: userId })) return { error: ROUTE_LIMIT_MESSAGE };
 
   // The current-password check is a password guess, so it is limited like one:
   // per client AND per account (the reset bucket — same kind of request).
