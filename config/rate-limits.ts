@@ -32,6 +32,14 @@ export type RouteLimit = {
    * scraping"), so they are never raised by a price plan.
    */
   public: boolean;
+  /**
+   * FAIL CLOSED when the shared store errors at run time (ADR-015). Sign-in,
+   * sign-up, password reset and the second sign-in step protect accounts and
+   * billed resources, so a store outage refuses them (503) rather than serving
+   * them with no limit. Every other route stays served through a store blip,
+   * so an outage does not take the whole app down.
+   */
+  failClosed?: boolean;
 };
 
 /**
@@ -41,10 +49,11 @@ export type RouteLimit = {
 export const ROUTE_LIMITS = {
   // Sign-in surfaces. The per-attempt limits live in lib/auth-rate-limit.ts;
   // this is the outer budget and the escalation.
-  "auth.signin": { perClient: { limit: 30, windowSeconds: 60 }, public: true },
-  "auth.signup": { perClient: { limit: 20, windowSeconds: 60 }, public: true },
-  "auth.password-reset": { perClient: { limit: 20, windowSeconds: 60 }, public: true },
+  "auth.signin": { failClosed: true, perClient: { limit: 30, windowSeconds: 60 }, public: true },
+  "auth.signup": { failClosed: true, perClient: { limit: 20, windowSeconds: 60 }, public: true },
+  "auth.password-reset": { failClosed: true, perClient: { limit: 20, windowSeconds: 60 }, public: true },
   "auth.mfa": {
+    failClosed: true,
     perClient: { limit: 30, windowSeconds: 60 },
     perAccount: { limit: 30, windowSeconds: 60 },
     public: false,
