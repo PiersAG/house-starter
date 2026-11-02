@@ -19,7 +19,7 @@
 
 import "server-only";
 
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { userSessions, type UserSession } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";
 import { revokeSession } from "@/lib/revoked-sessions";
@@ -44,7 +44,9 @@ export async function activeSessions(db: AppDatabase, userId: string): Promise<U
     .select()
     .from(userSessions)
     .where(and(eq(userSessions.userId, userId), isNull(userSessions.endedAt)))
-    .orderBy(desc(userSessions.lastSeenAt), desc(userSessions.startedAt))
+    // times are whole seconds, so sessions started in the same second are
+    // ordered by when they were written (SQLite's rowid)
+    .orderBy(desc(userSessions.lastSeenAt), desc(userSessions.startedAt), sql`rowid desc`)
     .all();
 }
 

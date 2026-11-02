@@ -80,6 +80,14 @@ describe("#506 the cap on signed-in devices (Matt Murphy #133: cap concurrent se
     expect(await handleTokenRenewal(token(ids[1]), (j) => isSessionRevoked(db, j), 10)).not.toBeNull();
   });
 
+  it("sessions started in the same second: the first one written is the oldest", async () => {
+    const same = new Date("2026-11-02T09:00:00Z");
+    for (let i = 0; i <= MAX_SESSIONS_PER_USER; i += 1) {
+      const r = await startSessionRecord(db, { sessionId: `tie-${i}-aaaaaaaaaa`, userId, context: ctx(), now: same });
+      expect(r.evicted).toEqual(i < MAX_SESSIONS_PER_USER ? [] : ["tie-0-aaaaaaaaaa"]);
+    }
+  });
+
   it("a user can end one of their own devices, never another account's", async () => {
     const otherId = (await registerUser(db, { email: "other@example.com", password: PASSWORD })).id;
     await startSessionRecord(db, { sessionId: "mine-aaaaaaaaaa", userId, context: ctx() });
