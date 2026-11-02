@@ -89,9 +89,49 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 
 CREATE INDEX IF NOT EXISTS subscriptions_customer_idx ON subscriptions(stripe_customer_id);
 
+-- Claimed before acting (#542): 'processing' while a delivery runs it, 'done'
+-- after. Rows from before the claim existed are finished events, so 'done'.
 CREATE TABLE IF NOT EXISTS stripe_events (
   id TEXT PRIMARY KEY NOT NULL,
-  processed_at INTEGER NOT NULL DEFAULT (unixepoch())
+  processed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  status TEXT NOT NULL DEFAULT 'done' CHECK (status IN ('processing','done')),
+  claimed_at INTEGER
+);
+
+-- The app's own record of each Stripe invoice (#788, #753). Written by the
+-- webhook only.
+CREATE TABLE IF NOT EXISTS billing_invoices (
+  stripe_invoice_id TEXT PRIMARY KEY NOT NULL,
+  stripe_customer_id TEXT,
+  user_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('paid','payment_failed')),
+  amount_paid INTEGER,
+  amount_due INTEGER,
+  currency TEXT,
+  attempt_count INTEGER,
+  hosted_invoice_url TEXT,
+  paid_at INTEGER,
+  last_failed_at INTEGER,
+  dunning_emails_sent INTEGER NOT NULL DEFAULT 0,
+  receipt_sent_at INTEGER,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS billing_invoices_customer_idx ON billing_invoices(stripe_customer_id);
+
+-- Card disputes (#370). Written by the webhook only.
+CREATE TABLE IF NOT EXISTS billing_disputes (
+  stripe_dispute_id TEXT PRIMARY KEY NOT NULL,
+  stripe_charge_id TEXT,
+  stripe_customer_id TEXT,
+  amount INTEGER,
+  currency TEXT,
+  reason TEXT,
+  status TEXT NOT NULL,
+  evidence_due_by INTEGER,
+  opened_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  closed_at INTEGER,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (

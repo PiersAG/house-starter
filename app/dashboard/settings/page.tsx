@@ -10,6 +10,7 @@ import { catalogDb } from "@/lib/catalog";
 import { getTenantDb } from "@/lib/tenant-context";
 import { buildOwnerSettingsView } from "@/lib/settings/service";
 import { SettingControl } from "./SettingControl";
+import { PlanCard } from "@/components/billing/PlanCard";
 
 export const metadata = { title: "Settings" };
 
@@ -48,6 +49,8 @@ export default async function SettingsPage() {
           <span className="text-text-secondary">— change your password or sign out everywhere.</span>
         </p>
       </header>
+
+      {session.user.id ? <PlanCard userId={session.user.id} /> : null}
 
       {view.map((cap) => (
         <section key={cap.capability} className="mt-8" aria-label={cap.capability}>

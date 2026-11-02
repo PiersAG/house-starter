@@ -11,6 +11,7 @@ import { catalogDb } from "@/lib/catalog";
 import { getStripe } from "@/lib/billing/stripe";
 import { getSubscriptionByUserId } from "@/lib/billing/subscriptions";
 import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
+import { serviceFailure } from "@/lib/observability/service-failure";
 
 export const runtime = "nodejs";
 
@@ -38,10 +39,19 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const origin = new URL(request.url).origin;
-  const portal = await getStripe().billingPortal.sessions.create({
-    customer: sub.stripeCustomerId,
-    return_url: `${origin}/dashboard`,
-  });
+  let portal;
+  try {
+    portal = await getStripe().billingPortal.sessions.create({
+      customer: sub.stripeCustomerId,
+      return_url: `${origin}/dashboard`,
+    });
+  } catch (err) {
+    // issue 373: a Stripe failure is a plain message plus a support reference, logged.
+    return serviceFailure(err, {
+      route: "/api/billing/portal",
+      message: "We couldn't open your billing page. Please try again in a minute.",
+    });
+  }
 
   return NextResponse.json({ url: portal.url });
 }

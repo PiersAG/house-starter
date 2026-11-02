@@ -13,6 +13,16 @@ the account holder is the same legal entity.
   `metadata.app_id = billingConfig.appId` (`app/api/billing/checkout/route.ts`).
 - `config/billing.ts` carries `appId` and an optional `statementDescriptor`, set
   by the per-app build phase alongside the real `priceIds`.
+- Shows the refund policy (`/refund-policy`, words in `config/refund-policy.ts`)
+  on the payment page, above the pay button.
+- Handles each webhook event once, even when Stripe sends it twice at the same
+  time (`lib/billing/webhook.ts`).
+- After a successful charge: records the invoice as paid, makes the
+  subscription active and sends the customer a receipt. After a failed charge:
+  one email per payment attempt, three at most. When a customer disputes a
+  charge: records it and emails the app's owner (`OWNER_EMAIL`) the deadline.
+- In production, refuses a full-power secret key (`sk_…`): billing runs only on
+  a restricted key (step 4).
 
 ## What is MANUAL, per app, in that app's own Stripe account (TEST mode for now)
 1. **Create the app's own Stripe account** (separate from the shared factory
@@ -22,16 +32,47 @@ the account holder is the same legal entity.
    product's **`statement_descriptor`** and add **`metadata.app_id = <slug>`** on
    the price. Put the new **price id** into `config/billing.ts` `priceIds.default`.
 3. **Webhook endpoint:** add an endpoint at `https://<app-url>/api/billing/webhook`
-   for the subscription + invoice events; copy its **signing secret**.
-4. **App repo secrets** (make the values DISTINCT to this account):
-   - `STRIPE_TEST_SECRET_KEY` → this account's **test** secret key.
+   for these events, and copy its **signing secret**:
+   - `checkout.session.completed`
+   - `customer.subscription.updated`, `customer.subscription.deleted`
+   - `invoice.paid`, `invoice.payment_failed`
+   - `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed`,
+     `charge.dispute.funds_withdrawn`, `charge.dispute.funds_reinstated`
+4. **Restricted key** (Developers → API keys → Create restricted key). Name it
+   after the app. Grant exactly these permissions and leave every other one at
+   None — the list is `lib/billing/permissions.ts`, and a test fails the build
+   when this table and the code disagree:
+
+   | Permission | Access |
+   |---|---|
+   | Checkout Sessions | Write |
+   | Customer portal | Write |
+
+   Use this restricted key (`rk_…`) as the app's billing key. Production refuses
+   a full-power secret key (`sk_…`) with a plain message saying so. Make the
+   first test checkout with it: if Stripe answers that a permission is missing,
+   add that one permission and record it in `lib/billing/permissions.ts`.
+5. **App repo secrets** (make the values DISTINCT to this account):
+   - `STRIPE_TEST_SECRET_KEY` → this account's **test** key.
    - `STRIPE_WEBHOOK_SECRET` → the endpoint's signing secret from step 3.
-5. **Customer metadata:** customers are created by Checkout inside this account,
+6. **Automatic retries of failed payments** (Settings → Billing → Revenue
+   recovery → Retries): turn on **Smart Retries** and set the retry window to
+   **2 weeks** (within the 7–14 days a failed payment should be fought for), and
+   set what happens after the last retry to **mark the subscription as unpaid**
+   (the customer's data is kept). The app sends its own three failed-payment
+   emails, so leave Stripe's own "failed payment" customer emails **off**, or the
+   customer gets two of each. If retries are off, the app writes a
+   "retries look switched off" line to its error log on the first failure.
+7. **Receipts:** the app sends its own receipt after every successful charge, with
+   a link to Stripe's invoice page, so leave Stripe's "successful payments"
+   customer emails **off**.
+8. **Customer metadata:** customers are created by Checkout inside this account,
    so they already belong to the app; tag `metadata.app_id` on the product/price
    (step 2) for cross-reference. (The subscription is tagged by code.)
 
 ## LIVE mode / activation (DEFERRED — needs the business bank account)
 - Complete **activation / KYC** and connect the **business bank account** (same
-  legal entity, for consolidated payouts). Then create the live product/price and
-  swap in the live keys. Not done now — **test mode only** until the bank account
-  exists.
+  legal entity, for consolidated payouts). Then create the live product/price,
+  repeat steps 3, 4, 6 and 7 in live mode (the restricted key is created again,
+  live), and swap in the live keys. Not done now — **test mode only** until the
+  bank account exists.

@@ -148,6 +148,10 @@ export const ROUTE_EXCLUSIONS: { prefix: string; reason: string }[] = [
     reason: "public by design — the security page buyers and researchers read (app-business-core#524)",
   },
   {
+    prefix: "/refund-policy",
+    reason: "public by design — the refund policy a customer reads before paying (app-business-core#354)",
+  },
+  {
     prefix: "/.well-known",
     reason: "public by design — security.txt (RFC 9116), static text naming the security contact",
   },

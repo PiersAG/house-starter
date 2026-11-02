@@ -11,8 +11,10 @@
 import { useState } from "react";
 
 type Busy = null | "checkout" | "portal";
+type Action = "checkout" | "portal";
 
-export function ReactivateActions() {
+/** `actions` picks which buttons show (both by default); the plan card (issue 375) shows one. */
+export function ReactivateActions({ actions = ["checkout", "portal"] }: { actions?: Action[] } = {}) {
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,17 +23,22 @@ export function ReactivateActions() {
     setError(null);
     try {
       const res = await fetch(`/api/billing/${which}`, { method: "POST" });
-      const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string;
+        error?: string;
+        reference?: string;
+      };
       if (res.ok && data.url) {
         window.location.href = data.url;
         return;
       }
-      setError(
+      const message =
         data.error ??
-          (which === "portal"
-            ? "No billing account to manage yet — subscribe to get started."
-            : "Couldn’t start checkout. Please try again."),
-      );
+        (which === "portal"
+          ? "No billing account to manage yet — subscribe to get started."
+          : "Couldn’t start checkout. Please try again.");
+      // issue 373: the support reference lets support find the logged error.
+      setError(data.reference ? `${message} (Reference: ${data.reference})` : message);
     } catch {
       setError("Something went wrong. Please try again.");
     } finally {
@@ -41,22 +48,26 @@ export function ReactivateActions() {
 
   return (
     <div className="mt-8 flex flex-col gap-3">
-      <button
-        type="button"
-        onClick={() => go("checkout")}
-        disabled={busy !== null}
-        className="min-h-11 rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60"
-      >
-        {busy === "checkout" ? "Starting…" : "Subscribe"}
-      </button>
-      <button
-        type="button"
-        onClick={() => go("portal")}
-        disabled={busy !== null}
-        className="min-h-11 rounded border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60"
-      >
-        {busy === "portal" ? "Opening…" : "Manage billing"}
-      </button>
+      {actions.includes("checkout") ? (
+        <button
+          type="button"
+          onClick={() => go("checkout")}
+          disabled={busy !== null}
+          className="min-h-11 rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60"
+        >
+          {busy === "checkout" ? "Starting…" : "Subscribe"}
+        </button>
+      ) : null}
+      {actions.includes("portal") ? (
+        <button
+          type="button"
+          onClick={() => go("portal")}
+          disabled={busy !== null}
+          className="min-h-11 rounded border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60"
+        >
+          {busy === "portal" ? "Opening…" : "Manage billing"}
+        </button>
+      ) : null}
       {error ? (
         <p role="alert" className="text-sm text-danger">
           {error}

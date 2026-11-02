@@ -129,9 +129,23 @@ export async function stripePortalLink(
   returnUrl?: string,
 ): Promise<string | null> {
   const { getStripe } = await import("@/lib/billing/stripe");
-  const session = await getStripe().billingPortal.sessions.create({
-    customer: stripeCustomerId,
-    ...(returnUrl ? { return_url: returnUrl } : {}),
-  });
-  return session.url ?? null;
+  try {
+    const session = await getStripe().billingPortal.sessions.create({
+      customer: stripeCustomerId,
+      ...(returnUrl ? { return_url: returnUrl } : {}),
+    });
+    return session.url ?? null;
+  } catch (err) {
+    // #373: a Stripe failure here must not turn the "please pay" 402 into an
+    // opaque 500. The deny goes out without the link (the reactivate page still
+    // offers Manage billing) and the failure is written to the app's error log.
+    const { recordError } = await import("@/lib/observability/error-log");
+    await recordError({
+      message: "billing portal link could not be created",
+      stack: err instanceof Error ? (err.stack ?? err.message) : String(err),
+      route: "lib/billing/gate.ts",
+      context: { stage: "portal-link" },
+    });
+    return null;
+  }
 }
