@@ -148,6 +148,12 @@ describe("the Node shim stays with the tooling", () => {
     expect(users).toEqual([]);
   });
 
+  it("is replaced by its empty half in every vitest config", () => {
+    const configs = readdirSync(ROOT).filter((n) => /^vitest(\..+)?\.config\.(ts|mts|mjs|js)$/.test(n));
+    expect(configs.length).toBeGreaterThan(1);
+    for (const c of configs) expect(read(c), c).toMatch(/"server-only":\s*path\.resolve\(__dirname, "node_modules\/server-only\/empty\.js"\)/);
+  });
+
   it("is loaded first by every script that imports lib/, and by the Playwright config", () => {
     const scripts = readdirSync(join(ROOT, "scripts"))
       .filter((n) => n.endsWith(".ts"))
