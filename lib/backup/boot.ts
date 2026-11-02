@@ -7,7 +7,7 @@
 
 import "server-only";
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type { RestoreResult } from "@/lib/backup/restore";
 
 /** Drill-only values: never a real key; the drill reaches no outside service. */
@@ -41,9 +41,13 @@ export function buildForDrill(): { ok: boolean; detail?: string } {
 }
 
 export async function bootAndCheck(restored: RestoreResult, port: number, timeoutMs = 120_000): Promise<{ ok: boolean; detail?: string }> {
+  // Its own process group (detached), so stopping it stops the server npx starts
+  // too: killing npx alone leaves next-server running, holding the caller's output
+  // open — the drill then hangs until its job's time limit.
   const child = spawn("npx", ["next", "start", "-p", String(port)], {
     env: drillEnv(restored, port),
     stdio: ["ignore", "inherit", "inherit"],
+    detached: true,
   });
   const deadline = Date.now() + timeoutMs;
   let last = "no answer";
@@ -69,7 +73,25 @@ export async function bootAndCheck(restored: RestoreResult, port: number, timeou
     }
     return { ok: false, detail: `the app did not answer within ${Math.round(timeoutMs / 1000)} seconds (${last})` };
   } finally {
-    child.kill("SIGTERM");
+    await stopGroup(child);
   }
+}
+
+/** Stop a detached child and everything it started; wait until it has gone. */
+async function stopGroup(child: ChildProcess): Promise<void> {
+  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  const gone = new Promise<void>((res) => child.once("exit", () => res()));
+  const signal = (sig: NodeJS.Signals) => {
+    try {
+      process.kill(-child.pid!, sig);
+    } catch {
+      // the group has already gone
+    }
+  };
+  signal("SIGTERM");
+  const timer = setTimeout(() => signal("SIGKILL"), 10_000);
+  await gone;
+  clearTimeout(timer);
+  signal("SIGKILL"); // anything in the group that outlived its parent
 }
 
