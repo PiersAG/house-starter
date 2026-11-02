@@ -9,11 +9,12 @@
 
 import { canonicalBaseUrl } from "@/lib/app-url";
 import { buildSecurityTxt, securityContact } from "@/lib/security-page";
+import { withRouteLimit } from "@/lib/abuse/route-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export function GET(request: Request): Response {
+function securityTxt(request: Request): Response {
   const base = canonicalBaseUrl(undefined, new URL(request.url).origin);
   return new Response(buildSecurityTxt(base, securityContact()), {
     headers: {
@@ -22,3 +23,6 @@ export function GET(request: Request): Response {
     },
   });
 }
+
+// The route limit (app-business-core issue 787): a public endpoint, so the public budget.
+export const GET = withRouteLimit("public.security-txt", securityTxt);

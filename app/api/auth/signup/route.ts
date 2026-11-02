@@ -13,6 +13,7 @@ import { ensureTenantForUser } from "@/lib/tenant/provisioner";
 import { AUTH_RATE_LIMITS, checkAuthRateLimit } from "@/lib/auth-rate-limit";
 import { verifySameOrigin } from "@/lib/csrf";
 
+import { withRouteLimit } from "@/lib/abuse/route-limit";
 export const runtime = "nodejs";
 
 const signupSchema = z.object({
@@ -26,7 +27,7 @@ const signupSchema = z.object({
 // the signup SERVER ACTION, which posts to the same bucket. Two definitions
 // would drift, and two buckets would hand an attacker two budgets.
 
-export async function POST(request: Request): Promise<Response> {
+async function postWithoutLimit(request: Request): Promise<Response> {
   // Issue 353: another website's page cannot create accounts through a visitor.
   const foreign = verifySameOrigin(request);
   if (foreign) return foreign;
@@ -107,3 +108,6 @@ export async function POST(request: Request): Promise<Response> {
     throw error;
   }
 }
+
+// The route limit and escalation (app-business-core issues 787 and 748).
+export const POST = withRouteLimit("auth.signup", postWithoutLimit);

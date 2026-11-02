@@ -12,6 +12,8 @@ import { loadSecretBoxKey } from "@/lib/crypto/secret-box";
 import { verifySecondFactor, type VerifyFactorResult } from "@/lib/mfa/enrollment";
 import { guardMfaRequest, NO_STORE } from "@/lib/mfa/route-guard";
 
+import { withRouteLimit } from "@/lib/abuse/route-limit";
+import { sessionAccount } from "@/lib/abuse/session-account";
 export const runtime = "nodejs";
 
 const LENGTH_MESSAGE = "Enter the 6-digit code from your app, or a recovery code.";
@@ -24,7 +26,7 @@ const verifySchema = z.object({
     .max(32, LENGTH_MESSAGE),
 });
 
-export async function POST(request: Request): Promise<Response> {
+async function postWithoutLimit(request: Request): Promise<Response> {
   const guard = await guardMfaRequest({
     request,
     session: await auth(),
@@ -71,3 +73,6 @@ export async function POST(request: Request): Promise<Response> {
       );
   }
 }
+
+// The route limit and escalation (app-business-core issues 787 and 748).
+export const POST = withRouteLimit("auth.mfa", postWithoutLimit, { account: sessionAccount });
