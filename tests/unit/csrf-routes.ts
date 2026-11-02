@@ -18,8 +18,4 @@ export const PENDING: Record<string, string> = {
   // Money path: frozen for Dispatch AB while Dispatch AA's payments change lands.
   "app/api/billing/checkout/route.ts": "next payments dispatch",
   "app/api/billing/portal/route.ts": "next payments dispatch",
-  // Sign-in kernel: the safety gate keeps these from Claude Code; Dispatch AB's
-  // CEO script applies verifySameOrigin and removes these two lines.
-  "app/api/auth/signup/route.ts": "kernel edit in the CEO script",
-  "app/api/auth/forgot-password/route.ts": "kernel edit in the CEO script",
 };

@@ -36,6 +36,8 @@
 // not yet hold across instances. That is a separate fix
 // (k9coach-rate-limit-store-production); the two want to land close together.
 
+import "server-only";
+
 import { headers } from "next/headers";
 import {
   clientKeyFromHeaders,

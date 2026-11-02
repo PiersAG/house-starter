@@ -14,6 +14,7 @@ import { catalogDb } from "@/lib/catalog";
 import { requestPasswordReset } from "@/lib/password-reset";
 import { AUTH_RATE_LIMITS, checkAuthRateLimit } from "@/lib/auth-rate-limit";
 import { canonicalBaseUrl, type AppUrlEnv } from "@/lib/app-url";
+import { verifySameOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 
@@ -27,6 +28,10 @@ const GENERIC_RESPONSE = {
 };
 
 export async function POST(request: Request): Promise<Response> {
+  // Issue 353: another website's page cannot send reset emails through a visitor.
+  const foreign = verifySameOrigin(request);
+  if (foreign) return foreign;
+
   const rate = await checkAuthRateLimit(
     AUTH_RATE_LIMITS.forgotPassword,
     request.headers,

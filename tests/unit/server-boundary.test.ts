@@ -71,10 +71,6 @@ const PENDING: Record<string, string> = {
   // subscription; the payments dispatch adds the marker.
   "components/billing/PlanCard.tsx": "payments dispatch",
   "lib/billing/ledger.ts": "payments dispatch",
-  // Sign-in kernel files the safety gate keeps from Claude Code: the CEO script
-  // of Dispatch AB applies the marker (and removes these two lines).
-  "lib/auth.ts": "kernel edit in the CEO script",
-  "lib/auth-rate-limit.ts": "kernel edit in the CEO script",
 };
 
 const needsMarker = (f: string) =>
