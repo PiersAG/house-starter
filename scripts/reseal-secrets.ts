@@ -10,6 +10,8 @@
 // TENANT_DB_TOKEN_KEY (+ _PREVIOUS) once the app has it. Prints counts and row
 // ids only, never a value. Exits 1 if any value opened with neither key.
 
+// First: lets this script load lib/ modules marked `import "server-only"` (issue 797).
+import "./server-only-node.cjs";
 import { getCatalogDb } from "../lib/catalog";
 import { resealStoredSecrets } from "../lib/crypto/reseal";
 

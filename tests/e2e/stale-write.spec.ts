@@ -4,7 +4,7 @@
 // overwrite it; a save based on the current version succeeds.
 
 import { expect, test } from "@playwright/test";
-import { BASE_URL, client, ensureAccount, signIn } from "./session-helpers";
+import { client, ensureAccount, signIn, writeHeaders } from "./session-helpers";
 
 test("a stale second write gets 409; the current-version write succeeds", async () => {
   const a = await client("203.0.113.91");
@@ -12,7 +12,7 @@ test("a stale second write gets 409; the current-version write succeeds", async 
   await ensureAccount(a, email);
   await signIn(a, email);
   const url = "/api/settings/core.client_self_registration";
-  const headers = { origin: BASE_URL };
+  const headers = await writeHeaders(a);
 
   const first = await a.put(url, { data: { value: true, version: 0 }, headers });
   expect(first.status(), await first.text()).toBe(200);

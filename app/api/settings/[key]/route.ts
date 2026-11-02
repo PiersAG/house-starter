@@ -60,6 +60,7 @@ import {
   deleteValue,
 } from "@/lib/settings/values";
 import { VersionConflictError } from "@/lib/records/history";
+import { verifyCsrf } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 
@@ -147,6 +148,11 @@ export async function PUT(
     );
   }
 
+  // Issue 353 (SEC.12 leg b): a write needs this session's request token and
+  // must come from the app's own origin, so another website cannot make it.
+  const forged = verifyCsrf(request, session);
+  if (forged) return forged;
+
   let payload: unknown;
   try {
     payload = await request.json();
@@ -225,6 +231,9 @@ export async function DELETE(
       { status: 401 },
     );
   }
+
+  const forged = verifyCsrf(request, session);
+  if (forged) return forged;
 
   const query = parseQuery(deleteQuerySchema, new URL(request.url).searchParams);
   if (!query.ok) {

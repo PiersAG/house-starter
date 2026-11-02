@@ -16,9 +16,25 @@
 import { assembleHealth } from "@/lib/health/checks";
 import { pingDatabase } from "@/lib/health/db-ping";
 import { errorCountSince } from "@/lib/observability/error-log";
+import { z } from "zod";
+import { defineDto } from "@/lib/dto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// The fields the external prober reads, named (issue 763). `detail` still
+// carries the raw database error text on failure: removing it from the public
+// answer is issue 444 (bundle S12).
+const HealthResponse = defineDto({
+  status: z.enum(["ok", "degraded"]),
+  checks: z.array(
+    z.object({ name: z.string(), ok: z.boolean(), critical: z.boolean(), detail: z.string().optional() }),
+  ),
+  lifecycle_state: z.string().nullable(),
+  commit: z.string().nullable(),
+  recent_errors_1h: z.number().nullable(),
+  time: z.string(),
+});
 
 export async function GET(): Promise<Response> {
   const report = await assembleHealth({
@@ -28,7 +44,7 @@ export async function GET(): Promise<Response> {
     env: process.env,
   });
 
-  return Response.json(report, {
+  return Response.json(HealthResponse.from(report), {
     status: report.status === "ok" ? 200 : 503,
     headers: { "cache-control": "no-store" },
   });

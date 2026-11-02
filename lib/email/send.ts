@@ -12,6 +12,8 @@
 // The provider sits BEHIND this interface and is swappable (Resend today); the
 // interface is the graduation, not the provider (spec Candidate 2).
 
+import "server-only";
+
 import { getEmailProvider } from "@/lib/email/provider";
 
 export type EmailSendMode = "log" | "live";

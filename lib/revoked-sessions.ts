@@ -22,6 +22,8 @@
 // `handleTokenRenewal` is extracted from the NextAuth jwt callback so it can
 // be unit-tested directly, without mocking NextAuth internals.
 
+import "server-only";
+
 import { eq } from "drizzle-orm";
 import type { JWT } from "next-auth/jwt";
 import type { AppDatabase } from "@/lib/users";

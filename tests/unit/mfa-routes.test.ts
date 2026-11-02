@@ -28,6 +28,9 @@ const holder = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: async () => holder.session }));
+// The request token is the guard's concern (tests/unit/mfa-route-guard.test.ts)
+// and lib/csrf.ts's own (tests/unit/csrf.test.ts); these route tests pass it.
+vi.mock("@/lib/csrf", () => ({ verifyCsrf: () => null }));
 vi.mock("@/lib/catalog", () => ({
   get catalogDb() {
     return holder.db;

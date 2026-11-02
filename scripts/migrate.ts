@@ -14,6 +14,8 @@
 //
 // Exits 0 on success; a non-zero exit signals a failed migration.
 
+// First: lets this script load lib/ modules marked `import "server-only"` (issue 797).
+import "./server-only-node.cjs";
 import { migrate } from "../lib/migrate";
 
 async function main(): Promise<void> {

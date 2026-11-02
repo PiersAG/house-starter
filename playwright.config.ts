@@ -1,3 +1,6 @@
+// Specs seed databases through lib/ modules marked `import "server-only"`
+// (issue 797); this lets the Playwright process load them. See the file.
+import "./scripts/server-only-node.cjs";
 import { defineConfig, devices } from "@playwright/test";
 
 // Spec C4 — responsive breakpoint contract. Every app must render correctly

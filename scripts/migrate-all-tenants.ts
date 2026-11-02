@@ -33,6 +33,8 @@
 // listing every tenant attempted, the per-tenant result, and the applied
 // schema fingerprint — never a bare counter.
 
+// First: lets this script load lib/ modules marked `import "server-only"` (issue 797).
+import "./server-only-node.cjs";
 import { writeFileSync } from "node:fs";
 import { createClient } from "@libsql/client";
 import { migrateTenant, TENANT_MIGRATION_SQL } from "../lib/migrate";

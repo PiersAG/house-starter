@@ -25,6 +25,8 @@
 //
 // Node.js runtime only.
 
+import "server-only";
+
 import { recordCredentialEvent } from "@/lib/credential-audit";
 import {
   getProvisioner,

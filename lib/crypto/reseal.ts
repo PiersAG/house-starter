@@ -15,6 +15,8 @@
 //
 // Node.js runtime only.
 
+import "server-only";
+
 import { eq } from "drizzle-orm";
 import type { getCatalogDb } from "@/lib/catalog";
 import {

@@ -23,6 +23,8 @@
 //
 // Node.js runtime only. Never imported by auth.config.ts or the Edge middleware.
 
+import "server-only";
+
 import layerFile from "./vault-layer.json";
 import { envValue } from "./secrets";
 

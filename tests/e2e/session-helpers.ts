@@ -14,6 +14,7 @@
 import { request as playwrightRequest, type APIRequestContext } from "@playwright/test";
 import { decode, encode } from "@auth/core/jwt";
 import type { JWT } from "next-auth/jwt";
+import { CSRF_HEADER, csrfTokenFor } from "@/lib/csrf";
 
 export const BASE_URL = "http://localhost:3000";
 export const SESSION_COOKIE = "authjs.session-token";
@@ -94,6 +95,28 @@ export async function readToken(token: string): Promise<JWT> {
   const claims = await decode({ token, secret: SESSION_SECRET, salt: SESSION_COOKIE });
   if (!claims) throw new Error("token did not decode");
   return claims as JWT;
+}
+
+/**
+ * The request token a signed-in page would send with a write (lib/csrf.ts,
+ * app-business-core issue 353), worked out from the session cookie the same
+ * way the server does.
+ */
+export async function requestToken(cookie: string): Promise<string> {
+  const claims = await readToken(cookie);
+  const token = csrfTokenFor(
+    { user: { id: (claims.id ?? claims.sub) as string, sessionId: claims.sessionId as string } },
+    { AUTH_SECRET: SESSION_SECRET },
+  );
+  if (!token) throw new Error("the session has no id or session id, so it has no request token");
+  return token;
+}
+
+/** Headers for a write from this signed-in context: same origin, with its request token. */
+export async function writeHeaders(ctx: APIRequestContext): Promise<Record<string, string>> {
+  const cookie = await sessionCookie(ctx);
+  if (!cookie) throw new Error("writeHeaders needs a signed-in context");
+  return { origin: BASE_URL, [CSRF_HEADER]: await requestToken(cookie) };
 }
 
 export async function mintToken(

@@ -5,6 +5,8 @@
 // importing the live singleton in lib/db.ts. This module is included in
 // coverage and is exercised directly by tests/unit/users.test.ts.
 
+import "server-only";
+
 import { eq } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { users, type User } from "@/lib/schema";

@@ -21,6 +21,8 @@
 // NEVER THROWS. Observability must not turn one error into a second error that
 // crashes the request. Every failure here is swallowed after a console.error.
 
+import "server-only";
+
 import { createClient, type Client } from "@libsql/client";
 import { readSecret } from "@/lib/secrets";
 

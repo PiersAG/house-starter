@@ -7,6 +7,8 @@
 // and lib/db.ts): importing this module is side-effect free, and neither the
 // build nor a log-mode preview ever needs EMAIL_PROVIDER_API_KEY.
 
+import "server-only";
+
 import { Resend } from "resend";
 import { readSecret } from "@/lib/secrets";
 

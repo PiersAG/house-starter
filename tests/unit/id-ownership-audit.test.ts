@@ -63,6 +63,8 @@ const NOT_A_RECORD_ID: Record<string, string> = {
   "app/api/settings/[key]/route.ts":
     "[key] names a setting definition from the registry (validated against its shape and the registry), not a record; the value is read and written in the caller's own tenant database, and a client preference is keyed by the session's own user id, never one from the request.",
   "app/api/auth/[...nextauth]/route.ts": "[...nextauth] is the sign-in library's own action name (signin, callback, csrf), not a record.",
+  "app/api/tenant/route.ts":
+    "takes no id: the `id` in its file is a field of its answer (TenantResponse), and the workspace comes from the session (getTenantDb).",
   "app/reset-password/page.tsx":
     "token is a single-use secret from a reset link, looked up by its hash and bound to its account (lib/password-reset.ts), not a record id chosen by the caller.",
 };

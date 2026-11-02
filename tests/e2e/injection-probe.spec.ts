@@ -21,7 +21,7 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { appDir, discoverAllRoutes, type DiscoveredRoute } from "../isolation/route-map";
-import { BASE_URL, client, ensureAccount, signIn } from "./session-helpers";
+import { client, ensureAccount, signIn, writeHeaders } from "./session-helpers";
 
 const CRAFTED = [
   "' OR '1'='1",
@@ -89,7 +89,7 @@ test.describe("injection probe — every route that takes query or route input (
     // valid write by A, which proves the route works — so the refusals below
     // are refusals, not a broken route.
     const sentinelB = emailB;
-    const headers = { origin: BASE_URL };
+    const headers = await writeHeaders(a);
     const putA = await a.put("/api/settings/core.client_self_registration", { data: { value: true }, headers });
     expect(putA.status(), await putA.text()).toBe(200);
 

@@ -14,6 +14,8 @@
 //
 // Node.js runtime only.
 
+import "server-only";
+
 import { randomUUID } from "node:crypto";
 import { getCatalogDb } from "@/lib/catalog";
 import { clientKeyFromHeaders } from "@/lib/rate-limit";

@@ -10,6 +10,8 @@
 // procedure (docs/legal/breach-procedure.md). Per-app facts come from
 // config/security-profile.ts and are never invented here.
 
+import "server-only";
+
 import { SECURITY_PROFILE, type SecurityProfile } from "@/config/security-profile";
 
 export interface SecuritySection {

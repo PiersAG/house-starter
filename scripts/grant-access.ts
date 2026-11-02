@@ -22,6 +22,8 @@
 // Excluded from coverage (scripts/ is outside the coverage include), like
 // scripts/migrate.ts.
 
+// First: lets this script load lib/ modules marked `import "server-only"` (issue 797).
+import "./server-only-node.cjs";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { resolveCatalog } from "../lib/catalog";

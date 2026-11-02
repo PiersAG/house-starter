@@ -22,6 +22,8 @@
 // `record_events` lives in each tenant's own database (lib/migrate.ts), next to
 // the records it describes.
 
+import "server-only";
+
 import { and, eq, sql } from "drizzle-orm";
 import { recordEvents } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";
