@@ -16,6 +16,8 @@ import { auth } from "@/lib/auth";
 import { catalogDb } from "@/lib/catalog";
 import { enforcePaidPage } from "@/lib/billing/enforce";
 import { AppNav } from "@/components/AppNav";
+import { redirect } from "next/navigation";
+import { deactivationOf } from "@/lib/privacy/deletion";
 
 export default async function DashboardLayout({
   children,
@@ -24,6 +26,9 @@ export default async function DashboardLayout({
 }) {
   const session = await auth();
   if (session?.user?.id) {
+    // A closed account (issue 722) is locked out at once, not at its session's
+    // next renewal: its other devices land on the closed page from the next page.
+    if ((await deactivationOf(catalogDb, session.user.id))?.deactivatedAt) redirect("/account-closed");
     await enforcePaidPage(catalogDb, session.user.id);
   }
   // `@container/page` makes this segment a container context, so any component

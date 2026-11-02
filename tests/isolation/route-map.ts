@@ -164,6 +164,31 @@ export const ROUTE_EXCLUSIONS: { prefix: string; reason: string }[] = [
     prefix: "/api/csp-report",
     reason: "browser CSP violation reports, sent without a session; holds and returns no tenant data",
   },
+  {
+    prefix: "/privacy",
+    reason: "public by design — the privacy policy, read before signing up (app-business-core issue 349)",
+  },
+  {
+    prefix: "/terms",
+    reason: "public by design — the terms of service, read before signing up (app-business-core issue 349)",
+  },
+  {
+    prefix: "/subprocessors",
+    reason: "public by design — the list of outside services that handle data (app-business-core issue 350)",
+  },
+  {
+    prefix: "/legal",
+    reason: "public by design — the customer DPA and service agreement a business reads before buying (issue 774)",
+  },
+  {
+    prefix: "/account-closed",
+    reason: "public by design — where a deleted account lands after it is signed out; reads no data (issue 722)",
+  },
+  {
+    prefix: "/api/cron/retention",
+    reason:
+      "the daily retention job, called by Vercel's scheduler with CRON_SECRET, never by a browser session; GET only, answers counts, never tenant data (issue 722)",
+  },
 ];
 
 /**

@@ -85,6 +85,9 @@ export const ROUTE_LIMITS = {
   "public.health": { perClient: { limit: 60, windowSeconds: 60 }, public: true },
   "public.csp-report": { perClient: { limit: 120, windowSeconds: 60 }, public: true },
   "public.security-txt": { perClient: { limit: 30, windowSeconds: 60 }, public: true },
+  // The daily retention job (app-business-core issue 722): Vercel's scheduler calls
+  // it once a day with CRON_SECRET; a few a minute is already far more than enough.
+  "jobs.retention": { perClient: { limit: 5, windowSeconds: 60 }, public: true },
   // The default for any feature route a build adds: a generated route names
   // this (or a group of its own added here) — never nothing.
   "app.default": {

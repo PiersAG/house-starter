@@ -12,6 +12,20 @@ export default function SignupPage() {
         <h1 className="mb-6 text-2xl font-semibold text-text-primary">
           Create your account
         </h1>
+        <p className="mb-6 text-sm text-text-secondary">
+          We use your email address and name only to run your account and to
+          contact you about it. We never sell your data or use it for
+          advertising, and you can download it or delete your account at any
+          time. Creating an account means you agree to the{" "}
+          <Link href="/terms" className="font-medium text-link underline">
+            terms of service
+          </Link>
+          ; the{" "}
+          <Link href="/privacy" className="font-medium text-link underline">
+            privacy policy
+          </Link>{" "}
+          explains the rest.
+        </p>
         <SignupForm />
         <p className="mt-6 text-sm text-text-secondary">
           Already have an account?{" "}

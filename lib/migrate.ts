@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS users (
   tenant_id TEXT,
   role TEXT NOT NULL DEFAULT 'owner',
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-  sessions_valid_from INTEGER
+  sessions_valid_from INTEGER,
+  deactivated_at INTEGER,
+  deletion_due_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS revoked_sessions (
@@ -307,6 +309,25 @@ CREATE TABLE IF NOT EXISTS tenant_access_events (
 
 CREATE INDEX IF NOT EXISTS tenant_access_events_tenant_idx ON tenant_access_events(tenant_id, occurred_at);
 CREATE INDEX IF NOT EXISTS tenant_access_events_cross_idx ON tenant_access_events(cross_tenant, occurred_at);
+
+-- Retention layer (#791) and erasure ledger (#745), replayed after a restore: lib/privacy/.
+CREATE TABLE IF NOT EXISTS retained_records (
+  id TEXT PRIMARY KEY NOT NULL,
+  source_table TEXT NOT NULL,
+  record_key TEXT NOT NULL,
+  subject_user_id TEXT NOT NULL,
+  data TEXT NOT NULL,
+  legal_basis TEXT NOT NULL,
+  clock_started_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS erasures (
+  user_id TEXT PRIMARY KEY NOT NULL,
+  tenant_id TEXT,
+  requested_at INTEGER NOT NULL,
+  erased_at INTEGER NOT NULL
+);
 `;
 
 /**

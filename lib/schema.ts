@@ -14,7 +14,8 @@
 //     billing_invoices, billing_disputes,
 //     password_reset_tokens, access_grants, setting_definitions,
 //     setting_values, error_events, log_events, audit_events,
-//     tenant_access_events, user_mfa_totp, user_mfa_recovery_codes.
+//     tenant_access_events, user_mfa_totp, user_mfa_recovery_codes,
+//     retained_records, erasures.
 //     Everything needed to IDENTIFY and BILL a caller, and to route them to
 //     their tenant, BEFORE any tenant database is opened. Queried through
 //     `catalogDb` / `getCatalogDb()` in lib/catalog.ts.
@@ -120,6 +121,16 @@ export const users = sqliteTable("users", {
    * lib/migrate.ts::reconcileColumns can add it to an existing catalog.
    */
   sessionsValidFrom: integer("sessions_valid_from", { mode: "timestamp" }),
+  /**
+   * Account deletion (#722, Matt Murphy #156): when the owner asked to delete
+   * the account. Set = the account is DEACTIVATED at once — every session ends
+   * and sign-in is refused — and its data is kept until `deletionDueAt`, when
+   * the retention job (lib/privacy/deletion.ts) erases it. Both nullable with no
+   * default, so lib/migrate.ts::reconcileColumns adds them to an existing catalog.
+   */
+  deactivatedAt: integer("deactivated_at", { mode: "timestamp" }),
+  /** When the deactivated account's data is erased: 30 days after the request. */
+  deletionDueAt: integer("deletion_due_at", { mode: "timestamp" }),
 });
 
 /** The roles an account can hold inside its own tenant. */
@@ -693,3 +704,48 @@ export const recordEvents = sqliteTable("record_events", {
     .notNull()
     .default(sql`(unixepoch())`),
 });
+
+/**
+ * CATALOG. The retention layer (#791, Matt Murphy #137): records the law requires
+ * the business to keep after an account is erased — today the invoices and
+ * payment disputes a tax return or a chargeback needs. Each row holds only the
+ * fields the obligation needs (no email, no name), says which law it is kept
+ * for, when the clock started and when it expires; the retention job deletes it
+ * on expiry. Written by lib/privacy/retention.ts, never by a request.
+ */
+export const retainedRecords = sqliteTable("retained_records", {
+  id: text("id").primaryKey(),
+  /** The table the record came from, e.g. "billing_invoices". */
+  sourceTable: text("source_table").notNull(),
+  /** The record's key there, e.g. the Stripe invoice id. */
+  recordKey: text("record_key").notNull(),
+  /** The erased account's id: a random id that names nobody once the account is gone. */
+  subjectUserId: text("subject_user_id").notNull(),
+  /** JSON: only the fields the obligation needs. */
+  data: text("data").notNull(),
+  /** Why it is kept, e.g. "UK tax records: 6 years (HMRC)". */
+  legalBasis: text("legal_basis").notNull(),
+  /** When the clock started: the account's erasure. */
+  clockStartedAt: integer("clock_started_at", { mode: "timestamp" }).notNull(),
+  /** When the record is deleted. */
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+});
+
+export type RetainedRecord = typeof retainedRecords.$inferSelect;
+
+/**
+ * CATALOG. The erasure ledger (#745, #352; Matt Murphy #203: deletion must reach
+ * backups). One row per erased account: ids only, never a name or an address.
+ * A database restored from a backup taken before an erasure brings the account
+ * back; `npm run privacy:replay-erasures` (scripts/erasure-ledger.ts) reads this
+ * ledger, exported before the restore, and erases those accounts again. Written by lib/privacy/deletion.ts.
+ */
+export const erasures = sqliteTable("erasures", {
+  userId: text("user_id").primaryKey(),
+  tenantId: text("tenant_id"),
+  requestedAt: integer("requested_at", { mode: "timestamp" }).notNull(),
+  erasedAt: integer("erased_at", { mode: "timestamp" }).notNull(),
+});
+
+export type Erasure = typeof erasures.$inferSelect;
+

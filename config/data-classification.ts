@@ -53,6 +53,8 @@ export const DATA_CLASSIFICATION: Record<string, Record<string, ColumnClass>> = 
     role: own,
     createdAt: own,
     sessionsValidFrom: internal,
+    deactivatedAt: internal,
+    deletionDueAt: own,
   },
   revokedSessions: { id: internal, jti: internal, userId: internal, revokedAt: internal },
   subscriptions: {
@@ -230,4 +232,16 @@ export const DATA_CLASSIFICATION: Record<string, Record<string, ColumnClass>> = 
     actor: internal,
     occurredAt: internal,
   },
+  // Account deletion and retention (issues 722, 745, 791): server records only.
+  retainedRecords: {
+    id: internal,
+    sourceTable: internal,
+    recordKey: internal,
+    subjectUserId: internal,
+    data: internal,
+    legalBasis: internal,
+    clockStartedAt: internal,
+    expiresAt: internal,
+  },
+  erasures: { userId: internal, tenantId: internal, requestedAt: internal, erasedAt: internal },
 };
