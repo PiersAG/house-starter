@@ -30,6 +30,8 @@ import { tenantMeta } from "@/lib/schema";
 import { defineDto, dtoJson } from "@/lib/dto";
 import { withRequestLog } from "@/lib/observability/with-request-log";
 
+import { withRouteLimit } from "@/lib/abuse/route-limit";
+import { sessionAccount } from "@/lib/abuse/session-account";
 export const runtime = "nodejs";
 
 // What this answer carries, and nothing else (issues 763, 794): the
@@ -69,4 +71,4 @@ async function handleGET(): Promise<Response> {
 }
 
 // One structured log line per request, with its id (issue 503).
-export const GET = withRequestLog("/api/tenant", handleGET);
+export const GET = withRequestLog("/api/tenant", withRouteLimit("tenant.read", handleGET, { account: sessionAccount }));

@@ -7,6 +7,11 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // Every route now runs the route limit (lib/abuse/route-limit.ts,
+    // app-business-core #787), so a test that calls a route handler needs a
+    // store: the safe-environment in-memory stand-in, as in CI's e2e runs. Tests
+    // of the "not configured" refusal pass their own env objects.
+    env: { RATE_LIMIT_ALLOW_IN_MEMORY: "true" },
     include: ["tests/unit/**/*.{test,spec}.{ts,tsx}", "app/**/*.{test,spec}.{ts,tsx}", "lib/**/*.{test,spec}.{ts,tsx}", "components/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["tests/e2e/**", "node_modules/**"],
     coverage: {

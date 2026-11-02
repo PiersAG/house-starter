@@ -6,6 +6,7 @@ import { registerUser, RegistrationError } from "@/lib/users";
 import { startTrialForNewOwner } from "@/lib/billing/trial";
 import { ensureTenantForUser } from "@/lib/tenant/provisioner";
 import { AUTH_RATE_LIMITS, guardAuthAttempt } from "@/lib/auth-rate-limit";
+import { guardRouteAction, ROUTE_LIMIT_MESSAGE } from "@/lib/abuse/route-limit";
 import { z } from "zod";
 import {
   emailField,
@@ -30,6 +31,9 @@ export async function signupAction(
   _prev: SignupState,
   formData: FormData,
 ): Promise<SignupState> {
+  // The route limit and escalation (app-business-core issues 787 and 748).
+  if (await guardRouteAction("auth.signup")) return { error: ROUTE_LIMIT_MESSAGE };
+
   // Same bucket the JSON twin (POST /api/auth/signup) counts into, so the two
   // surfaces share one budget instead of handing an attacker two.
   const rate = await guardAuthAttempt(AUTH_RATE_LIMITS.signup);

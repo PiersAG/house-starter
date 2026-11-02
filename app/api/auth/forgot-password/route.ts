@@ -16,6 +16,7 @@ import { AUTH_RATE_LIMITS, checkAuthRateLimit } from "@/lib/auth-rate-limit";
 import { canonicalBaseUrl, type AppUrlEnv } from "@/lib/app-url";
 import { verifySameOrigin } from "@/lib/csrf";
 
+import { withRouteLimit } from "@/lib/abuse/route-limit";
 export const runtime = "nodejs";
 
 const forgotPasswordSchema = z.object({
@@ -27,7 +28,7 @@ const GENERIC_RESPONSE = {
   message: "If an account exists for that email, a password-reset link is on its way.",
 };
 
-export async function POST(request: Request): Promise<Response> {
+async function postWithoutLimit(request: Request): Promise<Response> {
   // Issue 353: another website's page cannot send reset emails through a visitor.
   const foreign = verifySameOrigin(request);
   if (foreign) return foreign;
@@ -72,3 +73,6 @@ export async function POST(request: Request): Promise<Response> {
 
   return NextResponse.json(GENERIC_RESPONSE);
 }
+
+// The route limit and escalation (app-business-core issues 787 and 748).
+export const POST = withRouteLimit("auth.password-reset", postWithoutLimit);

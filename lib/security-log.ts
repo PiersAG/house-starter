@@ -22,7 +22,13 @@ export type SecurityEvent =
   | "signed_out_everywhere"
   | "session_rotated"
   | "session_token_rejected"
-  | "csp_violation";
+  | "csp_violation"
+  // Route limits and escalation (lib/abuse/route-limit.ts, app-business-core #787 / #748)
+  | "route_rate_limited"
+  | "abuse_throttled"
+  | "abuse_banned"
+  | "attack_request_refused"
+  | "rate_limit_store_error";
 
 export type SecurityFieldValue = string | number | boolean | null;
 

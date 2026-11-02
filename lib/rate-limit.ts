@@ -60,12 +60,55 @@ export interface RateLimitStore {
 }
 
 /**
+ * Plain counters for the route limits and the escalation (lib/abuse/route-limit.ts,
+ * PiersAG/app-business-core#787 / #748). Fixed windows aligned to the clock: the
+ * window index is part of the key, so a count costs ONE store command (plus an
+ * expiry on its first hit) and the seconds left are clock arithmetic, not a
+ * second round trip — the shared store's free tier is metered per command.
+ */
+export interface CounterStore extends RateLimitStore {
+  /** Add `amount` to `key` in the current `windowSeconds` window; the new count. */
+  add(key: string, amount: number, windowSeconds: number): Promise<number>;
+  /** Hold a marker on `key` until `untilEpochSeconds` (a temporary ban). */
+  holdUntil(key: string, untilEpochSeconds: number): Promise<void>;
+  /** The epoch second a marker on `key` lasts until, or 0 when there is none. */
+  heldUntil(key: string): Promise<number>;
+}
+
+/** The key of `key`'s current window, and the seconds left in it. */
+export function windowKey(key: string, windowSeconds: number, nowMs: number): { key: string; ttl: number } {
+  const nowS = Math.floor(nowMs / 1000);
+  const index = Math.floor(nowS / windowSeconds);
+  return { key: `${key}:w${windowSeconds}:${index}`, ttl: (index + 1) * windowSeconds - nowS };
+}
+
+/**
  * In-memory fixed-window counter. SAFE-ENVIRONMENT STAND-IN ONLY — it is never
  * shipped as the default (see selection rules above). A clock is injected so
  * window expiry is deterministic in tests.
  */
-export class InMemoryRateLimitStore implements RateLimitStore {
+export class InMemoryRateLimitStore implements CounterStore {
   private readonly buckets = new Map<string, { count: number; resetAt: number }>();
+  private readonly counters = new Map<string, { count: number; expiresAt: number }>();
+  private readonly held = new Map<string, number>();
+
+  async add(key: string, amount: number, windowSeconds: number): Promise<number> {
+    const nowMs = this.now();
+    const w = windowKey(key, windowSeconds, nowMs);
+    const existing = this.counters.get(w.key);
+    const count = (existing && existing.expiresAt > nowMs ? existing.count : 0) + amount;
+    this.counters.set(w.key, { count, expiresAt: nowMs + w.ttl * 1000 });
+    return count;
+  }
+
+  async holdUntil(key: string, untilEpochSeconds: number): Promise<void> {
+    this.held.set(key, Math.max(this.held.get(key) ?? 0, untilEpochSeconds));
+  }
+
+  async heldUntil(key: string): Promise<number> {
+    const until = this.held.get(key) ?? 0;
+    return until * 1000 > this.now() ? until : 0;
+  }
 
   constructor(private readonly now: () => number = () => Date.now()) {}
 
@@ -110,13 +153,14 @@ export type FetchLike = (
  * INCR (+ EXPIRE on first hit) and TTL for the retry hint. `fetch` is injected
  * so the adapter is unit-testable without a live Redis.
  */
-export class RedisRestRateLimitStore implements RateLimitStore {
+export class RedisRestRateLimitStore implements CounterStore {
   private readonly baseUrl: string;
 
   constructor(
     baseUrl: string,
     private readonly token: string,
     private readonly fetchImpl: FetchLike,
+    private readonly now: () => number = () => Date.now(),
   ) {
     // Trim a trailing slash so command paths join cleanly.
     this.baseUrl = baseUrl.replace(/\/+$/, "");
@@ -135,6 +179,26 @@ export class RedisRestRateLimitStore implements RateLimitStore {
     }
     const body = (await res.json()) as { result?: unknown };
     return body.result;
+  }
+
+  async add(key: string, amount: number, windowSeconds: number): Promise<number> {
+    const w = windowKey(key, windowSeconds, this.now());
+    const count = Number(await this.command("incrby", w.key, amount));
+    if (count === amount) {
+      // first hit in this window: the key expires when the window ends
+      await this.command("expire", w.key, Math.max(1, w.ttl));
+    }
+    return count;
+  }
+
+  async holdUntil(key: string, untilEpochSeconds: number): Promise<void> {
+    const seconds = Math.max(1, untilEpochSeconds - Math.floor(this.now() / 1000));
+    await this.command("set", key, untilEpochSeconds, "ex", seconds);
+  }
+
+  async heldUntil(key: string): Promise<number> {
+    const until = Number(await this.command("get", key));
+    return Number.isFinite(until) && until * 1000 > this.now() ? until : 0;
   }
 
   async hit(key: string, options: RateLimitOptions): Promise<RateLimitResult> {
@@ -178,7 +242,7 @@ export type RateLimitEnv = {
 export function createRateLimitStore(
   env: RateLimitEnv = process.env as RateLimitEnv,
   fetchImpl: FetchLike = fetch as unknown as FetchLike,
-): RateLimitStore {
+): CounterStore {
   const url = readSecret("RATE_LIMIT_STORE_URL", env)?.trim();
   if (url) {
     const token = readSecret("RATE_LIMIT_STORE_TOKEN", env)?.trim();
@@ -222,10 +286,10 @@ export function createRateLimitStore(
 // Process-wide singleton so every route bundle shares one store (and, for the
 // in-memory stand-in, one set of counters). Built lazily on first use so the
 // loud failure surfaces at request time, never at module-load/build time.
-let cachedStore: RateLimitStore | undefined;
+let cachedStore: CounterStore | undefined;
 
 /** Return the shared rate-limit store, constructing it once on first call. */
-export function getRateLimiter(): RateLimitStore {
+export function getRateLimiter(): CounterStore {
   if (!cachedStore) {
     cachedStore = createRateLimitStore();
   }
