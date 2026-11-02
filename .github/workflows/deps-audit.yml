@@ -1,0 +1,54 @@
+# Daily dependency audit of main (app-business-core#964, Dispatch AD-fix2).
+#
+# The lockfile audit in ci.yml (scripts/check-deps-existence.py, #749) also
+# judges things that change outside this repo: a maintainer added to a locked
+# package, a new install script, a package's downloads falling. On 2026-11-02
+# `semver` 7.8.6 added a maintainer; every house-starter PR went red at once and
+# Dispatch AD's CEO script stopped mid-merge. This runs the same check against
+# main every morning, so such a change shows up first as a red scheduled run,
+# reviewed in scripts/deps-reviewed.json before any PR or CEO script meets it.
+#
+# Same command and same download-count cache as the ci.yml step. Read-only.
+name: Daily dependency audit
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deps-audit
+  cancel-in-progress: false
+
+jobs:
+  deps-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Restore the download-count cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/deps-audit
+          key: deps-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: deps-audit-
+
+      - name: Dependency existence check (anti-slopsquatting) and lockfile audit
+        run: python3 scripts/check-deps-existence.py --workspace . --cache-dir "$RUNNER_TEMP/deps-audit"
+
+      - name: Save the download-count cache
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/deps-audit
+          key: deps-audit-${{ github.run_id }}-${{ github.run_attempt }}

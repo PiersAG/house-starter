@@ -124,6 +124,14 @@
       "reviewed_on": "2026-11-01",
       "by": "Claude Code (Dispatch V)",
       "reason": "Required by every minimatch release that fixes GHSA-g3hv-75wg-m249 (11.0.1 to 11.0.3). Its only maintainer is minimatch's author (isaacs); 259,113 downloads in its first week. Dev only, under @typescript-eslint in the dashboard."
+    },
+    {
+      "package": "semver",
+      "rule": "maintainer change",
+      "detail": "martinrrm",
+      "reviewed_on": "2026-11-02",
+      "by": "Claude Code (Dispatch AD-fix2)",
+      "reason": "martinrrm (npm CLI team: also a maintainer of the npm and bin-links packages, with merged npm/cli pull requests in October 2026) appears on 7.8.6 (2026-11-02), which drops gar, hashtagchris and owlstronaut and keeps saquibkhan, npm-cli-ops and reggi. 7.8.6 was published by trusted publishing with the same OIDC configuration as 7.7.3-7.8.5; its SLSA provenance names npm/node-semver .github/workflows/release.yml on main at b37b033 (run 41486847600, started by reggi). The diff from 7.8.5 is the range-parsing performance fix of npm/node-semver#918 (classes/range.js, internal/constants.js, new internal/trim-comparator-whitespace.js): pure string handling, no new dependency, install script, network, file or process access. The template locks 7.8.5 (and 6.3.1), both published before the change."
     }
   ]
 }
