@@ -88,7 +88,15 @@ export async function signupAction(
   // Turso's passing errors, checks the new database opens by the catalog's
   // route, and on any failure rolls the sign-up back, so no account is left
   // without a database and the address can sign up again at once.
-  const provisioned = await provisionNewAccount(user.id, user.email);
+  // provisionNewAccount never throws by design; the try is the second line of
+  // defence, so the form still shows the fixed message, never a 500.
+  let provisioned;
+  try {
+    provisioned = await provisionNewAccount(user.id, user.email);
+  } catch (error) {
+    console.error("signup: provisioning threw past its own rollback", error);
+    return { error: SIGNUP_PROVISION_FAILED_MESSAGE };
+  }
   if (!provisioned.ok) {
     return { error: SIGNUP_PROVISION_FAILED_MESSAGE };
   }

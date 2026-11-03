@@ -121,6 +121,25 @@ describe("delivery reports ON", () => {
     expect(kept[0]).toMatchObject({ id: "on-2", type: "delivered", message_id: "m1" });
     expect(JSON.stringify(kept)).not.toContain("someone@example.com");
   });
+  it("refuses a declared oversized body before reading it (64 KB)", async () => {
+    live();
+    const text = vi.fn(async () => "{}");
+    const big = new Request("https://app.test/api/email/events", {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(64 * 1024 + 1) },
+      body: "{}",
+    });
+    Object.defineProperty(big, "text", { value: text });
+    expect((await POST(big)).status).toBe(413);
+    expect(text).not.toHaveBeenCalled();
+  });
+  it("still measures a body sent with no length", async () => {
+    live();
+    const r = await POST(
+      new Request("https://app.test/api/email/events", { method: "POST", body: "x".repeat(64 * 1024 + 1) }),
+    );
+    expect(r.status).toBe(413);
+  });
   it("refuses a body that is not a report", async () => {
     live();
     expect((await report("on-3", { hello: "world" })).status).toBe(400);

@@ -38,6 +38,12 @@ async function handlePOST(request: Request): Promise<Response> {
   const secret = readSecret("EMAIL_EVENTS_SECRET");
   if (!secret) return notFound();
 
+  // A declared length over the limit is refused before the body is read into
+  // memory; a request with no length is still measured after reading.
+  const declared = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    return NextResponse.json({ error: "Too large." }, { status: 413 });
+  }
   const body = await request.text();
   if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) {
     return NextResponse.json({ error: "Too large." }, { status: 413 });
