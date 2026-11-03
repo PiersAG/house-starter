@@ -27,6 +27,7 @@ import { pendingTenantOrphans } from "@/lib/tenant/orphans";
 import { provisionNewAccount, verifyTenantRoute } from "@/lib/tenant/signup-provisioning";
 import { isDeactivated } from "@/lib/privacy/deactivation";
 import { runRetentionJob } from "@/lib/privacy/retention-job";
+import { eraseAccount } from "@/lib/privacy/deletion";
 import { createUser, getUserById, PENDING_SIGNUP_EXPIRY_MS, registerUser, type AppDatabase } from "@/lib/users";
 
 const KEYS = ["TENANCY_MODE", "CATALOG_DATABASE_URL", "TENANT_PROVISIONER", "TENANT_DB_DIR", "VERCEL_ENV"];
@@ -95,7 +96,7 @@ async function inviter(): Promise<{ id: string; tenantId: string }> {
 /** The account's switch and link, as sign-in and the retention job read them. */
 async function account(id: string) {
   const rows = await query(
-    "SELECT tenant_id, deactivated_at, deletion_due_at, signup_pending_since FROM users WHERE id = ?",
+    "SELECT tenant_id, deactivated_at, deletion_due_at, signup_pending_since, signup_tenant_id FROM users WHERE id = ?",
     [id],
   );
   return rows[0];
@@ -240,7 +241,8 @@ describe("finding 1 — the rollback never reaches another account's tenant", ()
     });
 
     expect(result.ok).toBe(false);
-    expect(destroy).not.toHaveBeenCalled();
+    // Only the id this sign-up minted is removed (third review, finding 2), never the inviter's.
+    expect(destroy).not.toHaveBeenCalledWith(owner.tenantId);
     expect(await registered(owner.tenantId)).toBe(true);
     expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
     expect(await pendingTenantOrphans(getCatalogDb())).not.toContain(owner.tenantId);
@@ -507,6 +509,7 @@ describe("second review, defect B — an account is switched on only once its da
     const row = await account(id);
     expect(row.deactivated_at).toBeNull();
     expect(row.signup_pending_since).toBeNull();
+    expect(row.signup_tenant_id).toBeNull(); // the sign-up's mark goes with it
     expect(row.deletion_due_at).toBeNull();
     expect(isDeactivated(await getUserById(getCatalogDb(), id))).toBe(false);
   });
@@ -631,5 +634,229 @@ describe("second review, defect B — an account is switched on only once its da
     expect(existsSync(tenantFile(made.id))).toBe(false);
     expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0);
     expect(confirm).not.toHaveBeenCalled();
+  });
+});
+
+// Third independent review (Dispatch AG-fix3). The retention job erases an
+// unfinished sign-up an hour after it was made; it must never take a tenant
+// another account still links, nor one the sign-up did not mint.
+describe("third review, finding 1 — erasing an account never erases a tenant another account uses", () => {
+  /** A tenant plane over the real file adapter that records every removal. */
+  function plane(removed: string[]) {
+    return {
+      open: async (t: string) => getDb(t),
+      destroy: async (t: string) => {
+        removed.push(t);
+        return getProvisioner(process.env).destroy(t);
+      },
+    };
+  }
+
+  it("a refused invited member is erased an hour later; the inviter's tenant row and database are untouched", async () => {
+    const owner = await inviter();
+    const member = await newAccount();
+    await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
+    expect(await provisionNewAccount(member.id, member.email)).toEqual({ ok: false, database: "none" });
+    // Refused, still a sign-up being set up, linked to the inviter — but it holds no minted id.
+    const before = await account(member.id);
+    expect(before.signup_pending_since).not.toBeNull();
+    expect(before.signup_tenant_id).toBeNull();
+
+    const removed: string[] = [];
+    const run = await runRetentionJob(getCatalogDb(), {
+      now: new Date(Date.now() + PENDING_SIGNUP_EXPIRY_MS + 60_000),
+      tenantPlane: plane(removed),
+    });
+
+    const erased = run.erased.find((r) => r.userId === member.id);
+    expect(erased?.tenantDatabase).toBe("none");
+    expect(erased?.tenantKept).toBe("not-minted-by-this-sign-up");
+    expect(await query("SELECT id FROM users WHERE id = ?", [member.id])).toHaveLength(0);
+    expect(removed).not.toContain(owner.tenantId);
+    expect(await registered(owner.tenantId)).toBe(true);
+    expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
+    // The inviter's database still holds its own row: it was never wiped.
+    await expect(verifyTenantRoute(owner.tenantId)).resolves.toBeUndefined();
+    expect((await query("SELECT tenant_id FROM users WHERE id = ?", [owner.id]))[0].tenant_id).toBe(owner.tenantId);
+  });
+
+  it("the same, even once the inviter's own account is gone: a tenant the sign-up did not mint is never erased with it", async () => {
+    const owner = await inviter();
+    const member = await newAccount();
+    await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
+    await query("DELETE FROM users WHERE id = ?", [owner.id]); // nobody else links the tenant now
+    const removed: string[] = [];
+    await runRetentionJob(getCatalogDb(), {
+      now: new Date(Date.now() + PENDING_SIGNUP_EXPIRY_MS + 60_000),
+      tenantPlane: plane(removed),
+    });
+    expect(removed).not.toContain(owner.tenantId);
+    expect(await registered(owner.tenantId)).toBe(true);
+    expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
+  });
+
+  it("a sole-member sign-up that never finished still has its own database erased with it", async () => {
+    const { id, email } = await newAccount();
+    const armed = { on: false };
+    const made = { id: "" };
+    await provisionNewAccount(id, email, {
+      catalog: failing(["select:users", "delete:users", "update:users", "delete:tenants", "insert:tenantOrphans"], armed),
+      ensureTenant: failAfterProvisioning(armed, made),
+      destroy: async () => false,
+    });
+    expect((await account(id)).signup_tenant_id).toBe(made.id); // the mark names the minted id
+    const removed: string[] = [];
+    const run = await runRetentionJob(getCatalogDb(), {
+      now: new Date(Date.now() + PENDING_SIGNUP_EXPIRY_MS + 60_000),
+      tenantPlane: plane(removed),
+    });
+    const erased = run.erased.find((r) => r.userId === id);
+    expect(erased?.tenantDatabase).toBe("removed");
+    expect(erased?.tenantKept).toBeNull();
+    expect(removed).toEqual(expect.arrayContaining([made.id]));
+    expect(existsSync(tenantFile(made.id))).toBe(false);
+    expect(await registered(made.id)).toBe(false);
+  });
+
+  it("an unfinished sign-up whose minted tenant another account also links: the account goes, the tenant stays", async () => {
+    const { id, email } = await newAccount();
+    const armed = { on: false };
+    const made = { id: "" };
+    await provisionNewAccount(id, email, {
+      catalog: failing(["select:users", "delete:users", "update:users", "delete:tenants", "insert:tenantOrphans"], armed),
+      ensureTenant: failAfterProvisioning(armed, made),
+      destroy: async () => false,
+    });
+    const other = await activeAccount();
+    await query("UPDATE users SET tenant_id = ? WHERE id = ?", [made.id, other.id]);
+    const removed: string[] = [];
+    const run = await runRetentionJob(getCatalogDb(), {
+      now: new Date(Date.now() + PENDING_SIGNUP_EXPIRY_MS + 60_000),
+      tenantPlane: plane(removed),
+    });
+    expect(run.erased.find((r) => r.userId === id)?.tenantKept).toBe("linked-by-another-account");
+    expect(removed).not.toContain(made.id);
+    expect(await registered(made.id)).toBe(true);
+    expect(existsSync(tenantFile(made.id))).toBe(true);
+  });
+
+  it("a closed account that shares its workspace is erased alone; the last account's erasure then removes the workspace", async () => {
+    const owner = await inviter();
+    const member = await activeAccount();
+    await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
+    const removed: string[] = [];
+
+    const first = await eraseAccount(getCatalogDb(), member.id, { tenantPlane: plane(removed) });
+    expect(first?.tenantKept).toBe("linked-by-another-account");
+    expect(first?.tenantDatabase).toBe("none");
+    expect(removed).toHaveLength(0);
+    expect(await registered(owner.tenantId)).toBe(true); // the tenants row is keyed by the tenant id: kept
+    await expect(verifyTenantRoute(owner.tenantId)).resolves.toBeUndefined();
+
+    const last = await eraseAccount(getCatalogDb(), owner.id, { tenantPlane: plane(removed) });
+    expect(last?.tenantKept).toBeNull();
+    expect(last?.tenantDatabase).toBe("removed");
+    expect(removed).toEqual([owner.tenantId]);
+    expect(await registered(owner.tenantId)).toBe(false);
+  });
+});
+
+describe("third review, finding 2 — a re-link part-way never loses the database this sign-up made", () => {
+  /** Provision for real under the minted id, then re-link the account to `to`, then fail. */
+  function provisionThenRelink(to: string, made: { id: string }) {
+    return async (userId: string, opts: Parameters<typeof ensureTenantForUser>[1]) => {
+      made.id = await ensureTenantForUser(userId, opts);
+      await query("UPDATE users SET tenant_id = ? WHERE id = ?", [to, userId]);
+      throw new Error("planted: re-linked after the database was made, then failed");
+    };
+  }
+
+  it("the minted id is listed whatever the account's link says, and its database removed", async () => {
+    const owner = await inviter();
+    const { id, email } = await newAccount();
+    const made = { id: "" };
+    const destroyed: string[] = [];
+    const result = await provisionNewAccount(id, email, {
+      ensureTenant: provisionThenRelink(owner.tenantId, made),
+      destroy: async (t) => {
+        destroyed.push(t);
+        return getProvisioner(process.env).destroy(t);
+      },
+    });
+    expect(result).toEqual({ ok: false, database: "removed" });
+    expect(destroyed).toEqual([made.id]);
+    expect(existsSync(tenantFile(made.id))).toBe(false);
+    expect(await registered(made.id)).toBe(false);
+    expect(await registered(owner.tenantId)).toBe(true);
+    expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
+  });
+
+  it("the delete is refused: the minted id stays listed for the sweep, its registration gone so the sweep can act", async () => {
+    const owner = await inviter();
+    const { id, email } = await newAccount();
+    const made = { id: "" };
+    const result = await provisionNewAccount(id, email, {
+      ensureTenant: provisionThenRelink(owner.tenantId, made),
+      destroy: async () => false,
+    });
+    expect(result).toEqual({ ok: false, database: "listed-for-sweep" });
+    expect(await pendingTenantOrphans(getCatalogDb())).toContain(made.id);
+    expect(await pendingTenantOrphans(getCatalogDb())).not.toContain(owner.tenantId);
+    expect(await registered(made.id)).toBe(false);
+    expect(await registered(owner.tenantId)).toBe(true);
+  });
+
+  it("the rollback never deletes its minted database while another account links it", async () => {
+    const { id, email } = await newAccount();
+    const other = await activeAccount();
+    const made = { id: "" };
+    const destroy = vi.fn(async () => true);
+    const result = await provisionNewAccount(id, email, {
+      ensureTenant: async (userId, opts) => {
+        made.id = await ensureTenantForUser(userId, opts);
+        await query("UPDATE users SET tenant_id = ? WHERE id = ?", [made.id, other.id]);
+        throw new Error("planted: another account linked the tenant, then the sign-up failed");
+      },
+      destroy,
+    });
+    expect(result).toEqual({ ok: false, database: "listed-for-sweep" });
+    expect(destroy).not.toHaveBeenCalled();
+    expect(await registered(made.id)).toBe(true);
+    expect(existsSync(tenantFile(made.id))).toBe(true);
+    expect(errors.join("\n")).toContain("an account links the minted tenant");
+  });
+
+  it("reading who links the minted id fails: nothing is deleted, the id stays listed", async () => {
+    const { id, email } = await newAccount();
+    const made = { id: "" };
+    const destroy = vi.fn(async () => true);
+    let reads = 0;
+    const real = getCatalogDb();
+    // The rollback's second read of users (who links the minted id) throws.
+    const catalog = new Proxy(real, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "select" && made.id) {
+          return (...args: unknown[]) => {
+            reads += 1;
+            if (reads === 2) throw new Error("planted: the second read fails");
+            return (value as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as AppDatabase;
+    const result = await provisionNewAccount(id, email, {
+      catalog,
+      ensureTenant: async (userId, opts) => {
+        made.id = await ensureTenantForUser(userId, opts);
+        throw new Error("planted failure after the database exists");
+      },
+      destroy,
+    });
+    expect(result).toEqual({ ok: false, database: "listed-for-sweep" });
+    expect(destroy).not.toHaveBeenCalled();
+    expect(await pendingTenantOrphans(getCatalogDb())).toContain(made.id);
+    expect(errors.join("\n")).toContain("rollback step read-links failed");
   });
 });

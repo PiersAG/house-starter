@@ -30,11 +30,16 @@
 //                               erases the two together;
 //   only its own              — the rollback touches a tenant row or database
 //                               only when it is the id THIS sign-up minted and
-//                               linked; an account that already held a tenant
-//                               (an invited member, a re-link) is never rolled
-//                               back into someone else's workspace — when it is
-//                               switched on and its workspace opens, it is
-//                               already set up and the person is signed in;
+//                               linked, and no account links it any more; an
+//                               account that already held a tenant (an invited
+//                               member, a re-link) is never rolled back into
+//                               someone else's workspace — when it is switched
+//                               on and its workspace opens, it is already set up
+//                               and the person is signed in. The minted id is
+//                               recorded on the account (users.signup_tenant_id),
+//                               so the retention job's erasure of an unfinished
+//                               sign-up removes only the database the sign-up
+//                               made (lib/privacy/deletion.ts eraseAccount);
 //   never a crash             — the caller gets { ok: false } and shows a plain
 //                               message; nothing is thrown at it, even when a
 //                               rollback step itself fails (each is guarded and
@@ -110,6 +115,7 @@ export async function verifyTenantRoute(tenantId: string): Promise<void> {
 /** The rollback steps, by name, as they appear in the log when one fails. */
 export type RollbackStep =
   | "read-link"
+  | "read-links"
   | "keep-account"
   | "record-orphan"
   | "delete-account"
@@ -146,13 +152,16 @@ export async function provisionNewAccount(
     // account its owner closed is never given a workspace or switched back on.
     const link = await catalog
       .update(users)
-      .set({ tenantId: minted })
+      .set({ tenantId: minted, signupTenantId: minted })
       .where(and(eq(users.id, userId), isNull(users.tenantId), switchable()))
       .run();
     if (link.rowsAffected !== 1) {
       // No such account, or it already holds a tenant (an invited member, a
       // re-link): not a fresh sign-up. Nothing was made, so nothing is undone —
-      // above all not the tenant the account already belongs to.
+      // above all not the tenant the account already belongs to. Such an
+      // account, if still a sign-up being set up, holds no signup_tenant_id, so
+      // when its hour is up the retention job erases the account alone and
+      // leaves that tenant and its database as they are.
       if (link.rowsAffected === 0) {
         const existing = await alreadySetUp(catalog, userId, verifyRoute);
         if (existing) return { ok: true, tenantId: existing, alreadySetUp: true };
@@ -176,7 +185,7 @@ export async function provisionNewAccount(
     // account switched on. Until this row changes, sign-in refuses it.
     const on = await catalog
       .update(users)
-      .set({ signupPendingSince: null, deactivatedAt: null, deletionDueAt: null })
+      .set({ signupPendingSince: null, signupTenantId: null, deactivatedAt: null, deletionDueAt: null })
       .where(and(eq(users.id, userId), eq(users.tenantId, minted), switchable()))
       .run();
     if (on.rowsAffected !== 1) {
@@ -257,18 +266,22 @@ async function step<T>(name: RollbackStep, failed: RollbackStep[], run: () => Pr
  * Undo a sign-up. `minted` is the tenant id this sign-up linked (null when the
  * link itself never happened). The order keeps track of the database throughout:
  *
- *   1 read the account's link, and act on the tenant only if it is still `minted`;
- *   2 list the database in tenant_orphans — from here it cannot be lost;
- *   3 if it could NOT be listed while a database may exist, keep the account:
- *     switched off with its erasure due now, its link is the record of the
- *     database, and the retention job erases the two together. Nothing more is
- *     touched;
+ *   1 read the account's link: is it still `minted`?
+ *   2 list `minted` in tenant_orphans whenever this sign-up linked it, whatever
+ *     the account's link says now (a re-link part-way still leaves the
+ *     database Turso made under `minted`): from here it cannot be lost, and
+ *     the sweep checks again before deleting;
+ *   3 if it could NOT be listed while the account still names it, keep the
+ *     account: switched off with its erasure due now, its link is the record
+ *     of the database, and the retention job erases the two together. Nothing
+ *     more is touched;
  *   4 otherwise delete the account; if that fails, deactivate it with its
  *     erasure due now (sign-in refused; the retention job erases it and its
  *     database), and leave its registration and database alone, so it is never
  *     an account linked to a tenant with no database;
- *   5 delete the database; then its registration once the database is gone or
- *     listed; and take it off the list once it is gone.
+ *   5 only when no account links `minted` (read again, after the account is
+ *     gone), delete the database; then its registration once the database is
+ *     gone or listed; and take it off the list once it is gone.
  *
  * The account was created switched off, so even if every step here fails it
  * stays off: never a usable account linked to a tenant with no database.
@@ -287,9 +300,10 @@ async function rollBack(
       return true;
     })) === true;
 
-  // ours: the account is gone or still linked to `minted` — nobody else can hold
-  // a fresh random id. unsure: the link could not be read; the database is then
-  // listed (listing deletes nothing; the sweep checks again) but not deleted.
+  // ours: the account is gone or still linked to `minted`. unsure: the link
+  // could not be read. Either way, and also when the account was re-linked,
+  // the database is listed: listing deletes nothing, and the sweep checks
+  // again. It is deleted below only once no account links `minted`.
   let ours = false;
   let unsure = false;
   if (minted) {
@@ -303,7 +317,7 @@ async function rollBack(
     }
   }
 
-  const listed = minted !== null && (ours || unsure)
+  const listed = minted !== null
     ? await done("record-orphan", () => recordTenantOrphan(minted, "signup-rollback", catalog))
     : false;
 
@@ -331,7 +345,18 @@ async function rollBack(
     return { database: listed ? "listed-for-sweep" : "none", failed };
   }
 
-  if (!ours || !minted) return { database: listed ? "listed-for-sweep" : "none", failed };
+  if (!minted) return { database: "none", failed };
+  // `minted` is a fresh random id only this sign-up held, but its database is
+  // deleted only when the catalog shows no account linking it now — read after
+  // the account itself is gone. An unreadable answer deletes nothing: the
+  // database stays listed for the sweep, which checks again.
+  const free = await step("read-links", failed, async () =>
+    (await catalog.select({ id: users.id }).from(users).where(eq(users.tenantId, minted)).limit(1).all()).length === 0,
+  );
+  if (free !== true) {
+    if (free === false) console.error("signup: an account links the minted tenant; its database is left alone");
+    return { database: listed ? "listed-for-sweep" : "none", failed };
+  }
   const destroy = destroyOverride ?? ((id: string) => getProvisioner(env).destroy(id));
   const removed = (await step("delete-database", failed, () => destroy(minted))) === true;
   // ensureTenantForUser registers the tenant (the `tenants` row) only after its

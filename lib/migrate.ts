@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS users (
   sessions_valid_from INTEGER,
   deactivated_at INTEGER,
   deletion_due_at INTEGER,
-  signup_pending_since INTEGER
+  signup_pending_since INTEGER,
+  signup_tenant_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS revoked_sessions (

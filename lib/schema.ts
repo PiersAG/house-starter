@@ -142,6 +142,16 @@ export const users = sqliteTable("users", {
    * Nullable with no default, so lib/migrate.ts::reconcileColumns can add it.
    */
   signupPendingSince: integer("signup_pending_since", { mode: "timestamp" }),
+  /**
+   * The tenant id THIS sign-up minted and linked (app-business-core issue 358),
+   * set in the same write as `tenantId` by lib/tenant/signup-provisioning.ts and
+   * cleared when the account is switched on. The erasure of a sign-up that never
+   * finished (lib/privacy/deletion.ts eraseAccount) removes a database only when
+   * the account's `tenantId` is this id: an unfinished sign-up linked to a tenant
+   * it did not mint (an invited member) is erased without touching that tenant.
+   * Nullable with no default, so lib/migrate.ts::reconcileColumns can add it.
+   */
+  signupTenantId: text("signup_tenant_id"),
 });
 
 /** The roles an account can hold inside its own tenant. */
