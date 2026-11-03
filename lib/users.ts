@@ -69,12 +69,36 @@ export interface CreateUserInput {
   pendingSignup?: boolean;
 }
 
-/** How long a sign-up that never finished is kept before the retention job erases it. */
+/**
+ * How long a sign-up that never finished is kept. After it, the next sign-up
+ * with the same address erases it on the spot (registerUser), and the retention
+ * job erases any left at its daily run.
+ */
 export const PENDING_SIGNUP_EXPIRY_MS = 60 * 60 * 1000;
+
+/** The Retry-After a person is given while their sign-up is still being set up. */
+export const PENDING_SIGNUP_RETRY_SECONDS = PENDING_SIGNUP_EXPIRY_MS / 1000;
+
+/**
+ * What a sign-up is told while an account with its address is still being set
+ * up. It agrees with what the first attempt was told
+ * (lib/tenant/signup-provisioning.ts SIGNUP_STILL_BEING_SET_UP_MESSAGE), and it
+ * holds: once the hour is up, the retry erases the unfinished account and goes on.
+ */
+export const PENDING_SIGNUP_MESSAGE =
+  "An account with this email is still being set up. Please try again in an hour.";
 
 /** True when the account is a sign-up whose database is not yet ready. */
 export function isPendingSignup(user: { signupPendingSince: Date | null }): boolean {
   return user.signupPendingSince !== null;
+}
+
+/** A sign-up that never finished and whose hour is up. */
+export function pendingSignupExpired(
+  user: { signupPendingSince: Date | null; deletionDueAt: Date | null },
+  now: Date = new Date(),
+): boolean {
+  return isPendingSignup(user) && user.deletionDueAt !== null && user.deletionDueAt.getTime() <= now.getTime();
 }
 
 /** Insert a user row and return the persisted record (id generated here). */
@@ -91,9 +115,9 @@ export async function createUser(
       email: normalizeEmail(input.email),
       passwordHash: input.passwordHash,
       name: input.name ?? null,
-      // Off until provisioned: `deactivatedAt` is what sign-in refuses
-      // (lib/auth.ts authorize → isDeactivated), and `deletionDueAt` lets the
-      // retention job erase a sign-up that never finished, with its database.
+      // Off until provisioned: sign-in refuses it (lib/auth.ts authorize →
+      // isDeactivated, which refuses `deactivatedAt` or `signupPendingSince`),
+      // and `deletionDueAt` lets a sign-up that never finished be erased.
       ...(input.pendingSignup
         ? {
             signupPendingSince: now,
@@ -154,12 +178,22 @@ export async function registerUser(
   if (!fields.success) {
     throw new RegistrationError("invalid_input", firstIssue(fields.error));
   }
-  const existing = await getUserByEmail(db, input.email);
+  let existing = await getUserByEmail(db, input.email);
+  if (existing && pendingSignupExpired(existing)) {
+    // A sign-up that never finished, whose hour is up: erased now, as the
+    // retention job would at its next daily run, so "try again in an hour"
+    // holds. The account only — never its tenant: an unfinished sign-up's
+    // database is found and removed through its tenant_orphans record
+    // (lib/privacy/deletion.ts tenantErasable).
+    const { eraseAccount } = await import("@/lib/privacy/deletion");
+    await eraseAccount(db, existing.id);
+    existing = await getUserByEmail(db, input.email);
+  }
   if (existing) {
     throw new RegistrationError(
       "email_taken",
       isPendingSignup(existing)
-        ? "An account with this email is still being set up. Please try again in an hour."
+        ? PENDING_SIGNUP_MESSAGE
         : "An account with this email already exists. Try signing in instead.",
     );
   }

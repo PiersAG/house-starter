@@ -1,17 +1,21 @@
 // @vitest-environment node
-// The sign-up rollback touches only what THIS sign-up made, and never crashes
-// (app-business-core issue 358; Dispatch AG's independent review, findings 1
-// and 2).
+// Record first, then create (app-business-core issue 358; Dispatch AG-fix4).
 //
-//   1 an account that already holds a tenant — an invited member linked to the
-//     inviter's workspace, or one re-linked part-way — is never rolled back into
-//     that tenant: the inviter's registration and database stay;
-//   2 every rollback step may throw; sign-up still answers { ok: false }, names
-//     the failed step in the log, and never loses track of the database or
-//     leaves a usable account linked to a tenant with no database.
+// Four independent reviews each found a narrower order of failures in which a
+// database the sign-up made lost its last record, because it was found through
+// the account or its link. Now the sign-up's tenant id is written to
+// tenant_orphans BEFORE Turso is asked for anything, and that record goes only
+// in the write that switches the finished account on. This file holds:
+//
+//   * every failing combination named in the four review reports, each showing
+//     the database is still findable afterwards (its record is still there);
+//   * a property test that fails each rollback step in every combination, at
+//     every point a sign-up can fail, with and without a re-link part-way;
+//   * the answer the person gets for each outcome, and what their retry gets;
+//   * account erasure of an unfinished sign-up never touching a tenant.
 //
 // The file adapter and the catalog run for real; a failing step is a catalog
-// wrapper that throws on that one operation.
+// wrapper that throws on that one operation once armed.
 
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,15 +26,30 @@ import { migrateCatalog } from "@/lib/migrate";
 import { __resetCatalogCacheForTests, getCatalogDb } from "@/lib/catalog";
 import { __resetDbCacheForTests, getDb } from "@/lib/db";
 import { tenantOrphans, tenants, users } from "@/lib/schema";
-import { ensureTenantForUser, getProvisioner, tenantFileDir } from "@/lib/tenant/provisioner";
+import { ensureTenantForUser, getProvisioner, provisionTenant, tenantFileDir } from "@/lib/tenant/provisioner";
 import { pendingTenantOrphans } from "@/lib/tenant/orphans";
-import { provisionNewAccount, verifyTenantRoute } from "@/lib/tenant/signup-provisioning";
+import {
+  provisionNewAccount,
+  SIGNUP_PROVISION_FAILED_MESSAGE,
+  SIGNUP_STILL_BEING_SET_UP_MESSAGE,
+  verifyTenantRoute,
+  type SignupProvisionDeps,
+  type SignupProvisionResult,
+} from "@/lib/tenant/signup-provisioning";
 import { isDeactivated } from "@/lib/privacy/deactivation";
 import { runRetentionJob } from "@/lib/privacy/retention-job";
 import { eraseAccount } from "@/lib/privacy/deletion";
-import { createUser, getUserById, PENDING_SIGNUP_EXPIRY_MS, registerUser, type AppDatabase } from "@/lib/users";
+import {
+  createUser,
+  getUserById,
+  PENDING_SIGNUP_EXPIRY_MS,
+  PENDING_SIGNUP_MESSAGE,
+  registerUser,
+  type AppDatabase,
+} from "@/lib/users";
 
 const KEYS = ["TENANCY_MODE", "CATALOG_DATABASE_URL", "TENANT_PROVISIONER", "TENANT_DB_DIR", "VERCEL_ENV"];
+const PASSWORD = "a-long-enough-passphrase-1";
 let workDir: string;
 let catalogUrl: string;
 let n = 0;
@@ -61,7 +80,7 @@ beforeEach(() => {
 });
 afterEach(reset);
 
-async function query(sql: string, args: (string | null)[] = []) {
+async function query(sql: string, args: (string | number | null)[] = []) {
   const client = createClient({ url: catalogUrl });
   try {
     return (await client.execute({ sql, args })).rows;
@@ -70,18 +89,15 @@ async function query(sql: string, args: (string | null)[] = []) {
   }
 }
 
-/** A new sign-up exactly as registerUser makes it: switched off, being set up. */
-async function newAccount(): Promise<{ id: string; email: string }> {
-  n += 1;
-  const email = `rollback-${n}@example.com`;
+/** A new sign-up exactly as registerUser makes it: switched off, being set up, linked to nothing. */
+async function newAccount(email = `rollback-${++n}@example.com`): Promise<{ id: string; email: string }> {
   const user = await createUser(getCatalogDb(), { email, passwordHash: "!", pendingSignup: true });
   return { id: user.id, email };
 }
 
 /** An account that is switched on (the seeded owner, or a finished sign-up). */
 async function activeAccount(): Promise<{ id: string; email: string }> {
-  n += 1;
-  const email = `rollback-${n}@example.com`;
+  const email = `rollback-${++n}@example.com`;
   const user = await createUser(getCatalogDb(), { email, passwordHash: "!" });
   return { id: user.id, email };
 }
@@ -93,10 +109,9 @@ async function inviter(): Promise<{ id: string; tenantId: string }> {
   return { id, tenantId };
 }
 
-/** The account's switch and link, as sign-in and the retention job read them. */
 async function account(id: string) {
   const rows = await query(
-    "SELECT tenant_id, deactivated_at, deletion_due_at, signup_pending_since, signup_tenant_id FROM users WHERE id = ?",
+    "SELECT tenant_id, deactivated_at, deletion_due_at, signup_pending_since FROM users WHERE id = ?",
     [id],
   );
   return rows[0];
@@ -104,14 +119,35 @@ async function account(id: string) {
 
 const tenantFile = (tenantId: string) => join(tenantFileDir(), `${tenantId}.db`);
 const registered = async (tenantId: string) => (await query("SELECT id FROM tenants WHERE id = ?", [tenantId])).length === 1;
+/** The sign-up's record is still there: the rollback, the erasure jobs and the sweep can find the database. */
+const findable = async (tenantId: string) => (await pendingTenantOrphans(getCatalogDb())).includes(tenantId);
 
-type Op = "select:users" | "delete:users" | "update:users" | "delete:tenants" | "insert:tenantOrphans" | "update:tenantOrphans";
+/** The invariant every outcome must hold: a database, or a registration, that exists is recorded. */
+async function neverLost(tenantId: string) {
+  if (existsSync(tenantFile(tenantId)) || (await registered(tenantId))) {
+    expect(await findable(tenantId)).toBe(true);
+  }
+}
+
+/** Someone else's workspace is exactly as it was. */
+async function untouched(owner: { id: string; tenantId: string }) {
+  expect(await registered(owner.tenantId)).toBe(true);
+  expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
+  expect(await findable(owner.tenantId)).toBe(false);
+  await expect(verifyTenantRoute(owner.tenantId)).resolves.toBeUndefined();
+  expect((await account(owner.id)).tenant_id).toBe(owner.tenantId);
+}
+
+type Op =
+  | "select:users"
+  | "delete:users"
+  | "update:users"
+  | "delete:tenants"
+  | "insert:tenantOrphans"
+  | "delete:tenantOrphans";
 const TABLES = new Map<unknown, string>([[users, "users"], [tenants, "tenants"], [tenantOrphans, "tenantOrphans"]]);
 
-/**
- * The real catalog, except that each listed operation throws — once armed, so
- * the sign-up's own link and provisioning run normally first.
- */
+/** The real catalog, except that each listed operation throws once armed. */
 function failing(ops: Op[], armed: { on: boolean }): AppDatabase {
   const real = getCatalogDb();
   return new Proxy(real, {
@@ -145,62 +181,250 @@ function failing(ops: Op[], armed: { on: boolean }): AppDatabase {
   }) as AppDatabase;
 }
 
-/** Provision for real, then fail; `armed` turns the catalog failures on at the failure. */
-function failAfterProvisioning(armed: { on: boolean }, made: { id: string }) {
-  return async (userId: string, opts: Parameters<typeof ensureTenantForUser>[1]) => {
-    made.id = await ensureTenantForUser(userId, opts);
-    armed.on = true;
-    throw new Error("planted failure after the database exists");
+/** Where a sign-up fails. */
+type FailAt = "before-create" | "created-unregistered" | "registered" | "verify" | "switch-on";
+
+/**
+ * Deps that fail the sign-up at `at`, arming the catalog failures at that
+ * moment. `made.id` is the recorded tenant id.
+ */
+function failAt(at: FailAt, armed: { on: boolean }, made: { id: string }): Pick<SignupProvisionDeps, "provision" | "verifyRoute"> {
+  return {
+    provision: async (tenantId, opts) => {
+      made.id = tenantId;
+      if (at === "before-create") {
+        armed.on = true;
+        throw new Error("planted: Turso refused the create");
+      }
+      if (at === "created-unregistered") {
+        await getProvisioner(process.env).create(tenantId); // exists at the platform...
+        armed.on = true;
+        throw new Error("planted: the migration failed after the database was made"); // ...never registered
+      }
+      await provisionTenant(tenantId, opts);
+      if (at === "registered") {
+        armed.on = true;
+        throw new Error("planted failure after the database is registered");
+      }
+    },
+    verifyRoute: async (tenantId) => {
+      await verifyTenantRoute(tenantId);
+      if (at === "verify") {
+        armed.on = true;
+        throw new Error("planted: the route leads nowhere");
+      }
+      if (at === "switch-on") {
+        armed.on = true; // the switch-on write is next
+      }
+    },
   };
 }
 
-describe("finding 1 — the rollback never reaches another account's tenant", () => {
-  it("an invited member still being set up is refused and leaves the inviter's tenant row and database untouched", async () => {
-    const owner = await inviter();
-    const member = await newAccount();
-    // The member is already linked to the inviter's workspace.
-    await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
-    const destroy = vi.fn(async () => true);
-    const ensureTenant = vi.fn(ensureTenantForUser);
+/** Re-link exactly this account (the reviews' "re-link part-way"). */
+function relinking(userId: string, to: string, at: FailAt, armed: { on: boolean }, made: { id: string }) {
+  const deps = failAt(at, armed, made);
+  const relink = () => query("UPDATE users SET tenant_id = ? WHERE id = ?", [to, userId]);
+  return {
+    provision: async (tenantId: string, opts: { label: string | null; env: NodeJS.ProcessEnv }) => {
+      if (at === "before-create") await relink();
+      if (at === "created-unregistered") {
+        made.id = tenantId;
+        await getProvisioner(process.env).create(tenantId);
+        await relink();
+        armed.on = true;
+        throw new Error("planted: the migration failed after the database was made");
+      }
+      if (at === "registered") {
+        made.id = tenantId;
+        await provisionTenant(tenantId, opts);
+        await relink();
+        armed.on = true;
+        throw new Error("planted failure after the database is registered");
+      }
+      return deps.provision!(tenantId, opts);
+    },
+    verifyRoute: async (tenantId: string) => {
+      if (at === "verify" || at === "switch-on") await relink();
+      return deps.verifyRoute!(tenantId);
+    },
+  };
+}
 
-    const result = await provisionNewAccount(member.id, member.email, { ensureTenant, destroy });
+const removedAnswer = (database: string) => ({
+  ok: false,
+  account: "removed",
+  database,
+  message: SIGNUP_PROVISION_FAILED_MESSAGE,
+  retryAfterSeconds: 60,
+});
+const keptAnswer = (database: string) => ({
+  ok: false,
+  account: "kept",
+  database,
+  message: SIGNUP_STILL_BEING_SET_UP_MESSAGE,
+  retryAfterSeconds: 3600,
+});
 
-    expect(result).toEqual({ ok: false, database: "none" });
-    expect(ensureTenant).not.toHaveBeenCalled(); // stopped before any database was made
-    expect(destroy).not.toHaveBeenCalled();
-    expect(await registered(owner.tenantId)).toBe(true);
-    expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
-    expect(await pendingTenantOrphans(getCatalogDb())).not.toContain(owner.tenantId);
-    // Nothing rolled back at all: the member's link is as it was.
-    const [row] = await query("SELECT tenant_id FROM users WHERE id = ?", [member.id]);
-    expect(row.tenant_id).toBe(owner.tenantId);
-    expect(errors.join("\n")).toContain("account-missing-or-already-linked");
-    // Still switched off: refusing it never switches it on.
-    expect((await account(member.id)).deactivated_at).not.toBeNull();
+/** A tenant plane over the real file adapter that records every removal. */
+function plane(removed: string[]) {
+  return {
+    open: async (t: string) => getDb(t),
+    destroy: async (t: string) => {
+      removed.push(t);
+      return getProvisioner(process.env).destroy(t);
+    },
+  };
+}
+const anHourOn = () => new Date(Date.now() + PENDING_SIGNUP_EXPIRY_MS + 60_000);
+
+describe("record first, then create", () => {
+  it("the record exists before Turso is asked for anything, and goes with the switch-on", async () => {
+    const { id, email } = await newAccount();
+    const seen: boolean[] = [];
+    const result = await provisionNewAccount(id, email, {
+      provision: async (tenantId, opts) => {
+        seen.push(await findable(tenantId));
+        await provisionTenant(tenantId, opts);
+      },
+    });
+    expect(seen).toEqual([true]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(await findable(result.tenantId)).toBe(false);
+    expect(await query("SELECT tenant_id FROM tenant_orphans WHERE tenant_id = ?", [result.tenantId])).toHaveLength(0);
+    const row = await account(id);
+    expect(row.tenant_id).toBe(result.tenantId);
+    expect(row.deactivated_at).toBeNull();
+    expect(row.signup_pending_since).toBeNull();
+    expect(row.deletion_due_at).toBeNull();
   });
 
-  // The review's "to confirm" item: such an account used to be told "nothing
-  // was saved" although it exists and works, and a retry then got "email taken".
+  it("the record cannot be written: no database is asked for, the account is removed", async () => {
+    const { id, email } = await newAccount();
+    const provision = vi.fn(async () => undefined);
+    const result = await provisionNewAccount(id, email, {
+      catalog: failing(["insert:tenantOrphans"], { on: true }),
+      provision,
+    });
+    expect(result).toEqual(removedAnswer("none"));
+    expect(provision).not.toHaveBeenCalled();
+    expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0);
+  });
+
+  it("the record cannot be written and the account cannot be deleted: still nothing made, and the person is told it is still being set up", async () => {
+    const { id, email } = await newAccount();
+    const provision = vi.fn(async () => undefined);
+    const result = await provisionNewAccount(id, email, {
+      catalog: failing(["insert:tenantOrphans", "delete:users"], { on: true }),
+      provision,
+    });
+    expect(result).toEqual(keptAnswer("none"));
+    expect(provision).not.toHaveBeenCalled();
+    expect(isDeactivated(await getUserById(getCatalogDb(), id))).toBe(true);
+  });
+
+  it("the switch-on and the record's removal are one write: if the record cannot go, the account is not switched on", async () => {
+    const { id, email } = await newAccount();
+    const armed = { on: false };
+    const made = { id: "" };
+    const result = await provisionNewAccount(id, email, {
+      // At the switch-on the record's delete throws; the rollback's own record delete then works.
+      catalog: failing(["delete:tenantOrphans"], armed),
+      ...failAt("switch-on", armed, made),
+      destroy: async () => false,
+    });
+    expect(result.ok).toBe(false);
+    // Never switched on, never linked; the record still names the database.
+    expect(await query("SELECT id FROM users WHERE id = ? AND signup_pending_since IS NULL", [id])).toHaveLength(0);
+    expect(await query("SELECT id FROM users WHERE tenant_id = ?", [made.id])).toHaveLength(0);
+    expect(await findable(made.id)).toBe(true);
+    await neverLost(made.id);
+  });
+
+  it("the switch-on's answer is lost after it was written: the account is read back, switched on, and the sign-up succeeds", async () => {
+    const { id, email } = await newAccount();
+    const real = getCatalogDb();
+    const catalog = new Proxy(real, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "batch") {
+          return async (...args: unknown[]) => {
+            await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+            throw new Error("planted: the connection dropped after the write");
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as AppDatabase;
+    const destroy = vi.fn(async () => true);
+    const result = await provisionNewAccount(id, email, { catalog, destroy });
+    expect(result.ok).toBe(true);
+    expect(destroy).not.toHaveBeenCalled();
+    expect(isDeactivated(await getUserById(getCatalogDb(), id))).toBe(false);
+  });
+
+  it("a switched-on account is never deleted by a rollback", async () => {
+    const { id, email } = await newAccount();
+    const real = getCatalogDb();
+    let reads = 0;
+    // The switch-on is written but its answer lost, and the read-back fails too.
+    const catalog = new Proxy(real, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "batch") {
+          return async (...args: unknown[]) => {
+            await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+            throw new Error("planted: the connection dropped after the write");
+          };
+        }
+        if (prop === "select") {
+          return (...args: unknown[]) => {
+            reads += 1;
+            if (reads === 2) throw new Error("planted: the read-back fails");
+            return (value as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as AppDatabase;
+    const destroy = vi.fn(async () => true);
+    const result = await provisionNewAccount(id, email, { catalog, destroy });
+    expect(result.ok).toBe(false);
+    // The account is on and linked: the rollback deleted neither it nor its database.
+    const row = await account(id);
+    expect(row.signup_pending_since).toBeNull();
+    expect(destroy).not.toHaveBeenCalled();
+    expect(existsSync(tenantFile(String(row.tenant_id)))).toBe(true);
+  });
+});
+
+describe("review 1 — the rollback only ever touches this sign-up's own account and tenant", () => {
+  it("an invited member already linked to the inviter's workspace: nothing made or undone, the inviter untouched", async () => {
+    const owner = await inviter();
+    const member = await newAccount();
+    await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
+    const provision = vi.fn(async () => undefined);
+    const destroy = vi.fn(async () => true);
+    const result = await provisionNewAccount(member.id, member.email, { provision, destroy });
+    expect(result).toEqual(keptAnswer("none"));
+    expect(provision).not.toHaveBeenCalled();
+    expect(destroy).not.toHaveBeenCalled();
+    expect((await account(member.id)).tenant_id).toBe(owner.tenantId);
+    expect(isDeactivated(await getUserById(getCatalogDb(), member.id))).toBe(true);
+    await untouched(owner);
+  });
+
   it("an account already set up (switched on, workspace registered and opening) is told so: signed in, nothing made or undone", async () => {
     const owner = await inviter();
     const member = await activeAccount();
     await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
-    const ensureTenant = vi.fn(ensureTenantForUser);
-    const destroy = vi.fn(async () => true);
+    const provision = vi.fn(async () => undefined);
     const verifyRoute = vi.fn(async () => undefined);
-
-    const result = await provisionNewAccount(member.id, member.email, { ensureTenant, destroy, verifyRoute });
-
+    const result = await provisionNewAccount(member.id, member.email, { provision, verifyRoute });
     expect(result).toEqual({ ok: true, tenantId: owner.tenantId, alreadySetUp: true });
-    expect(verifyRoute).toHaveBeenCalledWith(owner.tenantId); // its workspace opens
-    expect(ensureTenant).not.toHaveBeenCalled();
-    expect(destroy).not.toHaveBeenCalled();
-    expect(await registered(owner.tenantId)).toBe(true);
-    const row = await account(member.id);
-    expect(row.tenant_id).toBe(owner.tenantId);
-    expect(row.deactivated_at).toBeNull();
-    // A retry answers the same, so it is handled correctly too.
-    expect(await provisionNewAccount(member.id, member.email, { ensureTenant, destroy, verifyRoute })).toEqual(result);
+    expect(verifyRoute).toHaveBeenCalledWith(owner.tenantId);
+    expect(provision).not.toHaveBeenCalled();
+    expect(await provisionNewAccount(member.id, member.email, { provision, verifyRoute })).toEqual(result);
   });
 
   it("an account whose existing workspace does not open is not told it is set up", async () => {
@@ -212,193 +436,41 @@ describe("finding 1 — the rollback never reaches another account's tenant", ()
         throw new Error("planted: the workspace does not open");
       },
     });
-    expect(result).toEqual({ ok: false, database: "none" });
+    expect(result).toEqual(keptAnswer("none"));
   });
 
   it("an account its owner closed is never given a workspace or switched back on", async () => {
     const closed = await activeAccount();
     await query("UPDATE users SET deactivated_at = unixepoch(), deletion_due_at = unixepoch() + 86400 WHERE id = ?", [closed.id]);
-    const ensureTenant = vi.fn(ensureTenantForUser);
-    const result = await provisionNewAccount(closed.id, closed.email, { ensureTenant });
-    expect(result).toEqual({ ok: false, database: "none" });
-    expect(ensureTenant).not.toHaveBeenCalled();
+    const provision = vi.fn(async () => undefined);
+    expect(await provisionNewAccount(closed.id, closed.email, { provision })).toEqual(keptAnswer("none"));
+    expect(provision).not.toHaveBeenCalled();
     const row = await account(closed.id);
     expect(row.tenant_id).toBeNull();
     expect(row.deactivated_at).not.toBeNull();
   });
 
-  it("an account re-linked to another tenant part-way leaves that tenant untouched when the sign-up fails", async () => {
-    const owner = await inviter();
-    const member = await newAccount();
-    const destroy = vi.fn(async () => true);
-
-    const result = await provisionNewAccount(member.id, member.email, {
-      ensureTenant: async () => {
-        await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
-        throw new Error("planted: re-linked, then failed");
-      },
-      destroy,
-    });
-
-    expect(result.ok).toBe(false);
-    // Only the id this sign-up minted is removed (third review, finding 2), never the inviter's.
-    expect(destroy).not.toHaveBeenCalledWith(owner.tenantId);
-    expect(await registered(owner.tenantId)).toBe(true);
-    expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
-    expect(await pendingTenantOrphans(getCatalogDb())).not.toContain(owner.tenantId);
+  it("no such account: nothing made, and the person is told nothing was saved", async () => {
+    const provision = vi.fn(async () => undefined);
+    expect(await provisionNewAccount("no-such-account", null, { provision })).toEqual(removedAnswer("none"));
+    expect(provision).not.toHaveBeenCalled();
   });
 
-  it("refuses a tenant id other than the one it linked, and rolls back only its own", async () => {
-    const owner = await inviter();
-    const { id, email } = await newAccount();
-    const destroyed: string[] = [];
-    const result = await provisionNewAccount(id, email, {
-      ensureTenant: async () => owner.tenantId, // answers someone else's tenant
-      destroy: async (t) => {
-        destroyed.push(t);
-        return true;
-      },
-    });
-    expect(result.ok).toBe(false);
-    expect(destroyed).not.toContain(owner.tenantId);
-    expect(await registered(owner.tenantId)).toBe(true);
-    expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
-  });
-});
-
-describe("finding 2 — a rollback step that throws never crashes sign-up", () => {
-  it("the account delete fails: the account is deactivated for erasure and keeps its database", async () => {
+  it("every rollback step throwing still answers { ok: false }, and names each failed step", async () => {
     const { id, email } = await newAccount();
     const armed = { on: false };
     const made = { id: "" };
     const result = await provisionNewAccount(id, email, {
-      catalog: failing(["delete:users"], armed),
-      ensureTenant: failAfterProvisioning(armed, made),
+      catalog: failing(["select:users", "delete:users", "delete:tenants", "delete:tenantOrphans"], armed),
+      ...failAt("registered", armed, made),
+      destroy: async () => {
+        throw new Error("planted: the delete throws too");
+      },
     });
-    expect(result.ok).toBe(false);
-    const [row] = await query("SELECT tenant_id, deactivated_at, deletion_due_at FROM users WHERE id = ?", [id]);
-    expect(row.deactivated_at).not.toBeNull(); // sign-in refused
-    expect(row.deletion_due_at).not.toBeNull(); // the erasure job takes it, with its database
-    // Never "an account with a linked tenant and no database".
-    expect(row.tenant_id).toBe(made.id);
-    expect(await registered(made.id)).toBe(true);
-    expect(existsSync(tenantFile(made.id))).toBe(true);
+    expect(result).toEqual(keptAnswer("listed-for-sweep"));
     expect(errors.join("\n")).toContain("rollback step delete-account failed");
-  });
-
-  it("the account delete and its deactivation both fail: still { ok: false }, database kept and listed", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    const result = await provisionNewAccount(id, email, {
-      catalog: failing(["delete:users", "update:users"], armed),
-      ensureTenant: failAfterProvisioning(armed, made),
-    });
-    expect(result).toEqual({ ok: false, database: "listed-for-sweep" });
-    expect(existsSync(tenantFile(made.id))).toBe(true);
-    expect(await pendingTenantOrphans(getCatalogDb())).toContain(made.id);
-    expect(errors.join("\n")).toContain("rollback step deactivate-account failed");
-  });
-
-  it("the registration delete fails: the database is still removed", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    const result = await provisionNewAccount(id, email, {
-      catalog: failing(["delete:tenants"], armed),
-      ensureTenant: failAfterProvisioning(armed, made),
-    });
-    expect(result).toEqual({ ok: false, database: "removed" });
-    expect(existsSync(tenantFile(made.id))).toBe(false);
-    expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0);
-    expect(errors.join("\n")).toContain("rollback step delete-registration failed");
-  });
-
-  it("listing the orphan fails: the account is kept, switched off, as the record of its database", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    const destroy = vi.fn(async () => false);
-    const result = await provisionNewAccount(id, email, {
-      catalog: failing(["insert:tenantOrphans"], armed),
-      ensureTenant: failAfterProvisioning(armed, made),
-      destroy,
-    });
-    expect(result).toEqual({ ok: false, database: "kept-with-account" });
-    // The database was not lost track of: the account's link and its registration say where it is.
-    const row = await account(id);
-    expect(row.tenant_id).toBe(made.id);
-    expect(row.deactivated_at).not.toBeNull();
-    expect(row.deletion_due_at).not.toBeNull();
-    expect(await registered(made.id)).toBe(true);
-    expect(existsSync(tenantFile(made.id))).toBe(true);
-    expect(destroy).not.toHaveBeenCalled();
-    expect(errors.join("\n")).toContain("rollback step record-orphan failed");
-  });
-
-  it("the orphan is listed BEFORE anything that would lose track of the database", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    const seenListed: boolean[] = [];
-    const result = await provisionNewAccount(id, email, {
-      ensureTenant: failAfterProvisioning(armed, made),
-      destroy: async (t) => {
-        seenListed.push((await pendingTenantOrphans(getCatalogDb())).includes(t));
-        // At the delete the account is already gone; the list is the record.
-        seenListed.push((await query("SELECT id FROM users WHERE id = ?", [id])).length === 0);
-        return true;
-      },
-    });
-    expect(result).toEqual({ ok: false, database: "removed" });
-    expect(seenListed).toEqual([true, true]);
-    expect(await pendingTenantOrphans(getCatalogDb())).not.toContain(made.id); // cleared once gone
-  });
-
-  it("reading the link back fails: the database is listed, not deleted", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    const destroy = vi.fn(async () => true);
-    const result = await provisionNewAccount(id, email, {
-      catalog: failing(["select:users"], armed),
-      ensureTenant: failAfterProvisioning(armed, made),
-      destroy,
-    });
-    expect(result).toEqual({ ok: false, database: "listed-for-sweep" });
-    expect(destroy).not.toHaveBeenCalled();
-    expect(await pendingTenantOrphans(getCatalogDb())).toContain(made.id);
-    expect(errors.join("\n")).toContain("rollback step read-link failed");
-  });
-
-  it("clearing the orphan after the delete fails: still { ok: false }", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    const result = await provisionNewAccount(id, email, {
-      catalog: failing(["update:tenantOrphans"], armed),
-      ensureTenant: failAfterProvisioning(armed, made),
-    });
-    expect(result).toEqual({ ok: false, database: "removed" });
-    expect(errors.join("\n")).toContain("rollback step clear-orphan failed");
-  });
-
-  it("every catalog step fails at once: still { ok: false }, nothing thrown", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    await expect(
-      provisionNewAccount(id, email, {
-        catalog: failing(
-          ["select:users", "delete:users", "update:users", "delete:tenants", "insert:tenantOrphans", "update:tenantOrphans"],
-          armed,
-        ),
-        ensureTenant: failAfterProvisioning(armed, made),
-        destroy: async () => {
-          throw new Error("planted: the delete throws too");
-        },
-      }),
-    ).resolves.toMatchObject({ ok: false });
+    expect(errors.join("\n")).toContain("rollback step read-links failed");
+    await neverLost(made.id);
   });
 
   it("the log write throwing does not crash sign-up", async () => {
@@ -409,454 +481,373 @@ describe("finding 2 — a rollback step that throws never crashes sign-up", () =
     const { id, email } = await newAccount();
     await expect(
       provisionNewAccount(id, email, {
-        ensureTenant: async () => {
+        provision: async () => {
           throw new Error("planted");
         },
       }),
-    ).resolves.toMatchObject({ ok: false });
+    ).resolves.toEqual(removedAnswer("removed"));
   });
 });
 
-// Dispatch AG's second independent review (review/report.md, point 2).
-describe("second review, defect A — a database that was made is never lost track of", () => {
-  /** Turso makes the database, then its migration fails: no `tenants` row is ever written. */
-  function madeThenMigrationFails(armed: { on: boolean }, made: { id: string }) {
-    return async (userId: string) => {
-      const [row] = await query("SELECT tenant_id FROM users WHERE id = ?", [userId]);
-      made.id = String(row.tenant_id);
-      await getProvisioner(process.env).create(made.id); // the database exists at the platform
-      armed.on = true;
-      throw new Error("planted: the migration failed after the database was made");
-    };
-  }
-
-  it("record-orphan throws and the delete is refused: the account is kept, its link naming the database", async () => {
+describe("review 2 — a database that was made is never lost track of", () => {
+  it("defect A: made, never registered, the delete refused — the record still names it", async () => {
     const { id, email } = await newAccount();
     const armed = { on: false };
     const made = { id: "" };
-    const destroy = vi.fn(async () => false); // the app's key has lost the delete right (#439)
     const result = await provisionNewAccount(id, email, {
-      catalog: failing(["insert:tenantOrphans"], armed),
-      ensureTenant: madeThenMigrationFails(armed, made),
-      destroy,
+      catalog: failing(["insert:tenantOrphans"], armed), // the old "record-orphan fails": there is no such step now
+      ...failAt("created-unregistered", armed, made),
+      destroy: async () => false, // the app's key has lost the delete right (#439)
     });
-
-    expect(result).toEqual({ ok: false, database: "kept-with-account" });
+    expect(result).toEqual(removedAnswer("listed-for-sweep"));
     expect(existsSync(tenantFile(made.id))).toBe(true);
-    expect(await registered(made.id)).toBe(false); // no registration was ever written
-    expect(await pendingTenantOrphans(getCatalogDb())).not.toContain(made.id); // and no list entry
-    // The database's name is still findable in the catalog: the account links it.
-    const holders = await query("SELECT id FROM users WHERE tenant_id = ?", [made.id]);
-    expect(holders.map((r) => r.id)).toEqual([id]);
-    // Switched off, its erasure due now: the retention job erases it with the database.
-    const row = await account(id);
-    expect(row.deactivated_at).not.toBeNull();
-    expect(Number(row.deletion_due_at)).toBeLessThanOrEqual(Math.ceil(Date.now() / 1000));
-    expect(errors.join("\n")).toContain("rollback step record-orphan failed");
-    expect(errors.join("\n")).not.toContain("rollback step delete-account");
+    expect(await registered(made.id)).toBe(false);
+    expect(await findable(made.id)).toBe(true);
+    expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0);
   });
 
-  it("the unsure path: read-link fails, then record-orphan fails — the account is still kept as the record", async () => {
+  it("defect A, the unsure path: reading the links fails — nothing deleted, the record still names it", async () => {
     const { id, email } = await newAccount();
     const armed = { on: false };
     const made = { id: "" };
-    const destroy = vi.fn(async () => false);
-    const result = await provisionNewAccount(id, email, {
-      catalog: failing(["select:users", "insert:tenantOrphans"], armed),
-      ensureTenant: madeThenMigrationFails(armed, made),
-      destroy,
-    });
-
-    expect(result).toEqual({ ok: false, database: "kept-with-account" });
-    expect(destroy).not.toHaveBeenCalled();
-    const holders = await query("SELECT id FROM users WHERE tenant_id = ?", [made.id]);
-    expect(holders.map((r) => r.id)).toEqual([id]);
-    expect((await account(id)).deactivated_at).not.toBeNull();
-    expect(errors.join("\n")).toContain("rollback step read-link failed");
-    expect(errors.join("\n")).toContain("rollback step record-orphan failed");
-  });
-
-  it("keeping the account fails too: it still exists, switched off, linked to the database", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    const result = await provisionNewAccount(id, email, {
-      catalog: failing(["insert:tenantOrphans", "update:users"], armed),
-      ensureTenant: madeThenMigrationFails(armed, made),
-      destroy: async () => false,
-    });
-    expect(result).toEqual({ ok: false, database: "kept-with-account" });
-    const row = await account(id);
-    expect(row.tenant_id).toBe(made.id);
-    expect(row.deactivated_at).not.toBeNull(); // off since it was created
-    expect(row.deletion_due_at).not.toBeNull(); // the creation's own expiry: still erased
-    expect(errors.join("\n")).toContain("rollback step keep-account failed");
-  });
-});
-
-describe("second review, defect B — an account is switched on only once its database is ready", () => {
-  it("registerUser creates every sign-up switched off, so sign-in refuses it", async () => {
-    const user = await registerUser(getCatalogDb(), { email: `fresh-${++n}@example.com`, password: "a-long-enough-passphrase-1" });
-    expect(user.signupPendingSince).not.toBeNull();
-    expect(isDeactivated(user)).toBe(true); // lib/auth.ts authorize returns null for it
-    expect(user.deletionDueAt).not.toBeNull(); // an abandoned sign-up is erased
-  });
-
-  it("success: provisioned, then switched on — the account signs in", async () => {
-    const { id, email } = await newAccount();
-    const result = await provisionNewAccount(id, email);
-    expect(result.ok).toBe(true);
-    const row = await account(id);
-    expect(row.deactivated_at).toBeNull();
-    expect(row.signup_pending_since).toBeNull();
-    expect(row.signup_tenant_id).toBeNull(); // the sign-up's mark goes with it
-    expect(row.deletion_due_at).toBeNull();
-    expect(isDeactivated(await getUserById(getCatalogDb(), id))).toBe(false);
-  });
-
-  it("the account is still switched off while its database is being made and checked", async () => {
-    const { id, email } = await newAccount();
-    const seen: unknown[] = [];
-    const result = await provisionNewAccount(id, email, {
-      verifyRoute: async (t) => {
-        seen.push((await account(id)).deactivated_at);
-        await verifyTenantRoute(t);
-      },
-    });
-    expect(result.ok).toBe(true);
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).not.toBeNull();
-  });
-
-  it("switching it on fails: the sign-up is rolled back, never left on", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
     const destroy = vi.fn(async () => true);
     const result = await provisionNewAccount(id, email, {
-      catalog: failing(["update:users"], armed),
-      verifyRoute: async () => {
-        armed.on = true; // the switch-on is the next users update
-      },
+      catalog: failing(["select:users", "insert:tenantOrphans"], armed),
+      ...failAt("created-unregistered", armed, made),
       destroy,
     });
-    expect(result).toEqual({ ok: false, database: "removed" });
-    expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0);
+    expect(result).toEqual(removedAnswer("listed-for-sweep"));
+    expect(destroy).not.toHaveBeenCalled();
+    expect(await findable(made.id)).toBe(true);
+    expect(errors.join("\n")).toContain("rollback step read-links failed");
   });
 
-  it("provisioning fails and every rollback step fails too: the account is left switched off", async () => {
+  it("defect B: the account cannot be deleted — it stays switched off and linked to nothing, never a usable account without a database", async () => {
     const { id, email } = await newAccount();
     const armed = { on: false };
     const made = { id: "" };
     const result = await provisionNewAccount(id, email, {
-      catalog: failing(
-        ["select:users", "delete:users", "update:users", "delete:tenants", "insert:tenantOrphans", "update:tenantOrphans"],
-        armed,
-      ),
-      ensureTenant: failAfterProvisioning(armed, made),
-      destroy: async () => {
-        throw new Error("planted: the delete throws too");
-      },
+      catalog: failing(["delete:users"], armed),
+      ...failAt("registered", armed, made),
     });
-    expect(result.ok).toBe(false);
+    expect(result).toEqual(keptAnswer("removed"));
     const row = await account(id);
+    expect(row.tenant_id).toBeNull();
     expect(row.deactivated_at).not.toBeNull();
-    expect(row.signup_pending_since).not.toBeNull();
     expect(isDeactivated(await getUserById(getCatalogDb(), id))).toBe(true);
-  });
-
-  it("the address of a sign-up still being set up gets a plain answer, not 'sign in'", async () => {
-    const email = `pending-${++n}@example.com`;
-    await createUser(getCatalogDb(), { email, passwordHash: "!", pendingSignup: true });
-    await expect(registerUser(getCatalogDb(), { email, password: "a-long-enough-passphrase-1" })).rejects.toThrow(
-      "still being set up",
-    );
-  });
-
-  it("the retention job erases an account kept as a database's only record, though the database was never registered", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    let minted = "";
-    await provisionNewAccount(id, email, {
-      catalog: failing(["insert:tenantOrphans"], armed),
-      ensureTenant: async (userId) => {
-        const [row] = await query("SELECT tenant_id FROM users WHERE id = ?", [userId]);
-        minted = String(row.tenant_id);
-        await getProvisioner(process.env).create(minted);
-        armed.on = true;
-        throw new Error("planted: the migration failed after the database was made");
-      },
-      destroy: async () => false,
-    });
-    expect(await registered(minted)).toBe(false);
-    const removed: string[] = [];
-    const run = await runRetentionJob(getCatalogDb(), {
-      now: new Date(Date.now() + 60_000),
-      tenantPlane: {
-        open: async (t) => getDb(t), // would throw: the database is not registered
-        destroy: async (t) => {
-          removed.push(t);
-          return getProvisioner(process.env).destroy(t);
-        },
-      },
-    });
-    expect(run.erased.map((r) => r.userId)).toContain(id);
-    expect(removed).toContain(minted);
-    expect(existsSync(tenantFile(minted))).toBe(false);
-    expect(await query("SELECT id FROM users WHERE tenant_id = ?", [minted])).toHaveLength(0);
-  });
-
-  it("the retention job erases an abandoned sign-up and its database, with no erasure email", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    // Every rollback step fails: only the creation's own expiry is left to clean up.
-    await provisionNewAccount(id, email, {
-      catalog: failing(["select:users", "delete:users", "update:users", "delete:tenants", "insert:tenantOrphans"], armed),
-      ensureTenant: failAfterProvisioning(armed, made),
-      destroy: async () => false,
-    });
-    const confirm = vi.fn(async () => undefined);
-    const removed: string[] = [];
-    const run = await runRetentionJob(getCatalogDb(), {
-      now: new Date(Date.now() + PENDING_SIGNUP_EXPIRY_MS + 60_000),
-      confirm,
-      // The erasure finds the database by the account's link (lib/privacy/deletion.ts eraseAccount).
-      tenantPlane: {
-        open: async (t) => getDb(t),
-        destroy: async (t) => {
-          removed.push(t);
-          return getProvisioner(process.env).destroy(t);
-        },
-      },
-    });
-    expect(run.erased.map((r) => r.userId)).toContain(id);
-    expect(removed).toContain(made.id);
-    expect(existsSync(tenantFile(made.id))).toBe(false);
-    expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0);
-    expect(confirm).not.toHaveBeenCalled();
+    expect(existsSync(tenantFile(made.id))).toBe(false); // nothing linked it, so it was removed
+    expect(await findable(made.id)).toBe(false);
   });
 });
 
-// Third independent review (Dispatch AG-fix3). The retention job erases an
-// unfinished sign-up an hour after it was made; it must never take a tenant
-// another account still links, nor one the sign-up did not mint.
-describe("third review, finding 1 — erasing an account never erases a tenant another account uses", () => {
-  /** A tenant plane over the real file adapter that records every removal. */
-  function plane(removed: string[]) {
-    return {
-      open: async (t: string) => getDb(t),
-      destroy: async (t: string) => {
-        removed.push(t);
-        return getProvisioner(process.env).destroy(t);
-      },
-    };
-  }
-
-  it("a refused invited member is erased an hour later; the inviter's tenant row and database are untouched", async () => {
+describe("review 3 — erasure and re-links", () => {
+  it("finding 1: a refused invited member is erased an hour later; the inviter's workspace is untouched", async () => {
     const owner = await inviter();
     const member = await newAccount();
     await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
-    expect(await provisionNewAccount(member.id, member.email)).toEqual({ ok: false, database: "none" });
-    // Refused, still a sign-up being set up, linked to the inviter — but it holds no minted id.
-    const before = await account(member.id);
-    expect(before.signup_pending_since).not.toBeNull();
-    expect(before.signup_tenant_id).toBeNull();
-
+    expect(await provisionNewAccount(member.id, member.email)).toEqual(keptAnswer("none"));
     const removed: string[] = [];
-    const run = await runRetentionJob(getCatalogDb(), {
-      now: new Date(Date.now() + PENDING_SIGNUP_EXPIRY_MS + 60_000),
-      tenantPlane: plane(removed),
-    });
-
+    const run = await runRetentionJob(getCatalogDb(), { now: anHourOn(), tenantPlane: plane(removed) });
     const erased = run.erased.find((r) => r.userId === member.id);
     expect(erased?.tenantDatabase).toBe("none");
-    expect(erased?.tenantKept).toBe("not-minted-by-this-sign-up");
-    expect(await query("SELECT id FROM users WHERE id = ?", [member.id])).toHaveLength(0);
+    expect(erased?.tenantKept).toBe("unfinished-sign-up");
     expect(removed).not.toContain(owner.tenantId);
-    expect(await registered(owner.tenantId)).toBe(true);
-    expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
-    // The inviter's database still holds its own row: it was never wiped.
-    await expect(verifyTenantRoute(owner.tenantId)).resolves.toBeUndefined();
-    expect((await query("SELECT tenant_id FROM users WHERE id = ?", [owner.id]))[0].tenant_id).toBe(owner.tenantId);
+    await untouched(owner);
   });
 
-  it("the same, even once the inviter's own account is gone: a tenant the sign-up did not mint is never erased with it", async () => {
+  it("finding 1, once the inviter's own account is gone too: a pending account's link never erases that workspace", async () => {
     const owner = await inviter();
     const member = await newAccount();
     await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
-    await query("DELETE FROM users WHERE id = ?", [owner.id]); // nobody else links the tenant now
+    await query("DELETE FROM users WHERE id = ?", [owner.id]);
     const removed: string[] = [];
-    await runRetentionJob(getCatalogDb(), {
-      now: new Date(Date.now() + PENDING_SIGNUP_EXPIRY_MS + 60_000),
-      tenantPlane: plane(removed),
-    });
+    await runRetentionJob(getCatalogDb(), { now: anHourOn(), tenantPlane: plane(removed) });
     expect(removed).not.toContain(owner.tenantId);
     expect(await registered(owner.tenantId)).toBe(true);
     expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
   });
 
-  it("a sole-member sign-up that never finished still has its own database erased with it", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    await provisionNewAccount(id, email, {
-      catalog: failing(["select:users", "delete:users", "update:users", "delete:tenants", "insert:tenantOrphans"], armed),
-      ensureTenant: failAfterProvisioning(armed, made),
-      destroy: async () => false,
-    });
-    expect((await account(id)).signup_tenant_id).toBe(made.id); // the mark names the minted id
-    const removed: string[] = [];
-    const run = await runRetentionJob(getCatalogDb(), {
-      now: new Date(Date.now() + PENDING_SIGNUP_EXPIRY_MS + 60_000),
-      tenantPlane: plane(removed),
-    });
-    const erased = run.erased.find((r) => r.userId === id);
-    expect(erased?.tenantDatabase).toBe("removed");
-    expect(erased?.tenantKept).toBeNull();
-    expect(removed).toEqual(expect.arrayContaining([made.id]));
-    expect(existsSync(tenantFile(made.id))).toBe(false);
-    expect(await registered(made.id)).toBe(false);
-  });
-
-  it("an unfinished sign-up whose minted tenant another account also links: the account goes, the tenant stays", async () => {
-    const { id, email } = await newAccount();
-    const armed = { on: false };
-    const made = { id: "" };
-    await provisionNewAccount(id, email, {
-      catalog: failing(["select:users", "delete:users", "update:users", "delete:tenants", "insert:tenantOrphans"], armed),
-      ensureTenant: failAfterProvisioning(armed, made),
-      destroy: async () => false,
-    });
-    const other = await activeAccount();
-    await query("UPDATE users SET tenant_id = ? WHERE id = ?", [made.id, other.id]);
-    const removed: string[] = [];
-    const run = await runRetentionJob(getCatalogDb(), {
-      now: new Date(Date.now() + PENDING_SIGNUP_EXPIRY_MS + 60_000),
-      tenantPlane: plane(removed),
-    });
-    expect(run.erased.find((r) => r.userId === id)?.tenantKept).toBe("linked-by-another-account");
-    expect(removed).not.toContain(made.id);
-    expect(await registered(made.id)).toBe(true);
-    expect(existsSync(tenantFile(made.id))).toBe(true);
-  });
-
-  it("a closed account that shares its workspace is erased alone; the last account's erasure then removes the workspace", async () => {
-    const owner = await inviter();
-    const member = await activeAccount();
-    await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
-    const removed: string[] = [];
-
-    const first = await eraseAccount(getCatalogDb(), member.id, { tenantPlane: plane(removed) });
-    expect(first?.tenantKept).toBe("linked-by-another-account");
-    expect(first?.tenantDatabase).toBe("none");
-    expect(removed).toHaveLength(0);
-    expect(await registered(owner.tenantId)).toBe(true); // the tenants row is keyed by the tenant id: kept
-    await expect(verifyTenantRoute(owner.tenantId)).resolves.toBeUndefined();
-
-    const last = await eraseAccount(getCatalogDb(), owner.id, { tenantPlane: plane(removed) });
-    expect(last?.tenantKept).toBeNull();
-    expect(last?.tenantDatabase).toBe("removed");
-    expect(removed).toEqual([owner.tenantId]);
-    expect(await registered(owner.tenantId)).toBe(false);
-  });
-});
-
-describe("third review, finding 2 — a re-link part-way never loses the database this sign-up made", () => {
-  /** Provision for real under the minted id, then re-link the account to `to`, then fail. */
-  function provisionThenRelink(to: string, made: { id: string }) {
-    return async (userId: string, opts: Parameters<typeof ensureTenantForUser>[1]) => {
-      made.id = await ensureTenantForUser(userId, opts);
-      await query("UPDATE users SET tenant_id = ? WHERE id = ?", [to, userId]);
-      throw new Error("planted: re-linked after the database was made, then failed");
-    };
-  }
-
-  it("the minted id is listed whatever the account's link says, and its database removed", async () => {
+  it("finding 2: re-linked part-way after the database was made — the minted database removed, the other workspace untouched", async () => {
     const owner = await inviter();
     const { id, email } = await newAccount();
+    const armed = { on: false };
     const made = { id: "" };
     const destroyed: string[] = [];
     const result = await provisionNewAccount(id, email, {
-      ensureTenant: provisionThenRelink(owner.tenantId, made),
+      ...relinking(id, owner.tenantId, "registered", armed, made),
       destroy: async (t) => {
         destroyed.push(t);
         return getProvisioner(process.env).destroy(t);
       },
     });
-    expect(result).toEqual({ ok: false, database: "removed" });
+    expect(result).toEqual(removedAnswer("removed"));
     expect(destroyed).toEqual([made.id]);
+    expect(await findable(made.id)).toBe(false);
     expect(existsSync(tenantFile(made.id))).toBe(false);
-    expect(await registered(made.id)).toBe(false);
-    expect(await registered(owner.tenantId)).toBe(true);
-    expect(existsSync(tenantFile(owner.tenantId))).toBe(true);
+    await untouched(owner);
   });
 
-  it("the delete is refused: the minted id stays listed for the sweep, its registration gone so the sweep can act", async () => {
-    const owner = await inviter();
-    const { id, email } = await newAccount();
-    const made = { id: "" };
-    const result = await provisionNewAccount(id, email, {
-      ensureTenant: provisionThenRelink(owner.tenantId, made),
-      destroy: async () => false,
-    });
-    expect(result).toEqual({ ok: false, database: "listed-for-sweep" });
-    expect(await pendingTenantOrphans(getCatalogDb())).toContain(made.id);
-    expect(await pendingTenantOrphans(getCatalogDb())).not.toContain(owner.tenantId);
-    expect(await registered(made.id)).toBe(false);
-    expect(await registered(owner.tenantId)).toBe(true);
-  });
-
-  it("the rollback never deletes its minted database while another account links it", async () => {
+  it("the rollback never deletes the minted database while another account links it; the record stays", async () => {
     const { id, email } = await newAccount();
     const other = await activeAccount();
-    const made = { id: "" };
     const destroy = vi.fn(async () => true);
+    let minted = "";
     const result = await provisionNewAccount(id, email, {
-      ensureTenant: async (userId, opts) => {
-        made.id = await ensureTenantForUser(userId, opts);
-        await query("UPDATE users SET tenant_id = ? WHERE id = ?", [made.id, other.id]);
+      provision: async (tenantId, opts) => {
+        minted = tenantId;
+        await provisionTenant(tenantId, opts);
+        await query("UPDATE users SET tenant_id = ? WHERE id = ?", [tenantId, other.id]);
         throw new Error("planted: another account linked the tenant, then the sign-up failed");
       },
       destroy,
     });
-    expect(result).toEqual({ ok: false, database: "listed-for-sweep" });
+    expect(result).toEqual(removedAnswer("listed-for-sweep"));
     expect(destroy).not.toHaveBeenCalled();
-    expect(await registered(made.id)).toBe(true);
+    expect(existsSync(tenantFile(minted))).toBe(true);
+    expect(await findable(minted)).toBe(true);
+  });
+});
+
+describe("review 4 — the exact sequences", () => {
+  it("defect A: re-linked to T2, then the orphan write fails, the account delete succeeds and the database delete is refused — still findable", async () => {
+    const owner = await inviter(); // T2
+    const { id, email } = await newAccount();
+    const armed = { on: false };
+    const made = { id: "" };
+    const result = await provisionNewAccount(id, email, {
+      // Every write to tenant_orphans after the failure throws: the rollback never needs one.
+      catalog: failing(["insert:tenantOrphans"], armed),
+      ...relinking(id, owner.tenantId, "registered", armed, made),
+      destroy: async () => false,
+    });
+    expect(result).toEqual(removedAnswer("listed-for-sweep"));
+    expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0); // delete-account succeeded
     expect(existsSync(tenantFile(made.id))).toBe(true);
-    expect(errors.join("\n")).toContain("an account links the minted tenant");
+    expect(await findable(made.id)).toBe(true);
+    await untouched(owner);
   });
 
-  it("reading who links the minted id fails: nothing is deleted, the id stays listed", async () => {
+  it("defect A, milder: the account delete fails too — the account is kept linked to T2, and erasing it later leaves T2 and the minted record alone", async () => {
+    const owner = await inviter();
     const { id, email } = await newAccount();
+    const armed = { on: false };
     const made = { id: "" };
-    const destroy = vi.fn(async () => true);
-    let reads = 0;
-    const real = getCatalogDb();
-    // The rollback's second read of users (who links the minted id) throws.
-    const catalog = new Proxy(real, {
-      get(target, prop, receiver) {
-        const value = Reflect.get(target, prop, receiver);
-        if (prop === "select" && made.id) {
-          return (...args: unknown[]) => {
-            reads += 1;
-            if (reads === 2) throw new Error("planted: the second read fails");
-            return (value as (...a: unknown[]) => unknown).apply(target, args);
-          };
-        }
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as AppDatabase;
     const result = await provisionNewAccount(id, email, {
-      catalog,
-      ensureTenant: async (userId, opts) => {
-        made.id = await ensureTenantForUser(userId, opts);
-        throw new Error("planted failure after the database exists");
-      },
-      destroy,
+      catalog: failing(["insert:tenantOrphans", "delete:users"], armed),
+      ...relinking(id, owner.tenantId, "registered", armed, made),
+      destroy: async () => false,
     });
-    expect(result).toEqual({ ok: false, database: "listed-for-sweep" });
-    expect(destroy).not.toHaveBeenCalled();
-    expect(await pendingTenantOrphans(getCatalogDb())).toContain(made.id);
-    expect(errors.join("\n")).toContain("rollback step read-links failed");
+    expect(result).toEqual(keptAnswer("listed-for-sweep"));
+    expect((await account(id)).tenant_id).toBe(owner.tenantId);
+    const removed: string[] = [];
+    const run = await runRetentionJob(getCatalogDb(), { now: anHourOn(), tenantPlane: plane(removed) });
+    expect(run.erased.find((r) => r.userId === id)?.tenantKept).toBe("unfinished-sign-up");
+    expect(removed).toEqual([]);
+    expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0);
+    // Erasing the account erased no record of the database: it is the record's, not the account's.
+    expect(existsSync(tenantFile(made.id))).toBe(true);
+    expect(await findable(made.id)).toBe(true);
+    await untouched(owner);
+  });
+
+  it("an unfinished sign-up still linked to its own minted tenant is erased as an account only; the record leads the sweep to the database", async () => {
+    const { id, email } = await newAccount();
+    const armed = { on: false };
+    const made = { id: "" };
+    // The account somehow ended linked to its minted id, and every rollback step failed.
+    const result = await provisionNewAccount(id, email, {
+      catalog: failing(["select:users", "delete:users", "delete:tenants", "delete:tenantOrphans"], armed),
+      provision: async (tenantId, opts) => {
+        made.id = tenantId;
+        await provisionTenant(tenantId, opts);
+        await query("UPDATE users SET tenant_id = ? WHERE id = ?", [tenantId, id]);
+        armed.on = true;
+        throw new Error("planted");
+      },
+      destroy: async () => false,
+    });
+    expect(result.ok).toBe(false);
+    const removed: string[] = [];
+    const erased = await eraseAccount(getCatalogDb(), id, { tenantPlane: plane(removed) });
+    expect(erased?.tenantKept).toBe("unfinished-sign-up");
+    expect(removed).toEqual([]);
+    expect(await findable(made.id)).toBe(true);
+    await neverLost(made.id);
+  });
+});
+
+describe("property: every combination of failing rollback steps, at every point a sign-up can fail", () => {
+  const STEPS: { name: string; op?: Op }[] = [
+    { name: "delete-account", op: "delete:users" },
+    { name: "read-links", op: "select:users" },
+    { name: "delete-database" },
+    { name: "delete-registration", op: "delete:tenants" },
+    { name: "clear-record", op: "delete:tenantOrphans" },
+  ];
+  const POINTS: FailAt[] = ["before-create", "created-unregistered", "registered", "verify", "switch-on"];
+
+  for (const at of POINTS) {
+    for (const relink of [false, true]) {
+      it(`fails at ${at}${relink ? ", re-linked to another tenant part-way" : ""}: the database is never lost, nothing else is touched, the answer is true`, async () => {
+        const owner = await inviter();
+        for (let mask = 0; mask < 1 << STEPS.length; mask++) {
+          const down = STEPS.filter((_, i) => mask & (1 << i));
+          const ops = down.flatMap((s) => (s.op ? [s.op] : []));
+          // The switch-on's own write must work for the "switch-on" point to reach it,
+          // so that point fails it with a planted update instead.
+          if (at === "switch-on") ops.push("update:users");
+          const { id, email } = await newAccount();
+          const armed = { on: false };
+          const made = { id: "" };
+          const destroyDown = down.some((s) => s.name === "delete-database");
+          const deps = relink ? relinking(id, owner.tenantId, at, armed, made) : failAt(at, armed, made);
+          let result: SignupProvisionResult | undefined;
+          await expect(
+            (async () => {
+              result = await provisionNewAccount(id, email, {
+                catalog: failing(ops, armed),
+                ...deps,
+                destroy: async (t) => (destroyDown ? false : getProvisioner(process.env).destroy(t)),
+              });
+            })(),
+          ).resolves.toBeUndefined();
+          const label = `${at}${relink ? "+relink" : ""} down=[${down.map((s) => s.name).join(",")}]`;
+          expect(result?.ok, label).toBe(false);
+          if (!result || result.ok) continue;
+
+          // 1 the database this sign-up made (or its registration) is always findable.
+          expect(made.id, label).toMatch(/^t[0-9a-f]{32}$/);
+          if (existsSync(tenantFile(made.id)) || (await registered(made.id))) {
+            expect(await findable(made.id), label).toBe(true);
+          }
+          // 2 the account: gone, or kept switched off and never linked to the minted id.
+          const row = await account(id);
+          if (result.account === "removed") {
+            expect(row, label).toBeUndefined();
+            expect(result.message, label).toBe(SIGNUP_PROVISION_FAILED_MESSAGE);
+          } else {
+            expect(row, label).toBeDefined();
+            expect(row.tenant_id, label).not.toBe(made.id);
+            expect(isDeactivated(await getUserById(getCatalogDb(), id)), label).toBe(true);
+            expect(result.message, label).toBe(SIGNUP_STILL_BEING_SET_UP_MESSAGE);
+            // 3 what a retry is told agrees with that answer.
+            await expect(registerUser(getCatalogDb(), { email, password: PASSWORD }), label).rejects.toThrow(
+              PENDING_SIGNUP_MESSAGE,
+            );
+          }
+          // 4 the other workspace is exactly as it was.
+          expect(await findable(owner.tenantId), label).toBe(false);
+          expect(await registered(owner.tenantId), label).toBe(true);
+          expect(existsSync(tenantFile(owner.tenantId)), label).toBe(true);
+        }
+        // 5 the retention job then erases every kept account; still nothing lost, the other workspace untouched.
+        const removed: string[] = [];
+        await runRetentionJob(getCatalogDb(), { now: anHourOn(), tenantPlane: plane(removed) });
+        expect(removed).not.toContain(owner.tenantId);
+        for (const row of await query("SELECT tenant_id FROM tenant_orphans WHERE cleared_at IS NULL")) {
+          await neverLost(String(row.tenant_id));
+        }
+        await untouched(owner);
+      }, 120_000);
+    }
+  }
+});
+
+describe("the answer is true: the first answer and the retry agree", () => {
+  it("the account was removed: 'nothing was saved, try again in a minute', and a retry at once succeeds", async () => {
+    const { id, email } = await newAccount();
+    const result = await provisionNewAccount(id, email, {
+      provision: async () => {
+        throw new Error("planted");
+      },
+    });
+    expect(result).toEqual(removedAnswer("removed"));
+    const again = await registerUser(getCatalogDb(), { email, password: PASSWORD });
+    expect((await provisionNewAccount(again.id, email)).ok).toBe(true);
+  });
+
+  for (const [outcome, setup] of [
+    [
+      "refused: the account already held a tenant",
+      async (id: string) => {
+        const owner = await inviter();
+        await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, id]);
+        return {};
+      },
+    ],
+    [
+      "the record could not be written and the account could not be deleted",
+      async () => ({ catalog: failing(["insert:tenantOrphans", "delete:users"], { on: true }) }),
+    ],
+    [
+      "the database failed and the account could not be deleted",
+      async () => {
+        const armed = { on: false };
+        return {
+          catalog: failing(["delete:users"], armed),
+          ...failAt("registered", armed, { id: "" }),
+        };
+      },
+    ],
+  ] as const) {
+    it(`kept switched off (${outcome}): 'still being set up, try again in an hour'; a retry within the hour is told the same; after it, the retry signs up afresh`, async () => {
+      const { id, email } = await newAccount();
+      const deps = await setup(id);
+      const result = await provisionNewAccount(id, email, deps);
+      expect(result).toMatchObject({ ok: false, account: "kept", message: SIGNUP_STILL_BEING_SET_UP_MESSAGE, retryAfterSeconds: 3600 });
+      expect(SIGNUP_STILL_BEING_SET_UP_MESSAGE).toContain("still being set up. Please try again in an hour.");
+      expect(PENDING_SIGNUP_MESSAGE).toContain("still being set up. Please try again in an hour.");
+      await expect(registerUser(getCatalogDb(), { email, password: PASSWORD })).rejects.toThrow(PENDING_SIGNUP_MESSAGE);
+
+      // An hour on, the retry gets through: the unfinished account is erased on the spot.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(anHourOn());
+        const fresh = await registerUser(getCatalogDb(), { email, password: PASSWORD });
+        expect(fresh.id).not.toBe(id);
+        expect(await getUserById(getCatalogDb(), id)).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  }
+
+  it("the retry that erases an unfinished account never touches a tenant: the record keeps the database findable", async () => {
+    const { id, email } = await newAccount();
+    const armed = { on: false };
+    const made = { id: "" };
+    await provisionNewAccount(id, email, {
+      catalog: failing(["delete:users", "select:users"], armed),
+      ...failAt("registered", armed, made),
+    });
+    expect(existsSync(tenantFile(made.id))).toBe(true);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(anHourOn());
+      await registerUser(getCatalogDb(), { email, password: PASSWORD });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await getUserById(getCatalogDb(), id)).toBeUndefined();
+    expect(existsSync(tenantFile(made.id))).toBe(true);
+    expect(await findable(made.id)).toBe(true);
+  });
+});
+
+describe("erasure of finished accounts is as before", () => {
+  it("a closed account that shares its workspace is erased alone; the last account's erasure then removes the workspace", async () => {
+    const owner = await inviter();
+    const member = await activeAccount();
+    await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
+    const removed: string[] = [];
+    const first = await eraseAccount(getCatalogDb(), member.id, { tenantPlane: plane(removed) });
+    expect(first?.tenantKept).toBe("linked-by-another-account");
+    expect(removed).toHaveLength(0);
+    await untouched(owner);
+    const last = await eraseAccount(getCatalogDb(), owner.id, { tenantPlane: plane(removed) });
+    expect(last?.tenantKept).toBeNull();
+    expect(last?.tenantDatabase).toBe("removed");
+    expect(removed).toEqual([owner.tenantId]);
+    expect(await registered(owner.tenantId)).toBe(false);
   });
 });

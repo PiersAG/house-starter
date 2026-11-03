@@ -137,21 +137,13 @@ export const users = sqliteTable("users", {
    * sign-in refuses it — and lib/tenant/signup-provisioning.ts switches it on
    * (clears all three) only once its tenant and database are fully provisioned.
    * A sign-up that never finishes stays off, and its `deletionDueAt` (an hour
-   * after creation) lets the retention job erase it with its database. Set here
-   * is what tells a sign-up being set up from an account its owner closed.
+   * after creation) lets the retention job, or a new sign-up with the same
+   * address, erase it — the account only: its database is found and removed
+   * through its `tenant_orphans` record. Set here is what tells a sign-up
+   * being set up from an account its owner closed.
    * Nullable with no default, so lib/migrate.ts::reconcileColumns can add it.
    */
   signupPendingSince: integer("signup_pending_since", { mode: "timestamp" }),
-  /**
-   * The tenant id THIS sign-up minted and linked (app-business-core issue 358),
-   * set in the same write as `tenantId` by lib/tenant/signup-provisioning.ts and
-   * cleared when the account is switched on. The erasure of a sign-up that never
-   * finished (lib/privacy/deletion.ts eraseAccount) removes a database only when
-   * the account's `tenantId` is this id: an unfinished sign-up linked to a tenant
-   * it did not mint (an invited member) is erased without touching that tenant.
-   * Nullable with no default, so lib/migrate.ts::reconcileColumns can add it.
-   */
-  signupTenantId: text("signup_tenant_id"),
 });
 
 /** The roles an account can hold inside its own tenant. */
@@ -771,17 +763,24 @@ export const erasures = sqliteTable("erasures", {
 export type Erasure = typeof erasures.$inferSelect;
 
 /**
- * CATALOG. Customer databases that were left behind and still need deleting
- * (app-business-core issues 358 and 857). A sign-up whose database was made but
- * whose account could not be finished is rolled back, and an erased account's
- * database is removed; when Turso refuses that delete (the app's own key may not
- * hold the delete right, #439), the database's tenant id is written here. The
- * factory's sweep (app-business-core agents/tenant_db_sweep.py) deletes each one
- * with its own key and sets `clearedAt`. Tenant ids only: the account is gone.
+ * CATALOG. Customer databases that may exist with nothing else to find them by
+ * (app-business-core issues 358 and 857). Two kinds of row:
+ *
+ *   * "signup" — written BEFORE a sign-up asks Turso for its database, so from
+ *     that moment the database can always be found, whatever later happens to
+ *     the account or its link (lib/tenant/signup-provisioning.ts). It is deleted
+ *     in the same write that switches the finished account on; a row that
+ *     outlives its sign-up is a database left behind;
+ *   * "erasure" — an erased account's database that Turso would not delete.
+ *
+ * The rollback deletes what it can and clears the row; whatever is left, the
+ * factory's sweep (app-business-core agents/tenant_db_sweep.py) deletes with its
+ * own key, after re-reading that no account links the id, and sets `clearedAt`.
+ * Tenant ids only: no account id, address or name.
  */
 export const tenantOrphans = sqliteTable("tenant_orphans", {
   tenantId: text("tenant_id").primaryKey(),
-  reason: text("reason", { enum: ["signup-rollback", "erasure"] }).notNull(),
+  reason: text("reason", { enum: ["signup", "erasure"] }).notNull(),
   recordedAt: integer("recorded_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),

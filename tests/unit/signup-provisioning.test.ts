@@ -15,9 +15,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { migrateCatalog } from "@/lib/migrate";
 import { __resetCatalogCacheForTests, getCatalogDb } from "@/lib/catalog";
 import { __resetDbCacheForTests } from "@/lib/db";
-import { ensureTenantForUser, tenantFileDir } from "@/lib/tenant/provisioner";
+import { provisionTenant, tenantFileDir } from "@/lib/tenant/provisioner";
 import { pendingTenantOrphans } from "@/lib/tenant/orphans";
-import { provisionNewAccount, verifyTenantRoute } from "@/lib/tenant/signup-provisioning";
+import { createUser } from "@/lib/users";
+import {
+  provisionNewAccount,
+  SIGNUP_PROVISION_FAILED_MESSAGE,
+  verifyTenantRoute,
+} from "@/lib/tenant/signup-provisioning";
 
 const KEYS = ["TENANCY_MODE", "CATALOG_DATABASE_URL", "TENANT_PROVISIONER", "TENANT_DB_DIR", "VERCEL_ENV"];
 let workDir: string;
@@ -55,14 +60,19 @@ async function query(sql: string, args: (string | null)[] = []) {
   }
 }
 
-/** An account as registerUser leaves it: a catalog row, no tenant yet. */
-async function newAccount(): Promise<{ id: string; email: string }> {
-  n += 1;
-  const id = `u-signup-${n}`;
-  const email = `signup-${n}@example.com`;
-  await query("INSERT INTO users (id, email, password_hash) VALUES (?, ?, '!')", [id, email]);
-  return { id, email };
+/** An account as registerUser leaves it: switched off, being set up, no tenant yet. */
+async function newAccount(email = `signup-${++n}@example.com`): Promise<{ id: string; email: string }> {
+  const user = await createUser(getCatalogDb(), { email, passwordHash: "!", pendingSignup: true });
+  return { id: user.id, email };
 }
+
+const removed = (database: string) => ({
+  ok: false,
+  account: "removed",
+  database,
+  message: SIGNUP_PROVISION_FAILED_MESSAGE,
+  retryAfterSeconds: 60,
+});
 
 const tenantFile = (tenantId: string) => join(tenantFileDir(), `${tenantId}.db`);
 
@@ -73,8 +83,12 @@ describe("provisionNewAccount — success", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(existsSync(tenantFile(result.tenantId))).toBe(true);
-    const [user] = await query("SELECT tenant_id FROM users WHERE id = ?", [id]);
+    const [user] = await query("SELECT tenant_id, deactivated_at, signup_pending_since FROM users WHERE id = ?", [id]);
     expect(user.tenant_id).toBe(result.tenantId);
+    expect(user.deactivated_at).toBeNull(); // switched on
+    expect(user.signup_pending_since).toBeNull();
+    // The sign-up's record went in the same write that switched the account on.
+    expect(await query("SELECT tenant_id FROM tenant_orphans WHERE tenant_id = ?", [result.tenantId])).toHaveLength(0);
     const [row] = await query("SELECT id, provisioner FROM tenants WHERE id = ?", [result.tenantId]);
     expect(row.provisioner).toBe("file");
     // The connect step: the route leads to a migrated database holding its own row.
@@ -87,12 +101,13 @@ describe("provisionNewAccount — never a half-created account", () => {
     const { id, email } = await newAccount();
     let madeTenant = "";
     const result = await provisionNewAccount(id, email, {
-      ensureTenant: async (userId, opts) => {
-        madeTenant = await ensureTenantForUser(userId, opts); // fully made...
+      provision: async (tenantId, opts) => {
+        madeTenant = tenantId;
+        await provisionTenant(tenantId, opts); // fully made...
         throw new Error("planted failure after the database exists"); // ...then fails
       },
     });
-    expect(result).toEqual({ ok: false, database: "removed" });
+    expect(result).toEqual(removed("removed"));
     expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0);
     expect(await query("SELECT id FROM tenants WHERE id = ?", [madeTenant])).toHaveLength(0);
     expect(existsSync(tenantFile(madeTenant))).toBe(false);
@@ -110,7 +125,7 @@ describe("provisionNewAccount — never a half-created account", () => {
     expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0);
   });
 
-  it("knows which database to delete even when the failure comes before registration", async () => {
+  it("knows which database to delete even when the failure comes before registration: the id was recorded first", async () => {
     const { id, email } = await newAccount();
     let seen: string | null = null;
     const destroy = vi.fn(async (tenantId: string) => {
@@ -118,13 +133,15 @@ describe("provisionNewAccount — never a half-created account", () => {
       return true;
     });
     const result = await provisionNewAccount(id, email, {
-      ensureTenant: async () => {
+      provision: async (tenantId) => {
+        // The record exists before Turso is asked for anything.
+        const [rec] = await query("SELECT reason FROM tenant_orphans WHERE tenant_id = ?", [tenantId]);
+        expect(rec.reason).toBe("signup");
         throw new Error("planted: Turso made the database, then migration failed");
       },
       destroy,
     });
-    expect(result).toEqual({ ok: false, database: "removed" });
-    // The id was linked to the account before any database was made.
+    expect(result).toEqual(removed("removed"));
     expect(seen).toMatch(/^t[0-9a-f]{32}$/);
   });
 
@@ -132,27 +149,28 @@ describe("provisionNewAccount — never a half-created account", () => {
     const { id, email } = await newAccount();
     let madeTenant = "";
     const result = await provisionNewAccount(id, email, {
-      ensureTenant: async (userId, opts) => {
-        madeTenant = await ensureTenantForUser(userId, opts);
+      provision: async (tenantId, opts) => {
+        madeTenant = tenantId;
+        await provisionTenant(tenantId, opts);
         throw new Error("planted");
       },
       destroy: async () => false, // the app's own key holds no delete right (#439)
     });
-    expect(result).toEqual({ ok: false, database: "listed-for-sweep" });
+    expect(result).toEqual(removed("listed-for-sweep"));
     expect(await pendingTenantOrphans(getCatalogDb())).toContain(madeTenant);
     const [row] = await query("SELECT reason FROM tenant_orphans WHERE tenant_id = ?", [madeTenant]);
-    expect(row.reason).toBe("signup-rollback");
+    expect(row.reason).toBe("signup");
   });
 
   it("frees the address: the same email signs up again and succeeds", async () => {
     const { id, email } = await newAccount();
     await provisionNewAccount(id, email, {
-      ensureTenant: async () => {
+      provision: async () => {
         throw new Error("planted");
       },
     });
-    await query("INSERT INTO users (id, email, password_hash) VALUES (?, ?, '!')", [`${id}-again`, email]);
-    const again = await provisionNewAccount(`${id}-again`, email);
+    const second = await newAccount(email);
+    const again = await provisionNewAccount(second.id, email);
     expect(again.ok).toBe(true);
   });
 
@@ -160,13 +178,13 @@ describe("provisionNewAccount — never a half-created account", () => {
     const { id, email } = await newAccount();
     await expect(
       provisionNewAccount(id, email, {
-        ensureTenant: async () => {
+        provision: async () => {
           throw new Error("planted");
         },
         destroy: async () => {
           throw new Error("planted: the delete itself throws");
         },
       }),
-    ).resolves.toEqual({ ok: false, database: "listed-for-sweep" });
+    ).resolves.toEqual(removed("listed-for-sweep"));
   });
 });

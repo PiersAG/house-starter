@@ -15,7 +15,7 @@ import type { AppDatabase } from "@/lib/users";
 import { getCatalogDb } from "@/lib/catalog";
 import { tenantOrphans } from "@/lib/schema";
 
-export type OrphanReason = "signup-rollback" | "erasure";
+export type OrphanReason = "signup" | "erasure";
 
 /** List a database that still needs deleting. Repeating it keeps the first entry. */
 export async function recordTenantOrphan(

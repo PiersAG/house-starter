@@ -7,7 +7,7 @@
 export const OPERATIONS_CATALOG_SQL = `
 CREATE TABLE IF NOT EXISTS tenant_orphans (
   tenant_id TEXT PRIMARY KEY NOT NULL,
-  reason TEXT NOT NULL CHECK (reason IN ('signup-rollback','erasure')),
+  reason TEXT NOT NULL CHECK (reason IN ('signup','erasure')),
   recorded_at INTEGER NOT NULL DEFAULT (unixepoch()),
   cleared_at INTEGER
 );

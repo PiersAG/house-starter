@@ -6,7 +6,7 @@ import { registerUser, RegistrationError } from "@/lib/users";
 import { startTrialForNewOwner } from "@/lib/billing/trial";
 import {
   provisionNewAccount,
-  SIGNUP_PROVISION_FAILED_MESSAGE,
+  SIGNUP_UNSURE_MESSAGE,
 } from "@/lib/tenant/signup-provisioning";
 import { AUTH_RATE_LIMITS, guardAuthAttempt } from "@/lib/auth-rate-limit";
 import { guardRouteAction, ROUTE_LIMIT_MESSAGE } from "@/lib/abuse/route-limit";
@@ -78,27 +78,31 @@ export async function signupAction(
     // mode, so registerUser threw `SQLITE_ERROR: no such table: users` on every
     // attempt, and all anyone could see was "Could not create your account".
     // The two sibling catches below already log; this one is the outlier.
-    // User-facing message deliberately unchanged — it must not leak internals.
+    // It must not leak internals, and it must be true whichever way the
+    // failure went (the account may or may not have been saved), so it is the
+    // same fixed answer the JSON route gives an unexpected error (issue 358).
     console.error("signup: failed to register the account", error);
-    return { error: "Could not create your account. Please try again." };
+    return { error: SIGNUP_UNSURE_MESSAGE };
   }
 
-  // ADR-023: the account exists in the catalog; now give it its OWN database —
-  // all or nothing (app-business-core issue 358). provisionNewAccount retries
-  // Turso's passing errors, checks the new database opens by the catalog's
-  // route, and on any failure rolls the sign-up back, so no account is left
-  // without a database and the address can sign up again at once.
-  // provisionNewAccount never throws by design; the try is the second line of
-  // defence, so the form still shows the fixed message, never a 500.
+  // ADR-023: the account exists in the catalog, switched off; now give it its
+  // OWN database — all or nothing (app-business-core issue 358).
+  // provisionNewAccount records the new tenant id first, retries Turso's
+  // passing errors, checks the new database opens by the catalog's route, and
+  // on any failure rolls the sign-up back. Its answer carries the message that
+  // is true for what was left: the address free again in a minute, or the
+  // account still being set up for an hour. provisionNewAccount never throws by
+  // design; the try is the second line of defence, so the form still shows a
+  // fixed, true message, never a 500.
   let provisioned;
   try {
     provisioned = await provisionNewAccount(user.id, user.email);
   } catch (error) {
     console.error("signup: provisioning threw past its own rollback", error);
-    return { error: SIGNUP_PROVISION_FAILED_MESSAGE };
+    return { error: SIGNUP_UNSURE_MESSAGE };
   }
   if (!provisioned.ok) {
-    return { error: SIGNUP_PROVISION_FAILED_MESSAGE };
+    return { error: provisioned.message };
   }
 
   // Step 6: give the new owner a trial subscription so the step-5 paywall does

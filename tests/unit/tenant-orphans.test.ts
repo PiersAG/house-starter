@@ -69,7 +69,7 @@ describe("erasure's database delete", () => {
 describe("the orphan list", () => {
   it("keeps the first entry when listed twice, and drops one once the sweep clears it", async () => {
     const db = getCatalogDb();
-    await recordTenantOrphan(T(4), "signup-rollback", db);
+    await recordTenantOrphan(T(4), "signup", db);
     await recordTenantOrphan(T(4), "erasure", db);
     expect((await pendingTenantOrphans(db)).filter((t) => t === T(4))).toHaveLength(1);
     await clearTenantOrphan(T(4), db);

@@ -1,17 +1,25 @@
 // @vitest-environment node
-// Every code path that deletes, wipes or erases a customer database, or
-// deletes a tenant row, is one of the known, guarded paths (Dispatch AG-fix3;
-// app-business-core issues 358 and 857). Each is guarded so it can never touch
-// a tenant another account still links:
+// Every code path that deletes, wipes or erases a customer database, deletes a
+// tenant row, or deletes the record a sign-up's database is found by, is one of
+// the known, guarded paths (Dispatch AG-fix3, AG-fix4; app-business-core issues
+// 358 and 857). Each is guarded so it can never touch a tenant another account
+// still links, and so no database loses its last record:
 //
 //   sign-up rollback  lib/tenant/signup-provisioning.ts rollBack — only the id
-//                     this sign-up minted, and only after re-reading that no
-//                     account links it (tests/unit/signup-rollback-safety.test.ts);
+//                     this sign-up recorded, only after re-reading that no
+//                     account links it, and its record goes only once the
+//                     database is gone (tests/unit/signup-rollback-safety.test.ts);
+//   sign-up switch-on lib/tenant/signup-provisioning.ts switchOn — the record
+//                     goes in the same write that links and switches on the
+//                     finished account, never on its own;
 //   account erasure   lib/privacy/deletion.ts eraseAccount — only a tenant
-//                     tenantErasable allows: no other account links it and, for
-//                     an unfinished sign-up, it is the id that sign-up minted.
-//                     Run by the retention job and by the replay after a restore;
+//                     tenantErasable allows: no other account links it, and
+//                     never for an unfinished sign-up (its database is its
+//                     record's). Run by the retention job, by the replay after
+//                     a restore, and by registerUser (lib/users.ts) for an
+//                     unfinished sign-up whose hour is up;
 //                     lib/privacy/runtime.ts liveTenantPlane is its live plane.
+//   factory sweep     app-business-core agents/tenant_db_sweep.py (its own tests).
 //
 // A new call to one of these primitives anywhere else fails this test: guard
 // it, test the guard, and add it to the list in house-starter #154.
@@ -65,7 +73,12 @@ const PRIMITIVES: { what: string; pattern: RegExp; allowed: string[] }[] = [
   {
     what: "erasing an account (its tenant row and database with it)",
     pattern: /\beraseAccount\(/,
-    allowed: ["lib/privacy/deletion.ts", "lib/privacy/retention-job.ts"],
+    allowed: ["lib/privacy/deletion.ts", "lib/privacy/retention-job.ts", "lib/users.ts"],
+  },
+  {
+    what: "deleting a sign-up's record (the only thing that finds its database)",
+    pattern: /\.delete\(\s*tenantOrphans\s*\)|DELETE\s+FROM\s+["`']?tenant_orphans\b/i,
+    allowed: ["lib/tenant/signup-provisioning.ts"],
   },
   {
     what: "a DELETE sent to Turso's database API",
@@ -99,5 +112,29 @@ describe("every path that deletes a customer database or a tenant row is a known
     const read = rollback.indexOf('step("read-links"');
     expect(read).toBeGreaterThan(-1);
     expect(read).toBeLessThan(rollback.indexOf('step("delete-database"'));
+  });
+
+  it("the sign-up records its tenant id before asking for the database, and drops the record only with the switch-on or after the database is gone", () => {
+    const src = code(join(ROOT, "lib/tenant/signup-provisioning.ts"));
+    const record = src.indexOf('await recordTenantOrphan(minted, "signup", catalog)');
+    expect(record).toBeGreaterThan(-1);
+    expect(record).toBeLessThan(src.indexOf("await provision(minted"));
+    // Two deletes of the record: inside the switch-on batch, and the rollback's last step.
+    const drops = [...src.matchAll(/\.delete\(tenantOrphans\)/g)].map((m) => m.index ?? -1);
+    expect(drops).toHaveLength(2);
+    const batch = src.indexOf("catalog.batch([");
+    expect(drops[0]).toBeGreaterThan(batch);
+    expect(drops[0]).toBeLessThan(src.indexOf("]);", batch));
+    expect(drops[1]).toBeGreaterThan(src.indexOf('step("delete-database"'));
+    expect(src.indexOf('step("clear-record"')).toBeGreaterThan(src.indexOf('step("delete-registration"'));
+  });
+
+  it("registerUser erases only an unfinished sign-up whose hour is up", () => {
+    const src = code(join(ROOT, "lib/users.ts"));
+    const guard = src.indexOf("if (existing && pendingSignupExpired(existing)) {");
+    expect(guard).toBeGreaterThan(-1);
+    const call = src.indexOf("await eraseAccount(db, existing.id)");
+    expect(call).toBeGreaterThan(guard);
+    expect(src.slice(guard, call)).not.toMatch(/\n\s*\}\s*\n/); // the call is inside that block
   });
 });

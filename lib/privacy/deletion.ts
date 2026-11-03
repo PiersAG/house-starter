@@ -20,7 +20,7 @@ import "server-only";
 
 import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { recordAuditEvent } from "@/lib/audit/trail";
-import { billingInvoices, erasures, subscriptions, tenants, users, type User } from "@/lib/schema";
+import { billingInvoices, erasures, subscriptions, users, type User } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";
 import {
   DELETION_GRACE_DAYS,
@@ -164,10 +164,12 @@ export interface ErasureResult {
   tenantDatabase: "removed" | "wiped" | "none";
   /**
    * Why the account's tenant was left as it is, when it was: another account
-   * still links it, or it is an unfinished sign-up's link to a tenant that
-   * sign-up did not mint. Null when the tenant was erased or there was none.
+   * still links it, or the account is a sign-up that never finished (its
+   * database, if one was made, is found through its tenant_orphans record and
+   * removed by the sign-up's rollback or the factory's sweep). Null when the
+   * tenant was erased or there was none.
    */
-  tenantKept: "linked-by-another-account" | "not-minted-by-this-sign-up" | null;
+  tenantKept: "linked-by-another-account" | "unfinished-sign-up" | null;
   /** Tables still holding this account's rows after erasure; empty = verified. */
   remaining: string[];
   verified: boolean;
@@ -212,25 +214,23 @@ export async function remainingLocations(db: AppDatabase, subject: Subject): Pro
  * every catalog row keyed by the tenant id (its registration, its credential
  * events). Only when the tenant is the account's own, not the shared one, AND:
  *
+ *   * the account is not a sign-up that never finished. Such an account is
+ *     erased as an account only, whatever it links: a database its sign-up made
+ *     was recorded in tenant_orphans before it was asked for
+ *     (lib/tenant/signup-provisioning.ts), and that record — not the account or
+ *     its link — is how the rollback and the factory's sweep find and remove it;
  *   * no other account links it — erasing one account never erases a
- *     workspace another account still uses;
- *   * for a sign-up that never finished, the tenant id is the one that sign-up
- *     minted (users.signup_tenant_id, written with the link by
- *     lib/tenant/signup-provisioning.ts). A sign-up being set up that was
- *     linked to someone else's tenant (an invited member, refused by the
- *     sign-up) is erased as an account only.
+ *     workspace another account still uses.
  *
  * Read immediately before the tenant is touched.
  */
 export async function tenantErasable(
   db: AppDatabase,
-  user: Pick<User, "id" | "tenantId" | "signupPendingSince" | "signupTenantId">,
+  user: Pick<User, "id" | "tenantId" | "signupPendingSince">,
 ): Promise<{ tenantId: string | null; kept: ErasureResult["tenantKept"] }> {
   const tenantId = user.tenantId ?? null;
   if (!ownTenant(tenantId)) return { tenantId: null, kept: null };
-  if (user.signupPendingSince !== null && user.signupTenantId !== tenantId) {
-    return { tenantId: null, kept: "not-minted-by-this-sign-up" };
-  }
+  if (user.signupPendingSince !== null) return { tenantId: null, kept: "unfinished-sign-up" };
   const others = await db
     .select({ id: users.id })
     .from(users)
@@ -268,21 +268,8 @@ export async function eraseAccount(
   // the table loop below deletes.
   let tenantDatabase: ErasureResult["tenantDatabase"] = "none";
   if (ownTenant(subject.tenantId) && opts.tenantPlane) {
-    // A sign-up that failed before its registration was written (app-business-
-    // core issue 358) is kept, linked, as the only record of a database the
-    // platform may have made. That database never held customer data and
-    // cannot be opened by the catalog's route, so it is removed by name only
-    // (a refusal lists it for the factory's sweep — lib/privacy/runtime.ts).
-    const registered = await db
-      .select({ id: tenants.id })
-      .from(tenants)
-      .where(eq(tenants.id, subject.tenantId))
-      .limit(1)
-      .all();
-    if (registered.length > 0) {
-      await wipeTenantDatabase(await opts.tenantPlane.open(subject.tenantId));
-      tenantDatabase = "wiped";
-    }
+    await wipeTenantDatabase(await opts.tenantPlane.open(subject.tenantId));
+    tenantDatabase = "wiped";
     if (opts.tenantPlane.destroy && (await opts.tenantPlane.destroy(subject.tenantId))) {
       tenantDatabase = "removed";
     }
