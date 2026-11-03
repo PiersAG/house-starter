@@ -11,7 +11,8 @@ export const OUTSIDE_LOCATIONS: readonly OutsideLocation[] = [
     name: "Rate-limit counters",
     what: "Your IP address and account id, as request counters.",
     processors: ["upstash"],
-    deletion: "Each counter expires on its own within 24 hours; nothing to delete.",
+    deletion:
+      "Each counter expires on its own within 24 hours; nothing to delete.",
   },
   {
     id: "host-logs",
