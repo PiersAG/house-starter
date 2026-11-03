@@ -11,7 +11,9 @@
 //     the database is still findable afterwards (its record is still there);
 //   * a property test that fails each rollback step in every combination, at
 //     every point a sign-up can fail, with and without a re-link part-way;
-//   * the answer the person gets for each outcome, and what their retry gets;
+//   * the answer the person gets for each outcome — one fixed "please try
+//     again", never "wait an hour" (CEO ruling 2026-11-03, Dispatch AG-fix5) —
+//     and that a retry with the same email then works at once;
 //   * account erasure of an unfinished sign-up never touching a tenant.
 //
 // The file adapter and the catalog run for real; a failing step is a catalog
@@ -30,11 +32,11 @@ import { ensureTenantForUser, getProvisioner, provisionTenant, tenantFileDir } f
 import { pendingTenantOrphans } from "@/lib/tenant/orphans";
 import {
   provisionNewAccount,
+  signupFailure,
   SIGNUP_PROVISION_FAILED_MESSAGE,
-  SIGNUP_STILL_BEING_SET_UP_MESSAGE,
-  SIGNUP_UNSURE_MESSAGE,
   verifyTenantRoute,
   type SignupProvisionDeps,
+  type SignupProvisionFailure,
   type SignupProvisionResult,
 } from "@/lib/tenant/signup-provisioning";
 import { isDeactivated } from "@/lib/privacy/deactivation";
@@ -43,12 +45,14 @@ import { eraseAccount } from "@/lib/privacy/deletion";
 import {
   ACCOUNT_EXISTS_MESSAGE,
   createUser,
+  getUserByEmail,
   getUserById,
   PENDING_SIGNUP_EXPIRY_MS,
-  PENDING_SIGNUP_MESSAGE,
   registerUser,
+  SignupRetryError,
   type AppDatabase,
 } from "@/lib/users";
+import { SIGNUP_FAILED_MESSAGE, SIGNUP_FAILED_RETRY_SECONDS } from "@/lib/signup-failure";
 
 const KEYS = ["TENANCY_MODE", "CATALOG_DATABASE_URL", "TENANT_PROVISIONER", "TENANT_DB_DIR", "VERCEL_ENV"];
 const PASSWORD = "a-long-enough-passphrase-1";
@@ -252,27 +256,17 @@ function relinking(userId: string, to: string, at: FailAt, armed: { on: boolean 
   };
 }
 
-const removedAnswer = (database: string) => ({
+/** Every failed sign-up's answer: what was left, and the one fixed message. */
+const answer = (account: string) => (database: string) => ({
   ok: false,
-  account: "removed",
+  account,
   database,
-  message: SIGNUP_PROVISION_FAILED_MESSAGE,
-  retryAfterSeconds: 60,
+  message: SIGNUP_FAILED_MESSAGE,
+  retryAfterSeconds: SIGNUP_FAILED_RETRY_SECONDS,
 });
-const existsAnswer = (database: string) => ({
-  ok: false,
-  account: "exists",
-  database,
-  message: ACCOUNT_EXISTS_MESSAGE,
-  retryAfterSeconds: 60,
-});
-const keptAnswer = (database: string) => ({
-  ok: false,
-  account: "kept",
-  database,
-  message: SIGNUP_STILL_BEING_SET_UP_MESSAGE,
-  retryAfterSeconds: 3600,
-});
+const removedAnswer = answer("removed");
+const existsAnswer = answer("exists");
+const keptAnswer = answer("kept");
 
 /** A tenant plane over the real file adapter that records every removal. */
 function plane(removed: string[]) {
@@ -320,7 +314,7 @@ describe("record first, then create", () => {
     expect(await query("SELECT id FROM users WHERE id = ?", [id])).toHaveLength(0);
   });
 
-  it("the record cannot be written and the account cannot be deleted: still nothing made, and the person is told it is still being set up", async () => {
+  it("the record cannot be written and the account cannot be deleted: still nothing made, and the person is told to try again", async () => {
     const { id, email } = await newAccount();
     const provision = vi.fn(async () => undefined);
     const result = await provisionNewAccount(id, email, {
@@ -409,7 +403,7 @@ describe("record first, then create", () => {
 });
 
 describe("the account could not be read after it was not deleted", () => {
-  it("answers the message true either way", async () => {
+  it("answers the same fixed message", async () => {
     const { id, email } = await newAccount();
     const real = getCatalogDb();
     let reads = 0;
@@ -434,7 +428,7 @@ describe("the account could not be read after it was not deleted", () => {
         throw new Error("planted");
       },
     });
-    expect(result).toMatchObject({ ok: false, account: "unknown", message: SIGNUP_UNSURE_MESSAGE, retryAfterSeconds: 3600 });
+    expect(result).toEqual(answer("unknown")("listed-for-sweep"));
     expect(errors.join("\n")).toContain("rollback step read-account failed");
   });
 });
@@ -468,7 +462,7 @@ describe("review 1 — the rollback only ever touches this sign-up's own account
     expect(await provisionNewAccount(member.id, member.email, { provision, verifyRoute })).toEqual(result);
   });
 
-  it("an account whose existing workspace does not open is not told it is set up, nor 'still being set up'", async () => {
+  it("an account whose existing workspace does not open is not told it is set up", async () => {
     const owner = await inviter();
     const member = await activeAccount();
     await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
@@ -478,7 +472,7 @@ describe("review 1 — the rollback only ever touches this sign-up's own account
       },
     });
     expect(result).toEqual(existsAnswer("none"));
-    // What a retry is told agrees.
+    // A retry never takes over a switched-on account: it is told to sign in.
     await expect(registerUser(getCatalogDb(), { email: member.email, password: PASSWORD })).rejects.toThrow(ACCOUNT_EXISTS_MESSAGE);
   });
 
@@ -494,7 +488,7 @@ describe("review 1 — the rollback only ever touches this sign-up's own account
     expect(row.deactivated_at).not.toBeNull();
   });
 
-  it("no such account: nothing made, and the person is told nothing was saved", async () => {
+  it("no such account: nothing made, and the person is told to try again", async () => {
     const provision = vi.fn(async () => undefined);
     expect(await provisionNewAccount("no-such-account", null, { provision })).toEqual(removedAnswer("none"));
     expect(provision).not.toHaveBeenCalled();
@@ -774,11 +768,19 @@ describe("property: every combination of failing rollback steps, at every point 
             expect(row, label).toBeDefined();
             expect(row.tenant_id, label).not.toBe(made.id);
             expect(isDeactivated(await getUserById(getCatalogDb(), id)), label).toBe(true);
-            expect(result.message, label).toBe(SIGNUP_STILL_BEING_SET_UP_MESSAGE);
-            // 3 what a retry is told agrees with that answer.
-            await expect(registerUser(getCatalogDb(), { email, password: PASSWORD }), label).rejects.toThrow(
-              PENDING_SIGNUP_MESSAGE,
-            );
+            expect(result.message, label).toBe(SIGNUP_FAILED_MESSAGE);
+            // 3 a retry at once: an account linked to nothing is removed and the
+            // sign-up goes on afresh; one re-linked to another tenant is never
+            // taken over, and the person is told to try again.
+            if (row.tenant_id === null) {
+              const fresh = await registerUser(getCatalogDb(), { email, password: PASSWORD });
+              expect(fresh.id, label).not.toBe(id);
+              expect(await account(id), label).toBeUndefined();
+            } else {
+              await expect(registerUser(getCatalogDb(), { email, password: PASSWORD }), label).rejects.toThrow(
+                SIGNUP_FAILED_MESSAGE,
+              );
+            }
           }
           // 4 the other workspace is exactly as it was.
           expect(await findable(owner.tenantId), label).toBe(false);
@@ -798,8 +800,30 @@ describe("property: every combination of failing rollback steps, at every point 
   }
 });
 
-describe("the answer is true: the first answer and the retry agree", () => {
-  it("the account was removed: 'nothing was saved, try again in a minute', and a retry at once succeeds", async () => {
+describe("a failed sign-up never makes the person wait: a retry with the same email works at once (CEO ruling 2026-11-03)", () => {
+  /** A sign-up that failed with its account kept switched off and linked to nothing; `made.id` its recorded tenant. */
+  async function keptSignup(at: FailAt = "registered") {
+    const { id, email } = await newAccount();
+    const armed = { on: false };
+    const made = { id: "" };
+    const result = await provisionNewAccount(id, email, { catalog: failing(["delete:users"], armed), ...failAt(at, armed, made) });
+    expect(result).toMatchObject({ ok: false, account: "kept", message: SIGNUP_FAILED_MESSAGE });
+    expect((await account(id)).tenant_id).toBeNull();
+    return { id, email, made };
+  }
+
+  /** The retry: registered and given its database at once, switched on. */
+  async function retryNow(email: string) {
+    const fresh = await registerUser(getCatalogDb(), { email, password: PASSWORD });
+    const done = await provisionNewAccount(fresh.id, email);
+    expect(done.ok).toBe(true);
+    const user = await getUserById(getCatalogDb(), fresh.id);
+    expect(isDeactivated(user)).toBe(false);
+    expect(user?.signupPendingSince).toBeNull();
+    return { fresh, tenantId: done.ok ? done.tenantId : "" };
+  }
+
+  it("the account was removed: the fixed message, and a retry at once succeeds", async () => {
     const { id, email } = await newAccount();
     const result = await provisionNewAccount(id, email, {
       provision: async () => {
@@ -807,75 +831,155 @@ describe("the answer is true: the first answer and the retry agree", () => {
       },
     });
     expect(result).toEqual(removedAnswer("removed"));
-    const again = await registerUser(getCatalogDb(), { email, password: PASSWORD });
-    expect((await provisionNewAccount(again.id, email)).ok).toBe(true);
+    await retryNow(email);
   });
 
-  for (const [outcome, setup] of [
-    [
-      "refused: the account already held a tenant",
-      async (id: string) => {
-        const owner = await inviter();
-        await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, id]);
-        return {};
-      },
-    ],
-    [
-      "the record could not be written and the account could not be deleted",
-      async () => ({ catalog: failing(["insert:tenantOrphans", "delete:users"], { on: true }) }),
-    ],
-    [
-      "the database failed and the account could not be deleted",
-      async () => {
-        const armed = { on: false };
-        return {
-          catalog: failing(["delete:users"], armed),
-          ...failAt("registered", armed, { id: "" }),
-        };
-      },
-    ],
-  ] as const) {
-    it(`kept switched off (${outcome}): 'still being set up, try again in an hour'; a retry within the hour is told the same; after it, the retry signs up afresh`, async () => {
-      const { id, email } = await newAccount();
-      const deps = await setup(id);
-      const result = await provisionNewAccount(id, email, deps);
-      expect(result).toMatchObject({ ok: false, account: "kept", message: SIGNUP_STILL_BEING_SET_UP_MESSAGE, retryAfterSeconds: 3600 });
-      expect(SIGNUP_STILL_BEING_SET_UP_MESSAGE).toContain("still being set up. Please try again in an hour.");
-      expect(PENDING_SIGNUP_MESSAGE).toContain("still being set up. Please try again in an hour.");
-      await expect(registerUser(getCatalogDb(), { email, password: PASSWORD })).rejects.toThrow(PENDING_SIGNUP_MESSAGE);
+  it("the account was kept switched off: the fixed message, and a retry at once removes it and signs up afresh", async () => {
+    const { id, email } = await keptSignup();
+    const { fresh } = await retryNow(email);
+    expect(fresh.id).not.toBe(id);
+    expect(await getUserById(getCatalogDb(), id)).toBeUndefined();
+    expect((await getUserByEmail(getCatalogDb(), email))?.id).toBe(fresh.id);
+  });
 
-      // An hour on, the retry gets through: the unfinished account is erased on the spot.
-      vi.useFakeTimers({ toFake: ["Date"] });
-      try {
-        vi.setSystemTime(anHourOn());
-        const fresh = await registerUser(getCatalogDb(), { email, password: PASSWORD });
-        expect(fresh.id).not.toBe(id);
-        expect(await getUserById(getCatalogDb(), id)).toBeUndefined();
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-  }
-
-  it("the retry that erases an unfinished account never touches a tenant: the record keeps the database findable", async () => {
+  it("the earlier attempt's tenant record is left for the sweep: never deleted, never lost", async () => {
+    // The database was made and its delete refused, so only the record leads to it.
     const { id, email } = await newAccount();
     const armed = { on: false };
     const made = { id: "" };
     await provisionNewAccount(id, email, {
-      catalog: failing(["delete:users", "select:users"], armed),
+      catalog: failing(["delete:users"], armed),
       ...failAt("registered", armed, made),
+      destroy: async () => false,
     });
     expect(existsSync(tenantFile(made.id))).toBe(true);
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      vi.setSystemTime(anHourOn());
-      await registerUser(getCatalogDb(), { email, password: PASSWORD });
-    } finally {
-      vi.useRealTimers();
-    }
-    expect(await getUserById(getCatalogDb(), id)).toBeUndefined();
+    expect(await findable(made.id)).toBe(true);
+    const { tenantId } = await retryNow(email);
+    expect(tenantId).not.toBe(made.id);
     expect(existsSync(tenantFile(made.id))).toBe(true);
     expect(await findable(made.id)).toBe(true);
+    const [row] = await query("SELECT reason, cleared_at FROM tenant_orphans WHERE tenant_id = ?", [made.id]);
+    expect(row.reason).toBe("signup");
+    expect(row.cleared_at).toBeNull();
+    // Nothing links it, so the sweep may remove it; the retry's own tenant is not recorded.
+    expect(await query("SELECT id FROM users WHERE tenant_id = ?", [made.id])).toHaveLength(0);
+    expect(await findable(tenantId)).toBe(false);
+  });
+
+  it("the earlier attempt's record is kept whatever point it failed at", async () => {
+    for (const at of ["before-create", "created-unregistered", "registered", "verify"] as const) {
+      const { email, made } = await keptSignup(at);
+      const before = await findable(made.id);
+      await retryNow(email);
+      expect(await findable(made.id), at).toBe(before);
+      await neverLost(made.id);
+    }
+  });
+
+  it("an attempt still in flight whose account a retry removed cleans up after itself", async () => {
+    const { id, email } = await newAccount();
+    const made = { id: "" };
+    let retried: { id: string } | undefined;
+    const result = await provisionNewAccount(id, email, {
+      provision: async (tenantId, opts) => {
+        made.id = tenantId;
+        await provisionTenant(tenantId, opts);
+        retried = await registerUser(getCatalogDb(), { email, password: PASSWORD }); // the person pressed again
+      },
+    });
+    expect(result).toEqual(removedAnswer("removed"));
+    expect(existsSync(tenantFile(made.id))).toBe(false);
+    expect(await registered(made.id)).toBe(false);
+    expect(await findable(made.id)).toBe(false);
+    expect((await provisionNewAccount(retried!.id, email)).ok).toBe(true);
+  });
+
+  it("an unfinished account's password-reset token goes with it, and the retry works", async () => {
+    const { id, email } = await keptSignup();
+    await query("INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)", [
+      `tok-${id}`,
+      id,
+      `hash-${id}`,
+      Math.floor(Date.now() / 1000) + 3600,
+    ]);
+    await retryNow(email);
+    expect(await query("SELECT id FROM password_reset_tokens WHERE user_id = ?", [id])).toHaveLength(0);
+  });
+
+  it("a retry never takes over a switched-on account: told to sign in, the account unchanged", async () => {
+    const on = await activeAccount();
+    const before = await getUserById(getCatalogDb(), on.id);
+    await expect(registerUser(getCatalogDb(), { email: on.email, password: PASSWORD })).rejects.toThrow(ACCOUNT_EXISTS_MESSAGE);
+    expect(await getUserById(getCatalogDb(), on.id)).toEqual(before);
+  });
+
+  it("a retry never takes over a closed account: told to sign in, the account unchanged", async () => {
+    const closed = await activeAccount();
+    await query("UPDATE users SET deactivated_at = unixepoch(), deletion_due_at = unixepoch() + 86400 WHERE id = ?", [closed.id]);
+    const before = await getUserById(getCatalogDb(), closed.id);
+    await expect(registerUser(getCatalogDb(), { email: closed.email, password: PASSWORD })).rejects.toThrow(ACCOUNT_EXISTS_MESSAGE);
+    expect(await getUserById(getCatalogDb(), closed.id)).toEqual(before);
+  });
+
+  it("a sign-up account linked to a tenant is never taken over: the fixed message, nothing touched", async () => {
+    const owner = await inviter();
+    const { id, email } = await newAccount();
+    await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, id]);
+    await expect(registerUser(getCatalogDb(), { email, password: PASSWORD })).rejects.toThrow(SignupRetryError);
+    expect((await account(id)).tenant_id).toBe(owner.tenantId);
+    await untouched(owner);
+  });
+
+  it("two retries at the same moment: exactly one takes the account over, the other is told to try again", async () => {
+    for (let round = 0; round < 3; round++) {
+      const { id, email } = await keptSignup();
+      // Both retries have read the unfinished account before either writes: the
+      // catalog holds each one's write until both have reached it.
+      const real = getCatalogDb();
+      let waiting = 0;
+      let release: () => void = () => {};
+      const bothThere = new Promise<void>((r) => (release = r));
+      const catalog = new Proxy(real, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver);
+          if (prop === "batch") {
+            return async (...args: unknown[]) => {
+              if (++waiting === 2) release();
+              await bothThere;
+              return (value as (...a: unknown[]) => unknown).apply(target, args);
+            };
+          }
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as AppDatabase;
+      const outcomes = await Promise.allSettled([
+        registerUser(catalog, { email, password: PASSWORD }),
+        registerUser(catalog, { email, password: PASSWORD }),
+      ]);
+      const won = outcomes.filter((o) => o.status === "fulfilled");
+      const lost = outcomes.filter((o): o is PromiseRejectedResult => o.status === "rejected");
+      expect(won).toHaveLength(1);
+      expect(lost).toHaveLength(1);
+      expect(lost[0].reason).toBeInstanceOf(SignupRetryError);
+      expect(lost[0].reason.message).toBe(SIGNUP_FAILED_MESSAGE);
+      const winner = (won[0] as PromiseFulfilledResult<{ id: string }>).value;
+      expect(await getUserById(getCatalogDb(), id)).toBeUndefined();
+      expect(await query("SELECT id FROM users WHERE email = ?", [email])).toEqual([expect.objectContaining({ id: winner.id })]);
+      expect((await provisionNewAccount(winner.id, email)).ok).toBe(true);
+    }
+  });
+
+  it("no answer to a failed sign-up mentions an hour or asks the person to wait", async () => {
+    for (const a of ["removed", "kept", "exists", "unknown"]) {
+      for (const d of ["none", "removed", "listed-for-sweep"]) {
+        const r = signupFailure(a as SignupProvisionFailure["account"], d as SignupProvisionFailure["database"]);
+        expect(r.message).toBe("Something went wrong creating your account. Please try again.");
+        expect(r.message).not.toMatch(/hour|minute|wait/i);
+      }
+    }
+    expect(SIGNUP_PROVISION_FAILED_MESSAGE).toBe(SIGNUP_FAILED_MESSAGE);
+    expect(new SignupRetryError().message).toBe(SIGNUP_FAILED_MESSAGE);
+    expect(SIGNUP_FAILED_RETRY_SECONDS).toBeLessThanOrEqual(1);
   });
 });
 

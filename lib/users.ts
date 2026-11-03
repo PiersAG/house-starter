@@ -7,10 +7,11 @@
 
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
-import { users, type User } from "@/lib/schema";
+import { passwordResetTokens, users, type User } from "@/lib/schema";
 import { hashPassword, validatePasswordStrength } from "@/lib/password";
+import { SIGNUP_FAILED_MESSAGE } from "@/lib/signup-failure";
 import { z } from "zod";
 import {
   emailField,
@@ -70,25 +71,14 @@ export interface CreateUserInput {
 }
 
 /**
- * How long a sign-up that never finished is kept. After it, the next sign-up
- * with the same address erases it on the spot (registerUser), and the retention
- * job erases any left at its daily run.
+ * How long a sign-up that never finished is kept before the background clean-up
+ * (the retention job) erases it. Timing only: nobody is ever told to wait it out
+ * — a retry with the same email removes the unfinished account at once
+ * (registerUser), CEO ruling 2026-11-03.
  */
 export const PENDING_SIGNUP_EXPIRY_MS = 60 * 60 * 1000;
 
-/** The Retry-After a person is given while their sign-up is still being set up. */
-export const PENDING_SIGNUP_RETRY_SECONDS = PENDING_SIGNUP_EXPIRY_MS / 1000;
-
-/**
- * What a sign-up is told while an account with its address is still being set
- * up. It agrees with what the first attempt was told
- * (lib/tenant/signup-provisioning.ts SIGNUP_STILL_BEING_SET_UP_MESSAGE), and it
- * holds: once the hour is up, the retry erases the unfinished account and goes on.
- */
-export const PENDING_SIGNUP_MESSAGE =
-  "An account with this email is still being set up. Please try again in an hour.";
-
-/** What a sign-up is told when a finished (or closed) account holds its address. */
+/** What a sign-up is told when a switched-on (or closed) account holds its address. */
 export const ACCOUNT_EXISTS_MESSAGE = "An account with this email already exists. Try signing in instead.";
 
 /** True when the account is a sign-up whose database is not yet ready. */
@@ -96,12 +86,58 @@ export function isPendingSignup(user: { signupPendingSince: Date | null }): bool
   return user.signupPendingSince !== null;
 }
 
-/** A sign-up that never finished and whose hour is up. */
-export function pendingSignupExpired(
-  user: { signupPendingSince: Date | null; deletionDueAt: Date | null },
-  now: Date = new Date(),
+/**
+ * A sign-up that never finished and may be removed by a retry: never switched
+ * on (`signupPendingSince` set), switched off, and linked to no tenant.
+ */
+export function isUnfinishedSignup(
+  user: Pick<User, "signupPendingSince" | "deactivatedAt" | "tenantId">,
 ): boolean {
-  return isPendingSignup(user) && user.deletionDueAt !== null && user.deletionDueAt.getTime() <= now.getTime();
+  return user.signupPendingSince !== null && user.deactivatedAt !== null && user.tenantId === null;
+}
+
+/**
+ * A retry could not remove the unfinished sign-up holding its address: another
+ * retry at the same moment removed it first, or the account changed under it.
+ * Not a RegistrationError: the person gets the fixed "please try again"
+ * (lib/signup-failure.ts), as for any other failed sign-up.
+ */
+export class SignupRetryError extends Error {
+  constructor() {
+    super(SIGNUP_FAILED_MESSAGE);
+    this.name = "SignupRetryError";
+  }
+}
+
+/**
+ * Remove the unfinished sign-up `userId`, in ONE atomic batch whose account
+ * delete is conditional on the account still being an unfinished sign-up —
+ * so of two retries at the same moment exactly one removes it, and an account
+ * switched on in the meantime is never removed. Its password-reset tokens go in
+ * the same batch (the only rows an account that never signed in can have).
+ * The account only: the database its sign-up may have made stays recorded in
+ * tenant_orphans, which the rollback or the factory's sweep removes
+ * (lib/tenant/signup-provisioning.ts). Throws SignupRetryError when it lost.
+ */
+async function removeUnfinishedSignup(db: AppDatabase, userId: string): Promise<void> {
+  const unfinished = and(
+    eq(users.id, userId),
+    isNotNull(users.signupPendingSince),
+    isNotNull(users.deactivatedAt),
+    isNull(users.tenantId),
+  );
+  const [, removed] = await db.batch([
+    db
+      .delete(passwordResetTokens)
+      .where(
+        and(
+          eq(passwordResetTokens.userId, userId),
+          sql`exists (select 1 from users where users.id = ${userId} and users.signup_pending_since is not null and users.deactivated_at is not null and users.tenant_id is null)`,
+        ),
+      ),
+    db.delete(users).where(unfinished),
+  ]);
+  if (removed.rowsAffected !== 1) throw new SignupRetryError();
 }
 
 /** Insert a user row and return the persisted record (id generated here). */
@@ -165,6 +201,11 @@ export interface RegisterUserInput {
  * emails, hash the password, and persist the user — switched off, as a
  * sign-up being set up, until provisionNewAccount switches it on. Throws RegistrationError
  * with an actionable message on policy/uniqueness failures.
+ *
+ * A retry works at once (CEO ruling 2026-11-03): when the address belongs to a
+ * sign-up that never finished (isUnfinishedSignup), that account is removed and
+ * this sign-up goes on afresh. A switched-on or closed account is never removed.
+ * Throws SignupRetryError when another retry removed it first.
  */
 export async function registerUser(
   db: AppDatabase,
@@ -181,26 +222,18 @@ export async function registerUser(
   if (!fields.success) {
     throw new RegistrationError("invalid_input", firstIssue(fields.error));
   }
-  let existing = await getUserByEmail(db, input.email);
-  if (existing && pendingSignupExpired(existing)) {
-    // A sign-up that never finished, whose hour is up: erased now, as the
-    // retention job would at its next daily run, so "try again in an hour"
-    // holds. The account only — never its tenant: an unfinished sign-up's
-    // database is found and removed through its tenant_orphans record
-    // (lib/privacy/deletion.ts tenantErasable).
-    const { eraseAccount } = await import("@/lib/privacy/deletion");
-    await eraseAccount(db, existing.id);
-    existing = await getUserByEmail(db, input.email);
-  }
-  if (existing) {
-    throw new RegistrationError(
-      "email_taken",
-      isPendingSignup(existing)
-        ? PENDING_SIGNUP_MESSAGE
-        : ACCOUNT_EXISTS_MESSAGE,
-    );
+  const existing = await getUserByEmail(db, input.email);
+  if (existing && !isPendingSignup(existing)) {
+    throw new RegistrationError("email_taken", ACCOUNT_EXISTS_MESSAGE);
   }
   const passwordHash = await hashPassword(input.password);
+  if (existing) {
+    // A sign-up that never finished holds the address. Removed now, so the
+    // retry is not made to wait; one that is linked to a tenant (never made by
+    // a sign-up) is not, and the person gets the fixed "please try again".
+    if (!isUnfinishedSignup(existing)) throw new SignupRetryError();
+    await removeUnfinishedSignup(db, existing.id);
+  }
   // Every sign-up starts SWITCHED OFF (issue 358): the caller gives it its
   // database with provisionNewAccount, which switches it on only when that is
   // finished, so no failure at any point leaves a usable account with none.

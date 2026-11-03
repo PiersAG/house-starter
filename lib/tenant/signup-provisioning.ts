@@ -31,11 +31,15 @@
 // delete stays recorded: the factory's sweep (app-business-core
 // agents/tenant_db_sweep.py) deletes it later, after reading again that no
 // account links it. An account the rollback could not delete stays switched
-// off; it is erased an hour after it was made, as an account only (its database
-// is the sweep's, through the record — lib/privacy/deletion.ts tenantErasable).
+// off, and a retry with the same email removes it at once and signs up afresh
+// (lib/users.ts registerUser); if nobody retries, the background clean-up erases
+// it an hour after it was made, as an account only (its database is the sweep's,
+// through the record — lib/privacy/deletion.ts tenantErasable).
 //
-// Never a crash: the caller gets { ok: false } with the message that is true
-// for what was left, and nothing is thrown at it.
+// Never a crash: the caller gets { ok: false } and nothing is thrown at it. What
+// the person is told is the one fixed SIGNUP_FAILED_MESSAGE whatever was left
+// (CEO ruling 2026-11-03: never "wait an hour"); `account` and `database` say
+// what was left, for the log and the tests.
 
 import "server-only";
 
@@ -46,39 +50,23 @@ import { logEvent } from "@/lib/observability/log";
 import { tenantOrphans, tenants, users } from "@/lib/schema";
 import { getProvisioner, newTenantId, provisionTenant } from "@/lib/tenant/provisioner";
 import { recordTenantOrphan } from "@/lib/tenant/orphans";
-import { ACCOUNT_EXISTS_MESSAGE, PENDING_SIGNUP_RETRY_SECONDS, type AppDatabase } from "@/lib/users";
-
-/** The account is gone, so the address is free again at once. */
-export const SIGNUP_PROVISION_FAILED_MESSAGE =
-  "We could not finish setting up your account, so nothing was saved. " +
-  "Please try again in a minute.";
+import { SIGNUP_FAILED_MESSAGE, SIGNUP_FAILED_RETRY_SECONDS } from "@/lib/signup-failure";
+import type { AppDatabase } from "@/lib/users";
 
 /**
- * The account still exists, switched off. A retry within the hour is told the
- * same (lib/users.ts registerUser); after the hour the retry erases it and
- * signs up afresh.
+ * Every failed sign-up's message, on the form and the JSON route: fixed text,
+ * never the error's details, and a retry works at once (lib/signup-failure.ts).
  */
-export const SIGNUP_STILL_BEING_SET_UP_MESSAGE =
-  "Your account is still being set up. Please try again in an hour.";
-
-/**
- * For a failure whose outcome is not known (an unexpected error in a route):
- * true whichever way it went, as after an hour a retry always gets through.
- */
-export const SIGNUP_UNSURE_MESSAGE =
-  "We could not finish setting up your account. Please try again in an hour.";
-
-export const SIGNUP_FAILED_RETRY_SECONDS = 60;
-export const SIGNUP_UNSURE_RETRY_SECONDS = PENDING_SIGNUP_RETRY_SECONDS;
+export const SIGNUP_PROVISION_FAILED_MESSAGE = SIGNUP_FAILED_MESSAGE;
+export { SIGNUP_FAILED_RETRY_SECONDS };
 
 export type SignupProvisionFailure = {
   ok: false;
   /**
-   * What became of the account, so the answer is true and agrees with a retry:
-   * "removed" — gone, the address free at once; "kept" — still a sign-up being
-   * set up, switched off, until it is erased an hour after it was made;
-   * "exists" — a finished (or closed) account, which a retry is told to sign in
-   * to; "unknown" — it could not be read.
+   * What became of the account (for the log and the tests; the person is told
+   * the same fixed message whatever it is): "removed" — gone; "kept" — still a
+   * sign-up being set up, switched off, which a retry removes at once; "exists"
+   * — a switched-on (or closed) account; "unknown" — it could not be read.
    */
   account: "removed" | "kept" | "exists" | "unknown";
   /**
@@ -86,7 +74,7 @@ export type SignupProvisionFailure = {
    * "listed-for-sweep" — it may exist, and its tenant_orphans record stays.
    */
   database: "none" | "removed" | "listed-for-sweep";
-  /** What to tell the person: true for what was left. */
+  /** What to tell the person: always SIGNUP_FAILED_MESSAGE. */
   message: string;
   retryAfterSeconds: number;
 };
@@ -140,18 +128,12 @@ export type RollbackStep =
   | "delete-registration"
   | "clear-record";
 
-/** The failure answer for what the rollback left. */
+/** The failure answer: what was left, and the one fixed message. */
 export function signupFailure(
   account: SignupProvisionFailure["account"],
   database: SignupProvisionFailure["database"],
 ): SignupProvisionFailure {
-  const [message, retryAfterSeconds] = {
-    removed: [SIGNUP_PROVISION_FAILED_MESSAGE, SIGNUP_FAILED_RETRY_SECONDS],
-    kept: [SIGNUP_STILL_BEING_SET_UP_MESSAGE, PENDING_SIGNUP_RETRY_SECONDS],
-    exists: [ACCOUNT_EXISTS_MESSAGE, SIGNUP_FAILED_RETRY_SECONDS],
-    unknown: [SIGNUP_UNSURE_MESSAGE, SIGNUP_UNSURE_RETRY_SECONDS],
-  }[account] as [string, number];
-  return { ok: false, account, database, message, retryAfterSeconds };
+  return { ok: false, account, database, message: SIGNUP_FAILED_MESSAGE, retryAfterSeconds: SIGNUP_FAILED_RETRY_SECONDS };
 }
 
 /** What the account is now, read from its row (undefined: no such account). */

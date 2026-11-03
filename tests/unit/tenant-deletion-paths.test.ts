@@ -1,7 +1,7 @@
 // @vitest-environment node
 // Every code path that deletes, wipes or erases a customer database, deletes a
 // tenant row, or deletes the record a sign-up's database is found by, is one of
-// the known, guarded paths (Dispatch AG-fix3, AG-fix4; app-business-core issues
+// the known, guarded paths (Dispatch AG-fix3, AG-fix4, AG-fix5; app-business-core issues
 // 358 and 857). Each is guarded so it can never touch a tenant another account
 // still links, and so no database loses its last record:
 //
@@ -15,10 +15,14 @@
 //   account erasure   lib/privacy/deletion.ts eraseAccount — only a tenant
 //                     tenantErasable allows: no other account links it, and
 //                     never for an unfinished sign-up (its database is its
-//                     record's). Run by the retention job, by the replay after
-//                     a restore, and by registerUser (lib/users.ts) for an
-//                     unfinished sign-up whose hour is up;
-//                     lib/privacy/runtime.ts liveTenantPlane is its live plane.
+//                     record's). Run by the retention job and by the replay
+//                     after a restore; lib/privacy/runtime.ts liveTenantPlane
+//                     is its live plane;
+//   sign-up retry     lib/users.ts removeUnfinishedSignup — deletes the account
+//                     row of an unfinished sign-up only (never switched on,
+//                     switched off, linked to no tenant), in one conditional
+//                     delete; it touches no tenant, database or record, so the
+//                     earlier attempt's record is left for the rollback or sweep.
 //   factory sweep     app-business-core agents/tenant_db_sweep.py (its own tests).
 //
 // A new call to one of these primitives anywhere else fails this test: guard
@@ -73,7 +77,7 @@ const PRIMITIVES: { what: string; pattern: RegExp; allowed: string[] }[] = [
   {
     what: "erasing an account (its tenant row and database with it)",
     pattern: /\beraseAccount\(/,
-    allowed: ["lib/privacy/deletion.ts", "lib/privacy/retention-job.ts", "lib/users.ts"],
+    allowed: ["lib/privacy/deletion.ts", "lib/privacy/retention-job.ts"],
   },
   {
     what: "deleting a sign-up's record (the only thing that finds its database)",
@@ -129,12 +133,21 @@ describe("every path that deletes a customer database or a tenant row is a known
     expect(src.indexOf('step("clear-record"')).toBeGreaterThan(src.indexOf('step("delete-registration"'));
   });
 
-  it("registerUser erases only an unfinished sign-up whose hour is up", () => {
+  it("registerUser removes only an unfinished sign-up, in one conditional delete, and never its tenant", () => {
     const src = code(join(ROOT, "lib/users.ts"));
-    const guard = src.indexOf("if (existing && pendingSignupExpired(existing)) {");
-    expect(guard).toBeGreaterThan(-1);
-    const call = src.indexOf("await eraseAccount(db, existing.id)");
-    expect(call).toBeGreaterThan(guard);
-    expect(src.slice(guard, call)).not.toMatch(/\n\s*\}\s*\n/); // the call is inside that block
+    const start = src.indexOf("async function removeUnfinishedSignup(");
+    expect(start).toBeGreaterThan(-1);
+    const remove = src.slice(start, src.indexOf("/** Insert a user row"));
+    expect(remove).toContain("db.delete(users).where(unfinished)");
+    for (const guard of ["isNotNull(users.signupPendingSince)", "isNotNull(users.deactivatedAt)", "isNull(users.tenantId)"]) {
+      expect(remove).toContain(guard);
+    }
+    expect(remove).toContain("if (removed.rowsAffected !== 1) throw new SignupRetryError();");
+    // The account only: nothing keyed by a tenant, no database.
+    expect(remove).not.toMatch(/tenants|tenantOrphans|destroy|eraseAccount/);
+    const register = src.slice(src.indexOf("export async function registerUser("));
+    const check = register.indexOf("if (!isUnfinishedSignup(existing)) throw new SignupRetryError();");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(register.indexOf("await removeUnfinishedSignup(db, existing.id);"));
   });
 });

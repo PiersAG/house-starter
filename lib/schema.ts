@@ -136,10 +136,10 @@ export const users = sqliteTable("users", {
    * creates every new account SWITCHED OFF — this set, `deactivatedAt` set, so
    * sign-in refuses it — and lib/tenant/signup-provisioning.ts switches it on
    * (clears all three) only once its tenant and database are fully provisioned.
-   * A sign-up that never finishes stays off, and its `deletionDueAt` (an hour
-   * after creation) lets the retention job, or a new sign-up with the same
-   * address, erase it — the account only: its database is found and removed
-   * through its `tenant_orphans` record. Set here is what tells a sign-up
+   * A sign-up that never finishes stays off: a new sign-up with the same
+   * address removes it at once, and otherwise its `deletionDueAt` (an hour
+   * after creation) lets the retention job erase it — the account only: its
+   * database is found and removed through its `tenant_orphans` record. Set here is what tells a sign-up
    * being set up from an account its owner closed.
    * Nullable with no default, so lib/migrate.ts::reconcileColumns can add it.
    */

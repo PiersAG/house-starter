@@ -20,6 +20,7 @@ import { pendingTenantOrphans } from "@/lib/tenant/orphans";
 import { createUser } from "@/lib/users";
 import {
   provisionNewAccount,
+  SIGNUP_FAILED_RETRY_SECONDS,
   SIGNUP_PROVISION_FAILED_MESSAGE,
   verifyTenantRoute,
 } from "@/lib/tenant/signup-provisioning";
@@ -71,7 +72,7 @@ const removed = (database: string) => ({
   account: "removed",
   database,
   message: SIGNUP_PROVISION_FAILED_MESSAGE,
-  retryAfterSeconds: 60,
+  retryAfterSeconds: SIGNUP_FAILED_RETRY_SECONDS,
 });
 
 const tenantFile = (tenantId: string) => join(tenantFileDir(), `${tenantId}.db`);
