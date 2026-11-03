@@ -121,7 +121,14 @@ async function postWithoutLimit(request: Request): Promise<Response> {
       const status = error.code === "email_taken" ? 409 : 422;
       return NextResponse.json({ error: error.message }, { status });
     }
-    throw error;
+    // Anything else is unexpected: logged here, never shown. The caller gets
+    // the same fixed answer to retry as a failed set-up (issue 358: never a
+    // crash), not a 500 and not the error's own text.
+    console.error("signup: the account could not be created", error);
+    return NextResponse.json(
+      { error: SIGNUP_PROVISION_FAILED_MESSAGE },
+      { status: 503, headers: { "Retry-After": "60" } },
+    );
   }
 }
 
