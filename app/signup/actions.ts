@@ -4,7 +4,10 @@ import { signIn } from "@/lib/auth";
 import { catalogDb } from "@/lib/catalog";
 import { registerUser, RegistrationError } from "@/lib/users";
 import { startTrialForNewOwner } from "@/lib/billing/trial";
-import { ensureTenantForUser } from "@/lib/tenant/provisioner";
+import {
+  provisionNewAccount,
+  SIGNUP_PROVISION_FAILED_MESSAGE,
+} from "@/lib/tenant/signup-provisioning";
 import { AUTH_RATE_LIMITS, guardAuthAttempt } from "@/lib/auth-rate-limit";
 import { guardRouteAction, ROUTE_LIMIT_MESSAGE } from "@/lib/abuse/route-limit";
 import { z } from "zod";
@@ -45,6 +48,21 @@ export async function signupAction(
   if (!form.ok) return { error: form.error };
   const { email, password, name } = form.data;
 
+  // SECOND, MUCH TIGHTER BUCKET — and it guards a different resource. Above is
+  // a request limit; this is the ceiling on how many DATABASES one client can
+  // cause to exist, which is billed, quota'd and slow to reclaim. Checked after
+  // the form is valid, so a malformed request does not spend it, and BEFORE the
+  // account is made (app-business-core issue 358: never a half-created account),
+  // as the JSON twin (POST /api/auth/signup) already does.
+  const provisionRate = await guardAuthAttempt(AUTH_RATE_LIMITS.signupProvision);
+  if (!provisionRate.allowed) {
+    return {
+      error:
+        "Too many new accounts have been set up from this network recently. " +
+        "Please try again later.",
+    };
+  }
+
   let user;
   try {
     user = await registerUser(catalogDb, { email, password, name });
@@ -60,43 +78,32 @@ export async function signupAction(
     // mode, so registerUser threw `SQLITE_ERROR: no such table: users` on every
     // attempt, and all anyone could see was "Could not create your account".
     // The two sibling catches below already log; this one is the outlier.
-    // User-facing message deliberately unchanged — it must not leak internals.
+    // It must not leak internals: it is the one fixed answer every failed
+    // sign-up gets (issue 358; CEO ruling 2026-11-03), and a retry works at
+    // once — including when another retry removed an unfinished sign-up first
+    // (lib/users.ts SignupRetryError).
     console.error("signup: failed to register the account", error);
-    return { error: "Could not create your account. Please try again." };
+    return { error: SIGNUP_PROVISION_FAILED_MESSAGE };
   }
 
-  // ADR-023: the account exists in the catalog; now give it its OWN database.
-  // This is the moment a tenant comes into being — a per-tenant app that skipped
-  // it would hand the new customer a session pointing at nothing. It is fatal on
-  // purpose: an account without a database cannot be signed in to, so reporting
-  // "created" and then failing on the first page would be the worse outcome.
-  // SECOND, MUCH TIGHTER BUCKET — and it guards a different resource. Above is
-  // a request limit; this is the ceiling on how many DATABASES one client can
-  // cause to exist, which is billed, quota'd and slow to reclaim. Checked here
-  // rather than at entry so a rejected signup (bad email, taken address) does
-  // not spend the provisioning budget.
-  const provisionRate = await guardAuthAttempt(AUTH_RATE_LIMITS.signupProvision);
-  if (!provisionRate.allowed) {
-    // The account exists; only its workspace is deferred. lib/auth.ts::authorize
-    // provisions on first sign-in, so this is recoverable exactly as the message
-    // says — no orphaned account, no support ticket.
-    return {
-      error:
-        "Your account was created, but too many workspaces have been set up " +
-        "from this network recently. Try signing in shortly and we'll finish " +
-        "setting it up.",
-    };
-  }
-
+  // ADR-023: the account exists in the catalog, switched off; now give it its
+  // OWN database — all or nothing (app-business-core issue 358).
+  // provisionNewAccount records the new tenant id first, retries Turso's
+  // passing errors, checks the new database opens by the catalog's route, and
+  // on any failure rolls the sign-up back. Every failure gets the one fixed
+  // message, and a retry with the same email works at once (lib/users.ts
+  // registerUser removes an unfinished sign-up). provisionNewAccount never
+  // throws by design; the try is the second line of defence, so the form still
+  // shows the fixed message, never a 500.
+  let provisioned;
   try {
-    await ensureTenantForUser(user.id, { label: user.email });
+    provisioned = await provisionNewAccount(user.id, user.email);
   } catch (error) {
-    console.error("signup: failed to provision the tenant database", error);
-    return {
-      error:
-        "Your account was created but its workspace could not be set up. " +
-        "Try signing in — we'll finish setting it up then.",
-    };
+    console.error("signup: provisioning threw past its own rollback", error);
+    return { error: SIGNUP_PROVISION_FAILED_MESSAGE };
+  }
+  if (!provisioned.ok) {
+    return { error: SIGNUP_PROVISION_FAILED_MESSAGE };
   }
 
   // Step 6: give the new owner a trial subscription so the step-5 paywall does

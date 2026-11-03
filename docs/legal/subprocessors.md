@@ -51,12 +51,12 @@ The outside services that handle data for [app name], what each receives, where 
 ## Amazon Web Services
 
 - Status: In use
-- What it does: Holds the app's own keys and passwords in a locked store (the key vault).
-- Personal data it receives: None: it holds the app's keys, never customer data.
-- Where: EU (London or Ireland region chosen for the vault).
-- Transfers out of the UK: Not applicable: no personal data is sent.
+- What it does: Holds the app's own keys in a locked store (the key vault), and the nightly copy of the app's databases kept outside the database provider, for recovery (backups).
+- Personal data it receives: The backup copy holds everything the app's databases hold, encrypted at rest; the key vault holds no customer data.
+- Where: United Kingdom (London region).
+- Transfers out of the UK: Not applicable: stored in the UK.
 - Data processing agreement: https://aws.amazon.com/compliance/gdpr-center/
-- On account deletion: Not applicable: no personal data is held.
+- On account deletion: Each backup copy is locked against change for 30 days, then deleted automatically; after any restore, every account in the erasure ledger is deleted again before the app reopens.
 
 ## Sentry
 
@@ -68,12 +68,12 @@ The outside services that handle data for [app name], what each receives, where 
 - Data processing agreement: https://sentry.io/legal/dpa/
 - On account deletion: Error records expire within the plan's history window (about 30 days).
 
-## Email provider (to be chosen)
+## Resend
 
-- Status: Not chosen yet
+- Status: Chosen, not connected yet
 - What it does: Sends the app's emails: password resets, receipts and account notices.
 - Personal data it receives: Your email address and the message sent to you.
-- Where: To be recorded when the provider is chosen.
-- Transfers out of the UK: To be recorded when the provider is chosen.
-- Data processing agreement: To be recorded when the provider is chosen.
-- On account deletion: To be recorded when the provider is chosen.
+- Where: Sent from the EU (Ireland); Resend is a US company.
+- Transfers out of the UK: EU Standard Contractual Clauses with the UK Addendum, in Resend's DPA.
+- Data processing agreement: https://resend.com/legal/dpa
+- On account deletion: Resend keeps a record of each message for its plan's history window; the app keeps only whether it was delivered, never the address or the message.

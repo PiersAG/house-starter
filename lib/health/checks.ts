@@ -38,6 +38,12 @@ export interface HealthDeps {
   crossTenantCountSince?: (sinceEpochMs: number) => Promise<number>;
   /** Accounts still not erased 72h after their deletion was due (#722). Optional: absent → no check. */
   deletionsOverdue?: () => Promise<number>;
+  /**
+   * Email sending and delivery (#757): the sending-domain setup, the delivery
+   * reports and the 30-day bounce and complaint rates. Optional: absent, or
+   * null (an app in log mode sends nothing) → no check.
+   */
+  emailHealth?: () => Promise<{ ok: boolean; detail: string } | null>;
   now: () => number;
   env: NodeJS.ProcessEnv;
 }
@@ -95,6 +101,22 @@ export async function assembleHealth(deps: HealthDeps): Promise<HealthReport> {
       critical: true,
       detail: overdue === 0 ? "no account deletion overdue" : "account deletion overdue",
     });
+  }
+
+  // Email (#757) — critical. Password resets that do not arrive lock customers
+  // out, and a bounce or spam-complaint rate over its limit is the warning that
+  // they are about to stop arriving: the app answers 503 so the external prober
+  // raises the alert before a customer reports it. A read that throws is not a
+  // finding, so it does not fail the check.
+  if (deps.emailHealth) {
+    let email: { ok: boolean; detail: string } | null = null;
+    try {
+      email = await deps.emailHealth();
+    } catch (e) {
+      console.error("[health] email check threw", e instanceof Error ? e.message : e);
+      email = null;
+    }
+    if (email) checks.push({ name: "email", ok: email.ok, critical: true, detail: email.detail });
   }
 
   // Recent error rate — informational only. Its failure must not flip a

@@ -167,18 +167,66 @@ export function tursoDatabaseName(appSlug: string, tenantId: string): string {
   return name;
 }
 
+/**
+ * How a Turso call is retried (#358: "graceful retry"). A 429, a 5xx or a
+ * network failure is Turso having a bad moment, not a refusal: the call is tried
+ * again after a short wait, up to `attempts` times in all. Every other answer —
+ * a 4xx — is final and comes straight back. Each call below is safe to repeat:
+ * reads and token mints are, and a repeated create answers 409, which create()
+ * treats as "already made".
+ */
+export interface RetryPolicy {
+  attempts: number;
+  /** Wait before try n+1 (n from 1), in milliseconds. */
+  delayMs: (attempt: number) => number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+export const DEFAULT_RETRY: RetryPolicy = {
+  attempts: 3,
+  delayMs: (attempt) => 250 * 4 ** (attempt - 1),
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
+
+let retryPolicy: RetryPolicy = DEFAULT_RETRY;
+
+/** Test hook — a policy with no real waiting, or the default back again. */
+export function __setRetryPolicyForTests(policy: RetryPolicy | null): void {
+  retryPolicy = policy ?? DEFAULT_RETRY;
+}
+
+/** True when an answer is worth trying again. */
+export function isTransientStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
 async function tursoFetch(
   path: string,
   token: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  return fetch(`${TURSO_API}${path}`, {
-    ...init,
-    headers: {
-      ...(init.headers ?? {}),
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  const policy = retryPolicy;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= policy.attempts; attempt++) {
+    try {
+      const r = await fetch(`${TURSO_API}${path}`, {
+        ...init,
+        headers: {
+          ...(init.headers ?? {}),
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!isTransientStatus(r.status) || attempt === policy.attempts) return r;
+    } catch (error) {
+      lastError = error;
+      if (attempt === policy.attempts) break;
+    }
+    await policy.sleep(policy.delayMs(attempt));
+  }
+  throw new Error(
+    `Turso: ${init.method ?? "GET"} ${path} failed after ${policy.attempts} tries — ` +
+      `${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
 }
 
 /**
@@ -307,16 +355,20 @@ export class TursoTenantProvisioner implements TenantProvisioner {
           body: JSON.stringify({ name: dbName, group }),
         },
       );
-      if (!r.ok) {
+      if (r.status === 409) {
+        // A retried create whose first try did reach Turso: the database exists.
+        hostname = await this.hostnameOf(dbName);
+      } else if (!r.ok) {
         throw new Error(
           `Turso: creating database ${dbName} failed (${r.status} ${r.statusText}) — ` +
             `${await r.text().catch(() => "")}`,
         );
+      } else {
+        const body = (await r.json()) as {
+          database?: { Hostname?: string; hostname?: string };
+        };
+        hostname = body.database?.Hostname ?? body.database?.hostname ?? null;
       }
-      const body = (await r.json()) as {
-        database?: { Hostname?: string; hostname?: string };
-      };
-      hostname = body.database?.Hostname ?? body.database?.hostname ?? null;
     }
     if (!hostname) {
       throw new Error(`Turso: could not resolve a hostname for ${dbName}`);

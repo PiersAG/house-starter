@@ -132,6 +132,19 @@ export const users = sqliteTable("users", {
   deactivatedAt: integer("deactivated_at", { mode: "timestamp" }),
   /** When the deactivated account's data is erased: 30 days after the request. */
   deletionDueAt: integer("deletion_due_at", { mode: "timestamp" }),
+  /**
+   * A sign-up still being set up (app-business-core issue 358). registerUser
+   * creates every new account SWITCHED OFF — this set, `deactivatedAt` set, so
+   * sign-in refuses it — and lib/tenant/signup-provisioning.ts switches it on
+   * (clears all three) only once its tenant and database are fully provisioned.
+   * A sign-up that never finishes stays off: a new sign-up with the same
+   * address removes it at once, and otherwise its `deletionDueAt` (an hour
+   * after creation) lets the retention job erase it — the account only: its
+   * database is found and removed through its `tenant_orphans` record. Set here is what tells a sign-up
+   * being set up from an account its owner closed.
+   * Nullable with no default, so lib/migrate.ts::reconcileColumns can add it.
+   */
+  signupPendingSince: integer("signup_pending_since", { mode: "timestamp" }),
 });
 
 /** The roles an account can hold inside its own tenant. */
@@ -783,3 +796,53 @@ export const erasures = sqliteTable("erasures", {
 
 export type Erasure = typeof erasures.$inferSelect;
 
+/**
+ * CATALOG. Customer databases that may exist with nothing else to find them by
+ * (app-business-core issues 358 and 857). Two kinds of row:
+ *
+ *   * "signup" — written BEFORE a sign-up asks Turso for its database, so from
+ *     that moment the database can always be found, whatever later happens to
+ *     the account or its link (lib/tenant/signup-provisioning.ts). It is deleted
+ *     in the same write that switches the finished account on; a row that
+ *     outlives its sign-up is a database left behind;
+ *   * "erasure" — an erased account's database that Turso would not delete.
+ *
+ * The rollback deletes what it can and clears the row; whatever is left, the
+ * factory's sweep (app-business-core agents/tenant_db_sweep.py) deletes with its
+ * own key, after re-reading that no account links the id, and sets `clearedAt`.
+ * Tenant ids only: no account id, address or name.
+ */
+export const tenantOrphans = sqliteTable("tenant_orphans", {
+  tenantId: text("tenant_id").primaryKey(),
+  reason: text("reason", { enum: ["signup", "erasure"] }).notNull(),
+  recordedAt: integer("recorded_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  clearedAt: integer("cleared_at", { mode: "timestamp" }),
+});
+
+export type TenantOrphan = typeof tenantOrphans.$inferSelect;
+
+/**
+ * CATALOG. What the email provider reports about each message (app-business-core
+ * issue 757: "delivery monitoring that tells you where your emails actually
+ * land"). One row per provider event, keyed by the event's own id so a repeated
+ * delivery of the same event counts once. Never an address, a subject or a body:
+ * the type, the provider's message id and, for a bounce, its kind. Written by
+ * app/api/email/events/route.ts; read by lib/email/delivery.ts for the bounce
+ * and complaint rates /api/health reports.
+ */
+export const emailEvents = sqliteTable("email_events", {
+  id: text("id").primaryKey(),
+  receivedAt: integer("received_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  type: text("type", {
+    enum: ["sent", "delivered", "delayed", "bounced", "complained", "failed", "suppressed", "other"],
+  }).notNull(),
+  messageId: text("message_id"),
+  /** For a bounce: "permanent" (the address does not exist) or "transient". */
+  bounceKind: text("bounce_kind"),
+});
+
+export type EmailEvent = typeof emailEvents.$inferSelect;

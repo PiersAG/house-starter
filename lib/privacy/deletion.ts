@@ -18,7 +18,7 @@
 
 import "server-only";
 
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { recordAuditEvent } from "@/lib/audit/trail";
 import { billingInvoices, erasures, subscriptions, users, type User } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";
@@ -162,6 +162,14 @@ export interface ErasureResult {
   anonymised: Record<string, number>;
   retained: RetainedSummary[];
   tenantDatabase: "removed" | "wiped" | "none";
+  /**
+   * Why the account's tenant was left as it is, when it was: another account
+   * still links it, or the account is a sign-up that never finished (its
+   * database, if one was made, is found through its tenant_orphans record and
+   * removed by the sign-up's rollback or the factory's sweep). Null when the
+   * tenant was erased or there was none.
+   */
+  tenantKept: "linked-by-another-account" | "unfinished-sign-up" | null;
   /** Tables still holding this account's rows after erasure; empty = verified. */
   remaining: string[];
   verified: boolean;
@@ -202,8 +210,41 @@ export async function remainingLocations(db: AppDatabase, subject: Subject): Pro
 }
 
 /**
+ * Whether erasing this account may erase its tenant — the tenant's database and
+ * every catalog row keyed by the tenant id (its registration, its credential
+ * events). Only when the tenant is the account's own, not the shared one, AND:
+ *
+ *   * the account is not a sign-up that never finished. Such an account is
+ *     erased as an account only, whatever it links: a database its sign-up made
+ *     was recorded in tenant_orphans before it was asked for
+ *     (lib/tenant/signup-provisioning.ts), and that record — not the account or
+ *     its link — is how the rollback and the factory's sweep find and remove it;
+ *   * no other account links it — erasing one account never erases a
+ *     workspace another account still uses.
+ *
+ * Read immediately before the tenant is touched.
+ */
+export async function tenantErasable(
+  db: AppDatabase,
+  user: Pick<User, "id" | "tenantId" | "signupPendingSince">,
+): Promise<{ tenantId: string | null; kept: ErasureResult["tenantKept"] }> {
+  const tenantId = user.tenantId ?? null;
+  if (!ownTenant(tenantId)) return { tenantId: null, kept: null };
+  if (user.signupPendingSince !== null) return { tenantId: null, kept: "unfinished-sign-up" };
+  const others = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.tenantId, tenantId), ne(users.id, user.id)))
+    .limit(1)
+    .all();
+  if (others.length > 0) return { tenantId: null, kept: "linked-by-another-account" };
+  return { tenantId, kept: null };
+}
+
+/**
  * Erase one account now. The caller (the retention job, or the replay after a
- * restore) decides that it is due. Never deletes the shared tenant database.
+ * restore) decides that it is due. Never deletes the shared tenant database,
+ * nor a tenant {@link tenantErasable} keeps.
  */
 export async function eraseAccount(
   db: AppDatabase,
@@ -214,7 +255,14 @@ export async function eraseAccount(
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1).all();
   const user = rows[0];
   if (!user) return null;
-  const subject = await subjectOf(db, user);
+  const linked = await subjectOf(db, user);
+  // A tenant this erasure may not touch is taken out of the subject, so neither
+  // its database nor any catalog row keyed by its id is erased with the account.
+  const erasable = await tenantErasable(db, user);
+  if (erasable.kept) {
+    console.error(`privacy: erasing account ${userId} without its tenant (${erasable.kept})`);
+  }
+  const subject: Subject = { ...linked, tenantId: erasable.tenantId };
 
   // The account's own database first: opening it reads its catalog row, which
   // the table loop below deletes.
@@ -259,7 +307,7 @@ export async function eraseAccount(
     .insert(erasures)
     .values({
       userId,
-      tenantId: subject.tenantId,
+      tenantId: linked.tenantId,
       requestedAt: user.deactivatedAt ?? now,
       erasedAt: now,
     })
@@ -270,17 +318,36 @@ export async function eraseAccount(
       action: "data_deleted",
       actor: opts.actor ?? "system",
       subjectUserId: userId,
-      tenantId: subject.tenantId,
+      tenantId: linked.tenantId,
       target: "account",
       before: {
         deactivatedAt: user.deactivatedAt?.toISOString() ?? null,
         deletionDueAt: user.deletionDueAt?.toISOString() ?? null,
       },
-      after: { verified, remaining, deleted, anonymised, retained, tenantDatabase, erasedAt: now.toISOString() },
+      after: {
+        verified,
+        remaining,
+        deleted,
+        anonymised,
+        retained,
+        tenantDatabase,
+        tenantKept: erasable.kept,
+        erasedAt: now.toISOString(),
+      },
     },
     db,
   );
-  return { userId, deleted, anonymised, retained, tenantDatabase, remaining, verified, email: user.email };
+  return {
+    userId,
+    deleted,
+    anonymised,
+    retained,
+    tenantDatabase,
+    tenantKept: erasable.kept,
+    remaining,
+    verified,
+    email: user.email,
+  };
 }
 
 /** One row of the erasure ledger, as exported before a backup restore. */

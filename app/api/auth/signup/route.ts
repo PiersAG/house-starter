@@ -9,7 +9,11 @@ import { z } from "zod";
 import { catalogDb } from "@/lib/catalog";
 import { registerUser, RegistrationError } from "@/lib/users";
 import { startTrialForNewOwner } from "@/lib/billing/trial";
-import { ensureTenantForUser } from "@/lib/tenant/provisioner";
+import {
+  provisionNewAccount,
+  SIGNUP_FAILED_RETRY_SECONDS,
+  SIGNUP_PROVISION_FAILED_MESSAGE,
+} from "@/lib/tenant/signup-provisioning";
 import { AUTH_RATE_LIMITS, checkAuthRateLimit } from "@/lib/auth-rate-limit";
 import { verifySameOrigin } from "@/lib/csrf";
 
@@ -88,14 +92,29 @@ async function postWithoutLimit(request: Request): Promise<Response> {
 
   try {
     const user = await registerUser(catalogDb, parsed.data);
-    // ADR-023: give the new account its OWN database and register it in the
-    // catalog, so the very next sign-in can be routed. Same call the UI signup
-    // path makes; idempotent, so a retry after a partial failure converges.
-    await ensureTenantForUser(user.id, { label: user.email });
+    // ADR-023: give the new account its OWN database — all or nothing
+    // (app-business-core issue 358). Same call the UI signup path makes: it
+    // records the new tenant id first, retries Turso's passing errors,
+    // checks the database opens by the catalog's route, and on failure rolls
+    // the sign-up back. Every failure gets the one fixed message (CEO ruling
+    // 2026-11-03: never told to wait), and a retry with the same email works
+    // at once (lib/users.ts registerUser removes an unfinished sign-up).
+    const provisioned = await provisionNewAccount(user.id, user.email);
+    if (!provisioned.ok) {
+      return NextResponse.json(
+        { error: SIGNUP_PROVISION_FAILED_MESSAGE },
+        { status: 503, headers: { "Retry-After": String(SIGNUP_FAILED_RETRY_SECONDS) } },
+      );
+    }
     // Step 6: give the new owner a trial subscription so the step-5 paywall does
     // not lock them out of their own app on day one (length from the settings
-    // registry — billing.trial_period_days).
-    await startTrialForNewOwner(catalogDb, user.id);
+    // registry — billing.trial_period_days). As on the form: a trial failure
+    // must not undo a finished account; they land on /reactivate and subscribe.
+    try {
+      await startTrialForNewOwner(catalogDb, user.id);
+    } catch (trialError) {
+      console.error("signup: failed to start trial subscription", trialError);
+    }
     return NextResponse.json(
       { id: user.id, email: user.email, name: user.name },
       { status: 201 },
@@ -105,7 +124,15 @@ async function postWithoutLimit(request: Request): Promise<Response> {
       const status = error.code === "email_taken" ? 409 : 422;
       return NextResponse.json({ error: error.message }, { status });
     }
-    throw error;
+    // Anything else is unexpected — including a retry that lost to another
+    // retry at the same moment (lib/users.ts SignupRetryError): logged here,
+    // never shown (issue 358: never a crash), not a 500 and not the error's
+    // own text. The caller gets the same fixed answer as a failed set-up.
+    console.error("signup: the account could not be created", error);
+    return NextResponse.json(
+      { error: SIGNUP_PROVISION_FAILED_MESSAGE },
+      { status: 503, headers: { "Retry-After": String(SIGNUP_FAILED_RETRY_SECONDS) } },
+    );
   }
 }
 

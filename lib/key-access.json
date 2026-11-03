@@ -59,6 +59,10 @@
       "readers": ["lib/email/provider.ts"],
       "scrub": true
     },
+    "EMAIL_EVENTS_SECRET": {
+      "readers": ["app/api/email/events/route.ts", "lib/email/health.ts"],
+      "scrub": true
+    },
     "RATE_LIMIT_STORE_URL": {
       "readers": ["lib/rate-limit.ts"],
       "scrub": true

@@ -55,6 +55,7 @@ export const DATA_CLASSIFICATION: Record<string, Record<string, ColumnClass>> = 
     sessionsValidFrom: internal,
     deactivatedAt: internal,
     deletionDueAt: own,
+    signupPendingSince: internal,
   },
   revokedSessions: { id: internal, jti: internal, userId: internal, revokedAt: internal },
   // Issues 506, 519, 741: one row per signed-in device. The owner sees their own
@@ -260,4 +261,8 @@ export const DATA_CLASSIFICATION: Record<string, Record<string, ColumnClass>> = 
     expiresAt: internal,
   },
   erasures: { userId: internal, tenantId: internal, requestedAt: internal, erasedAt: internal },
+  // Issues 358, 857: databases waiting for the factory's sweep. Ids only.
+  tenantOrphans: { tenantId: internal, reason: internal, recordedAt: internal, clearedAt: internal },
+  // Issue 757: the email provider's delivery reports. No address or content.
+  emailEvents: { id: internal, receivedAt: internal, type: internal, messageId: internal, bounceKind: internal },
 };

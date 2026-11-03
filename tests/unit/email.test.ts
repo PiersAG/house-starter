@@ -23,7 +23,7 @@ import {
 } from "@/lib/email/send";
 import { resetPasswordTemplate } from "@/lib/email/templates/reset-password";
 
-const ENV_KEYS = ["EMAIL_SEND_MODE", "EMAIL_FROM"] as const;
+const ENV_KEYS = ["EMAIL_SEND_MODE", "EMAIL_FROM", "EMAIL_SENDING_DOMAIN"] as const;
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -81,7 +81,8 @@ describe("sendEmail — log mode (CI/previews never send real mail)", () => {
 describe("sendEmail — live mode (via the configured provider)", () => {
   it("sends through the provider with EMAIL_FROM and returns its id", async () => {
     process.env.EMAIL_SEND_MODE = "live";
-    process.env.EMAIL_FROM = "noreply@example.com";
+    process.env.EMAIL_FROM = "noreply@mail.example.com";
+    process.env.EMAIL_SENDING_DOMAIN = "mail.example.com";
     sendSpy.mockResolvedValue({ id: "re_123" });
 
     const result = await sendEmail("user@example.com", resetPasswordTemplate, {
@@ -91,7 +92,7 @@ describe("sendEmail — live mode (via the configured provider)", () => {
     expect(sendSpy).toHaveBeenCalledTimes(1);
     expect(sendSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        from: "noreply@example.com",
+        from: "noreply@mail.example.com",
         to: "user@example.com",
         subject: "Reset your password",
       }),
@@ -114,6 +115,31 @@ describe("sendEmail — live mode (via the configured provider)", () => {
         resetUrl: "https://app.example.com/reset-password?token=xyz",
       }),
     ).rejects.toThrow(/EMAIL_FROM/);
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  // app-business-core issue 757: transactional mail only from its own subdomain.
+  it("refuses to send from the bare domain marketing mail would use", async () => {
+    process.env.EMAIL_SEND_MODE = "live";
+    process.env.EMAIL_FROM = "noreply@example.com";
+    process.env.EMAIL_SENDING_DOMAIN = "example.com";
+    await expect(
+      sendEmail("user@example.com", resetPasswordTemplate, {
+        resetUrl: "https://app.example.com/reset-password?token=xyz",
+      }),
+    ).rejects.toThrow(/bare domain/);
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a sender outside the sending domain", async () => {
+    process.env.EMAIL_SEND_MODE = "live";
+    process.env.EMAIL_FROM = "noreply@example.com";
+    process.env.EMAIL_SENDING_DOMAIN = "mail.example.com";
+    await expect(
+      sendEmail("user@example.com", resetPasswordTemplate, {
+        resetUrl: "https://app.example.com/reset-password?token=xyz",
+      }),
+    ).rejects.toThrow(/does not send from EMAIL_SENDING_DOMAIN/);
     expect(sendSpy).not.toHaveBeenCalled();
   });
 });
