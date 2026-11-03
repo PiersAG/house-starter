@@ -57,10 +57,27 @@ vi.mock("@/lib/catalog", () => ({
   },
   getCatalogDb: () => holder.db,
 }));
-vi.mock("@/lib/rate-limit", () => ({
-  getRateLimiter: () => ({ hit: async () => ({ allowed: true }) }),
-  clientKeyFromHeaders: () => "test-key",
-}));
+// A REAL counter store (the in-memory one), so both limit layers on the signup
+// path actually run: the route limit (checkRouteLimit, which needs the whole
+// counter interface — add / holdUntil / heldUntil) and the per-attempt bucket
+// (hit). The old double offered only `hit`, so every test here logged
+// "store.heldUntil is not a function" and the route layer never ran (Dispatch
+// AH). `store.broken` swaps in a store whose every call fails, for the outage
+// test at the bottom.
+const store = vi.hoisted(() => ({ broken: false }));
+vi.mock("@/lib/rate-limit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/rate-limit")>();
+  const healthy = new actual.InMemoryRateLimitStore();
+  const down = async () => {
+    throw new Error("store down");
+  };
+  const broken = { hit: down, add: down, holdUntil: down, heldUntil: down };
+  return {
+    ...actual,
+    getRateLimiter: () => (store.broken ? broken : healthy),
+    clientKeyFromHeaders: () => "test-key",
+  };
+});
 // Mock @/lib/auth so importing the signup server action does not load auth.config
 // (which throws at import without AUTH_SECRET); signIn resolves without redirecting.
 vi.mock("@/lib/auth", () => ({ signIn: vi.fn(async () => {}) }));
@@ -221,5 +238,52 @@ describe("signupAction (the UI signup path) — new owner is trialed", () => {
     const sub = await getSubscriptionByUserId(db, user!.id);
     expect(sub?.trialEndsAt).toBeTruthy();
     expect((await requireActiveSubscription(db, user!.id)).allowed).toBe(true);
+  });
+});
+
+// Dispatch AH (rule 13, "every stop gets a prevention"). ADR-015: sign-up fails
+// CLOSED. If the rate-limit store errors, neither signup surface may create an
+// account — a store outage must never mean unlimited sign-ups (each one creates
+// a real hosted database).
+describe("signup with the rate-limit store down — fails closed, creates nothing", () => {
+  let client: Client;
+  let db: AppDatabase;
+
+  beforeEach(async () => {
+    client = createMigrationDatabase(":memory:");
+    await runMigrations(client);
+    db = drizzle(client) as AppDatabase;
+    holder.db = db;
+    store.broken = true;
+  });
+  afterEach(() => {
+    store.broken = false;
+    client.close();
+    vi.clearAllMocks();
+  });
+
+  it("POST /api/auth/signup is refused (503) and no account exists", async () => {
+    for (let i = 0; i < 25; i += 1) {
+      const res = await signupRoute(
+        new Request("http://test/api/auth/signup", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email: `flood${i}@owner.test`, password: "TestPass123!secure" }),
+        }),
+      );
+      expect(res.status).toBe(503);
+    }
+    expect(await db.select().from(usersTable).all()).toHaveLength(0);
+  });
+
+  it("signupAction returns an error and no account exists", async () => {
+    for (let i = 0; i < 25; i += 1) {
+      const fd = new FormData();
+      fd.set("email", `flood-action${i}@owner.test`);
+      fd.set("password", "TestPass123!secure");
+      const out = await signupAction(null, fd);
+      expect(out?.error).toBeTruthy();
+    }
+    expect(await db.select().from(usersTable).all()).toHaveLength(0);
   });
 });

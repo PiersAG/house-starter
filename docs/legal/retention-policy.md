@@ -15,6 +15,7 @@ Produced from config/personal-data.ts. The retention job (lib/privacy/retention-
 - tenants (Your account details): While your account is open. On account deletion: deleted.
 - users (Your account details): While your account is open, then 30 days after you ask us to delete it. On account deletion: deleted.
 - revokedSessions (Sign-in security records): 90 days. Rows older than 90 days are deleted. On account deletion: deleted.
+- userSessions (Sign-in security records): 90 days after the session ends. Rows older than 90 days are deleted. On account deletion: deleted.
 - subscriptions (Your subscription): While your account is open. On account deletion: deleted.
 - stripeEvents (Payment service records): 90 days. Rows older than 90 days are deleted. On account deletion: nothing to erase.
 - billingInvoices (Your invoices): While your account is open; after it is deleted, the amounts and dates for 6 years. On account deletion: only stripeInvoiceId, status, amountPaid, amountDue, currency, paidAt kept for 6 years (UK tax records: 6 years (HMRC record-keeping)), then deleted.

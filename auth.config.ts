@@ -2,9 +2,7 @@ import type { NextAuthConfig } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import { encode, decode } from "@auth/core/jwt";
 import { logAuthLibraryError } from "@/lib/session-token-log";
-
-const DAY_SECONDS = 24 * 60 * 60;
-const THIRTY_DAY_SECONDS = 30 * DAY_SECONDS;
+import { sessionMaxAge } from "@/lib/session/lifetime";
 
 /**
  * Read the session-signing secret from the environment. Standing rule: no
@@ -46,7 +44,7 @@ export const authConfig: NextAuthConfig = {
     encode: async (params) => {
       const maxAge =
         (params.token as { maxAge?: number } | undefined)?.maxAge ??
-        THIRTY_DAY_SECONDS;
+        sessionMaxAge(true);
       return encode({ ...params, maxAge });
     },
     decode,
@@ -74,7 +72,8 @@ export const authConfig: NextAuthConfig = {
         // Node callback — the two must agree or the claim flickers by runtime.
         token.mfa = (user as { mfa?: JWT["mfa"] }).mfa ?? "none";
         token.rememberMe = (user as { rememberMe?: boolean }).rememberMe ?? false;
-        token.maxAge = token.rememberMe ? THIRTY_DAY_SECONDS : DAY_SECONDS;
+        // The session's life comes from the one session setting (#559).
+        token.maxAge = sessionMaxAge(token.rememberMe === true);
       }
       return token;
     },

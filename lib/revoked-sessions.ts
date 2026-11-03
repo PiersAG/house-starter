@@ -27,14 +27,17 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import type { JWT } from "next-auth/jwt";
 import type { AppDatabase } from "@/lib/users";
-import { revokedSessions, users } from "@/lib/schema";
+import { revokedSessions, userSessions, users } from "@/lib/schema";
 import { logSecurityEvent } from "@/lib/security-log";
+import { renewAfterSeconds } from "@/lib/session/lifetime";
 
 /**
  * How long (seconds) between revocation checks. After each check the window
- * resets; ordinary page loads within the window incur no DB hit.
+ * resets; ordinary page loads within the window incur no DB hit. Set by the one
+ * session setting (config/sessions.ts SESSION_POLICY, CEO decision #559): 10
+ * minutes under today's ruling, 0 — every server request — under "strict".
  */
-export const RENEW_AFTER_SECONDS = 10 * 60; // 10 minutes
+export const RENEW_AFTER_SECONDS = renewAfterSeconds();
 
 /**
  * Write a revocation record for the given JWT session id.
@@ -159,6 +162,8 @@ export interface RoleRefresh {
  * @param checkUserCutoff  Async function: true when the session signed in
  *                   before the user's password-reset cutoff.
  * @param roleRefresh  Re-read the role and revoke a replaced session id.
+ * @param sessionCheck  The session record check (lib/session/hooks.ts); "end"
+ *                   refuses the session.
  */
 export async function handleTokenRenewal(
   token: JWT,
@@ -166,6 +171,7 @@ export async function handleTokenRenewal(
   nowSeconds: number,
   checkUserCutoff?: (userId: string, authTime: number | undefined) => Promise<boolean>,
   roleRefresh?: RoleRefresh,
+  sessionCheck?: (token: JWT, nowSeconds: number) => Promise<"ok" | "end">,
 ): Promise<JWT | null> {
   const sessionId = token.sessionId as string | undefined;
   const renewAfter = token.renewAfter as number | undefined;
@@ -227,6 +233,24 @@ export async function handleTokenRenewal(
     if (beforeCutoff) {
       return null; // Signed in before the user's last password reset.
     }
+  }
+
+  // The session record (lib/session/hooks.ts, #506 / #519 / #741): an ended
+  // session (a removed device, the device cap, an email sign-out), impossible
+  // travel or a risk score past the end mark is refused. Same fail-closed rule.
+  if (sessionCheck) {
+    let verdict: "ok" | "end";
+    try {
+      verdict = await sessionCheck(token, nowSeconds);
+    } catch (error) {
+      console.error(
+        "session renewal: session record check failed — invalidating session " +
+          "(user is sent to /login, never a 500)",
+        error,
+      );
+      return null;
+    }
+    if (verdict !== "ok") return null;
   }
 
   if (roleRefresh) {
@@ -301,6 +325,16 @@ export async function recordSignOut(
   }
 
   const userId = token.id ?? token.sub ?? "";
+  try {
+    // the device list shows it ended (lib/session/records.ts)
+    await db
+      .update(userSessions)
+      .set({ endedAt: new Date(), endReason: "signed_out" })
+      .where(eq(userSessions.id, jti))
+      .run();
+  } catch (error) {
+    console.warn("sign-out: could not mark the session record ended", error);
+  }
   try {
     await revokeSession(db, jti, userId);
   } catch (error) {

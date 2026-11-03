@@ -8,6 +8,8 @@ import { headers } from "next/headers";
 import { mfaSignInReason, submittedCode } from "@/lib/mfa/sign-in";
 import { z } from "zod";
 import { emailField, parseForm, passwordField, textField } from "@/lib/validation/input";
+import { safeReturnPath } from "@/lib/session/return-path";
+import { ensureDeviceCookie } from "@/lib/session/context";
 
 type LoginState = { error: string; mfaRequired?: boolean } | null;
 
@@ -28,6 +30,9 @@ const loginForm = z.object({
   password: passwordField,
   rememberMe: z.literal("on").optional(),
   code: textField({ max: 32 }).optional(),
+  // The page to return to after signing in (issue 525) — any value is accepted
+  // here and reduced to a safe local path below; an off-site one is dropped.
+  callbackUrl: z.string().max(1024).optional(),
 });
 
 // The second factor (SEC.15) is checked in lib/auth.ts::authorize, on the path
@@ -58,14 +63,18 @@ export async function loginAction(
       mfaRequired: codeTyped(formData),
     };
   }
-  const { email, password, rememberMe, code } = form.data;
+  const { email, password, rememberMe, code, callbackUrl } = form.data;
+  // This browser's device id, for the sign-in risk checks and the device list
+  // (issues 519 and 506). A browser that never signed in here gets one now.
+  await ensureDeviceCookie();
   try {
     await signIn("credentials", {
       email,
       password,
       rememberMe,
       code: code ?? "",
-      redirectTo: "/dashboard",
+      // Back to the page the user was on (issue 525), never off this app (issue 514).
+      redirectTo: safeReturnPath(callbackUrl),
     });
     return null;
   } catch (error) {

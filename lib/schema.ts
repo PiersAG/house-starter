@@ -35,6 +35,7 @@ import {
   sqliteTable,
   text,
   integer,
+  real,
   primaryKey,
 } from "drizzle-orm/sqlite-core";
 
@@ -168,6 +169,39 @@ export const revokedSessions = sqliteTable("revoked_sessions", {
     .notNull()
     .default(sql`(unixepoch())`),
 });
+
+/**
+ * CATALOG. One row per signed-in session (app-business-core issues 506, 519, 741;
+ * lib/session/records.ts). Keyed by the JWT session id. Written when a session
+ * starts and read where it renews: the cap on devices per account (the oldest
+ * is ended), the device list on the security page, the new-device alert, the
+ * impossible-travel end and the session's risk score. `deviceId` is the random
+ * id the sign-in browser keeps in a cookie; `country`, `latitude` and
+ * `longitude` are the hosting platform's coarse reading of the request address
+ * (never the address itself). `endedAt` set = the session is over.
+ */
+export const userSessions = sqliteTable("user_sessions", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  deviceId: text("device_id"),
+  deviceLabel: text("device_label"),
+  country: text("country"),
+  latitude: real("latitude"),
+  longitude: real("longitude"),
+  startedAt: integer("started_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  lastSeenAt: integer("last_seen_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  riskScore: integer("risk_score").notNull().default(0),
+  endedAt: integer("ended_at", { mode: "timestamp" }),
+  endReason: text("end_reason"),
+});
+
+export type UserSession = typeof userSessions.$inferSelect;
 
 /**
  * Billing subscription state, one row per user (userId is unique). Written by

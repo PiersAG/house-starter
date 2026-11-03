@@ -20,9 +20,10 @@
 // change.
 
 import type { SubprocessorId } from "@/config/subprocessors";
-import type { DataMapEntry, OutsideLocation } from "@/config/personal-data-types";
+import type { DataMapEntry } from "@/config/personal-data-types";
 
 export * from "@/config/personal-data-types";
+export { OUTSIDE_LOCATIONS } from "@/config/outside-locations";
 
 const HOST: SubprocessorId[] = ["vercel", "turso"];
 
@@ -68,6 +69,28 @@ export const PERSONAL_DATA_MAP: Record<string, DataMapEntry> = {
     ageColumn: "revokedAt",
     onErasure: { rule: "delete" },
     notPersonal: { jti: "A random session id." },
+  },
+  userSessions: {
+    plane: "catalog",
+    personal: ["userId", "deviceId", "deviceLabel", "country", "latitude", "longitude", "startedAt", "lastSeenAt"],
+    linkedBy: "userId",
+    category: "Sign-in security records",
+    holds:
+      "each signed-in device: a random id your browser keeps, the kind of browser and device, the country and rough area your connection came from, and when the session started and was last used",
+    purpose:
+      "To show you where you are signed in and let you sign a device out, to limit how many devices can be signed in, to warn you of a sign-in from a new device and country, and to end a session used from two places no one could travel between.",
+    lawfulBasis: "legitimate_interests",
+    processors: HOST,
+    retention: "90 days after the session ends.",
+    ageLimitDays: 90,
+    ageColumn: "lastSeenAt",
+    onErasure: { rule: "delete" },
+    notPersonal: {
+      id: "A random session id.",
+      riskScore: "A number worked out from the other fields.",
+      endedAt: "When the session ended.",
+      endReason: "Why the session ended, in words from a fixed list.",
+    },
   },
   subscriptions: {
     plane: "catalog",
@@ -381,48 +404,6 @@ export const PERSONAL_DATA_MAP: Record<string, DataMapEntry> = {
     onErasure: { rule: "tenant_database" },
   },
 };
-
-/** Everywhere else personal data goes (Matt Murphy #203: "backups, analytics and logs"). */
-export const OUTSIDE_LOCATIONS: readonly OutsideLocation[] = [
-  {
-    id: "rate-limit-store",
-    name: "Rate-limit counters",
-    what: "Your IP address and account id, as request counters.",
-    processors: ["upstash"],
-    deletion: "Each counter expires on its own within 24 hours; nothing to delete.",
-  },
-  {
-    id: "host-logs",
-    name: "Hosting request logs",
-    what: "Your IP address, the pages you open and when.",
-    processors: ["vercel"],
-    deletion: "Expire on their own within the hosting plan's log window.",
-  },
-  {
-    id: "backups",
-    name: "Database backups (point-in-time restore, and a nightly copy kept outside the database provider)",
-    what: "A copy of the databases, for recovery after a fault.",
-    processors: ["turso", "aws"],
-    deletion:
-      "Your own database's backups are deleted with it. The shared account database's backups age out within its restore window. The nightly outside copy is locked for 30 days and then deleted automatically, so it holds no erased account for longer than that. If any backup is ever restored, every account in the erasure ledger is deleted again before the app reopens (`npm run privacy:replay-erasures`, scripts/erasure-ledger.ts).",
-  },
-  {
-    id: "analytics",
-    name: "Analytics",
-    what: "None: the app runs no analytics and loads no outside script (config/third-party.ts is empty).",
-    processors: [],
-    deletion:
-      "Not applicable. An app that adds an analytics service lists it in config/third-party.ts with the personal data it reads; it then loads only after you agree, and its deletion route is recorded here.",
-  },
-  {
-    id: "email",
-    name: "Sent emails",
-    what: "Your email address and the messages the app sends you.",
-    processors: ["email"],
-    deletion:
-      "Resend keeps a record of each message for its plan's history window, then deletes it; the app keeps only delivery reports with no address or message (email_events, 90 days).",
-  },
-];
 
 /** The account's grace period between asking to delete and the data being erased. */
 export const DELETION_GRACE_DAYS = 30;

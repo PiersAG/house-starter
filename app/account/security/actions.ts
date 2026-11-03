@@ -21,8 +21,15 @@ import {
 } from "@/lib/account-security";
 import { z } from "zod";
 import { newPasswordField, parseForm, passwordField } from "@/lib/validation/input";
+import { endSessionRecord, getSessionRecord } from "@/lib/session/records";
+import { owns } from "@/lib/ownership";
+import { accessMessage, checkSensitiveAccess } from "@/lib/session/guard";
+import { logSecurityEvent } from "@/lib/security-log";
+import { revalidatePath } from "next/cache";
 
-export type ChangePasswordState = { error?: string } | null;
+const SECURITY_PAGE = "/account/security";
+
+export type ChangePasswordState = { error?: string; loginPath?: string } | null;
 
 // Checked on the server (issue 442): both present, neither over-long, the new one
 // long enough.
@@ -53,6 +60,13 @@ export async function changePasswordAction(
   if (!userId) return { error: "Your session has ended. Sign in again." };
   if (await guardRouteAction("account.write", { accountId: userId })) return { error: ROUTE_LIMIT_MESSAGE };
 
+  // Context-aware access (issue 741): changing how the account signs in is a
+  // sensitive action — an unrecognised device at an unusual hour, a suspect
+  // connection or a risky session must sign in again first.
+  const access = await checkSensitiveAccess(catalogDb, session, "account.change-password", SECURITY_PAGE);
+  const refused = accessMessage(access);
+  if (refused) return { error: refused, loginPath: access.loginPath };
+
   // The current-password check is a password guess, so it is limited like one:
   // per client AND per account (the reset bucket — same kind of request).
   for (const rate of [
@@ -75,4 +89,33 @@ export async function changePasswordAction(
   // signOut redirects (throws NEXT_REDIRECT), so it stays outside the try.
   await signOut({ redirectTo: "/login?password=changed" });
   return null;
+}
+
+// Sign one other device out (issue 506: the device list; issue 519: a sign-in the
+// user does not recognise). Only a session of this account can be ended.
+export async function endDeviceAction(formData: FormData): Promise<void> {
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (!userId) {
+    await signOut({ redirectTo: "/login" });
+    return;
+  }
+  if (await guardRouteAction("account.write", { accountId: userId })) return;
+  const form = parseForm(z.object({ sessionId: z.string().min(8).max(64) }), formData);
+  if (!form.ok) return;
+  // Only a session of this account (lib/ownership.ts; endSessionRecord checks again).
+  const record = await getSessionRecord(catalogDb, form.data.sessionId);
+  if (!record || record.userId !== userId || !owns(session, { ownerId: record.userId })) return;
+  if (await endSessionRecord(catalogDb, { userId, sessionId: record.id, reason: "ended_by_user" })) {
+    logSecurityEvent("session_ended", { userId, reason: "ended_by_user" });
+  }
+  revalidatePath(SECURITY_PAGE);
+}
+
+// After two-step sign-in is switched on (issue 377), this session still carries
+// the "not set up" mark; signing in again with the code replaces it.
+export async function finishTwoStepAction(): Promise<void> {
+  const session = await auth();
+  if (session?.user?.id && (await guardRouteAction("account.write", { accountId: session.user.id }))) return;
+  await signOut({ redirectTo: "/login?twoStep=on" });
 }

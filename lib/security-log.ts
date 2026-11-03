@@ -28,7 +28,16 @@ export type SecurityEvent =
   | "abuse_throttled"
   | "abuse_banned"
   | "attack_request_refused"
-  | "rate_limit_store_error";
+  | "rate_limit_store_error"
+  // Sessions, sign-in risk and context-aware access (lib/session/*, app-business-core
+  // #506, #519, #741)
+  | "session_started"
+  | "session_ended"
+  | "sign_in_unfamiliar"
+  | "session_impossible_travel"
+  | "session_risk_scored"
+  | "access_stepped_up"
+  | "access_denied";
 
 export type SecurityFieldValue = string | number | boolean | null;
 

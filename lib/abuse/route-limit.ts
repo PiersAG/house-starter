@@ -22,11 +22,15 @@
 // client guessing passwords slowly under every limit is still banned in time.
 //
 // STORE OUTAGE: the counters live in the shared store (lib/rate-limit.ts). If
-// the store is CONFIGURED but a call to it fails at run time, the route is
-// served and the failure logged — a store blip must not take every page of the
-// app down, which would hand an attacker the outage they were after. The
-// sign-in limits (lib/auth-rate-limit.ts) keep their own fail-closed rule, and
-// a store that is NOT configured still refuses to start (createRateLimitStore).
+// the store is CONFIGURED but a call to it fails at run time, an ordinary route
+// is served and the failure logged — a store blip must not take every page of
+// the app down, which would hand an attacker the outage they were after. A
+// route group marked `failClosed` (sign-in, sign-up, password reset, the second
+// sign-in step) is REFUSED instead, with a 503 (ADR-015: the sign-in surfaces
+// fail closed). Those routes also keep their own per-attempt limits
+// (lib/auth-rate-limit.ts), which throw on a store error; this makes the outer
+// budget agree with them rather than relying on the inner one alone. A store
+// that is NOT configured still refuses to start (createRateLimitStore).
 //
 // Events go to the security log (lib/security-log.ts) with the client address,
 // which the DDoS playbook (app-business-core wiki/policies/ddos-playbook.md)
@@ -66,8 +70,8 @@ export const SAFE_TEST_FACTOR = 10;
 
 export type RouteLimitRefusal = {
   allowed: false;
-  reason: "banned" | "attack" | "probe" | "limit";
-  status: 403 | 429;
+  reason: "banned" | "attack" | "probe" | "limit" | "unavailable";
+  status: 403 | 429 | 503;
   retryAfterSeconds: number;
 };
 export type RouteLimitDecision = { allowed: true } | RouteLimitRefusal;
@@ -172,6 +176,31 @@ export async function recordBehaviour(
   }
 }
 
+/**
+ * The connection's standing with the escalation — the "IP reputation" attribute
+ * of the access policy (lib/session/policy.ts, app-business-core #741): "bad"
+ * while banned, "suspect" once throttled (unusual access volume), else "good".
+ * Never throws: an unreadable store reads as "suspect", which asks for a fresh
+ * sign-in on a sensitive action rather than refusing it or waving it through.
+ */
+export async function clientReputation(
+  headers: HeadersLike,
+  deps: RouteLimitDeps = {},
+): Promise<"good" | "suspect" | "bad"> {
+  try {
+    const store = deps.store ?? getRateLimiter();
+    const client = clientKeyFromHeaders(headers);
+    const [bannedUntil, strikes] = await Promise.all([
+      store.heldUntil(BAN(client)),
+      store.add(STRIKES(client), 0, ESCALATION.strikeWindowSeconds),
+    ]);
+    if (bannedUntil > 0) return "bad";
+    return strikes >= ESCALATION.throttleAt * relaxOf(deps) ? "suspect" : "good";
+  } catch {
+    return "suspect";
+  }
+}
+
 function splitUrl(url: string): { path: string; query: string } {
   const rest = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, "") || "/";
   const i = rest.indexOf("?");
@@ -248,7 +277,14 @@ export async function checkRouteLimit(input: RouteLimitInput, deps: RouteLimitDe
     }
     return { allowed: true };
   } catch (e) {
-    log("rate_limit_store_error", { route: input.route, message: e instanceof Error ? e.message : "unknown" });
+    const failClosed = config.failClosed === true;
+    log("rate_limit_store_error", {
+      route: input.route,
+      message: e instanceof Error ? e.message : "unknown",
+      outcome: failClosed ? "refused" : "served",
+    });
+    // ADR-015: a sign-in surface never runs unlimited because the store failed.
+    if (failClosed) return { allowed: false, reason: "unavailable", status: 503, retryAfterSeconds: 30 };
     return { allowed: true };
   }
 }
@@ -260,7 +296,9 @@ export function refusalResponse(d: RouteLimitRefusal): Response {
       ? "This request was refused."
       : d.reason === "banned"
         ? "Too many unusual requests came from your connection. Please try again later."
-        : "Too many requests. Please wait a moment and try again.";
+        : d.reason === "unavailable"
+          ? "This is briefly unavailable. Please try again in a minute."
+          : "Too many requests. Please wait a moment and try again.";
   const h = new Headers({ "Content-Type": "application/json", "Cache-Control": "no-store" });
   if (d.retryAfterSeconds > 0) h.set("Retry-After", String(d.retryAfterSeconds));
   return new Response(JSON.stringify({ error }), { status: d.status, headers: h });

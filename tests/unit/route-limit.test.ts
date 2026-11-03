@@ -257,6 +257,43 @@ describe("failure modes", () => {
     expect(logged.map((l) => l.event)).toContain("rate_limit_store_error");
   });
 
+  // Dispatch AH (rule 13): the sign-in surfaces fail CLOSED on a store error
+  // (ADR-015). A store outage must never let a sign-up, a sign-in, a reset or a
+  // second-step code through with no limit.
+  it("every auth.* route group is marked fail-closed", () => {
+    const authIds = Object.keys(ROUTE_LIMITS).filter((id) => id.startsWith("auth."));
+    expect(authIds.sort()).toEqual(["auth.mfa", "auth.password-reset", "auth.signin", "auth.signup"]);
+    for (const id of authIds) {
+      expect((ROUTE_LIMITS as Record<string, { failClosed?: boolean }>)[id].failClosed, id).toBe(true);
+    }
+  });
+
+  it.each(["auth.signup", "auth.signin", "auth.password-reset", "auth.mfa"] as const)(
+    "a store failure on %s REFUSES the request (503) and logs it as refused",
+    async (route) => {
+      for (const failing of ["add", "heldUntil"] as const) {
+        logged.length = 0;
+        const broken = new InMemoryRateLimitStore(() => now);
+        broken[failing] = async () => { throw new Error("store down"); };
+        const d = await checkRouteLimit({ route, headers: ip(32), accountId: "acct-1" }, deps({ store: broken }));
+        expect(d).toMatchObject({ allowed: false, reason: "unavailable", status: 503 });
+        const e = logged.find((l) => l.event === "rate_limit_store_error");
+        expect(e?.fields).toMatchObject({ route, outcome: "refused" });
+      }
+    },
+  );
+
+  it("a fail-closed refusal answers 503 with a plain message and Retry-After", async () => {
+    const broken = new InMemoryRateLimitStore(() => now);
+    broken.add = async () => { throw new Error("store down"); };
+    const d = await checkRouteLimit({ route: "auth.signup", headers: ip(33) }, deps({ store: broken }));
+    if (d.allowed) throw new Error("expected a refusal");
+    const res = refusalResponse(d);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBe("30");
+    expect((await res.json()).error).toMatch(/briefly unavailable/);
+  });
+
   it("recordBehaviour never throws", async () => {
     const broken = new InMemoryRateLimitStore(() => now);
     broken.add = async () => { throw new Error("store down"); };

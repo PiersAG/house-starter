@@ -127,6 +127,10 @@ export const ROUTE_EXCLUSIONS: { prefix: string; reason: string }[] = [
     reason: "public by design — reached from an emailed token, not a session",
   },
   {
+    prefix: "/sessions/revoke",
+    reason: "public by design — reached from the new sign-in email's signed link, which can only end the one session it names (app-business-core issue 519)",
+  },
+  {
     prefix: "/reactivate",
     reason: "public by design — reached by a lapsed account before it has a usable session",
   },

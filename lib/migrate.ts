@@ -37,6 +37,7 @@ import { sqlColumnDef, sqlIdent } from "@/lib/sql-ident";
 import { seedSettingDefinitions } from "@/lib/settings/seed";
 import { seedOwnerAccount } from "@/lib/owner-seed";
 import type { AppDatabase } from "@/lib/users";
+import { SESSION_CATALOG_SQL } from "@/lib/session/sql";
 import { OPERATIONS_CATALOG_SQL } from "@/lib/migrations/operations-sql";
 
 /**
@@ -70,15 +71,7 @@ CREATE TABLE IF NOT EXISTS users (
   signup_pending_since INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS revoked_sessions (
-  id TEXT PRIMARY KEY NOT NULL,
-  jti TEXT NOT NULL UNIQUE,
-  user_id TEXT NOT NULL REFERENCES users(id),
-  revoked_at INTEGER NOT NULL DEFAULT (unixepoch())
-);
-
-CREATE INDEX IF NOT EXISTS revoked_sessions_jti_idx ON revoked_sessions(jti);
-
+${SESSION_CATALOG_SQL}
 CREATE TABLE IF NOT EXISTS subscriptions (
   id TEXT PRIMARY KEY NOT NULL,
   user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
