@@ -55,6 +55,7 @@ export const DATA_CLASSIFICATION: Record<string, Record<string, ColumnClass>> = 
     sessionsValidFrom: internal,
     deactivatedAt: internal,
     deletionDueAt: own,
+    signupPendingSince: internal,
   },
   revokedSessions: { id: internal, jti: internal, userId: internal, revokedAt: internal },
   subscriptions: {

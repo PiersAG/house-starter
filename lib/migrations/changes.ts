@@ -308,7 +308,7 @@ export const SCHEMA_CHANGES: SchemaChange[] = [
     plane: "catalog",
     kind: "expand",
     summary:
-      "Hosting and accounts (Dispatch AG, house-starter #154; app-business-core #358, #757, #857): customer databases waiting for the factory's sweep, and the email provider's delivery reports.",
+      "Hosting and accounts (Dispatch AG, house-starter #154; app-business-core #358, #757, #857): customer databases waiting for the factory's sweep, the email provider's delivery reports, and new accounts held switched off until their database is ready.",
     adds: [
       "email_events",
       "email_events.bounce_kind",
@@ -322,8 +322,9 @@ export const SCHEMA_CHANGES: SchemaChange[] = [
       "tenant_orphans.reason",
       "tenant_orphans.recorded_at",
       "tenant_orphans.tenant_id",
+      "users.signup_pending_since",
     ],
     reverse:
-      "DROP INDEX IF EXISTS email_events_received_idx;\nDROP TABLE IF EXISTS email_events;\nDROP TABLE IF EXISTS tenant_orphans;",
+      "DROP INDEX IF EXISTS email_events_received_idx;\nDROP TABLE IF EXISTS email_events;\nDROP TABLE IF EXISTS tenant_orphans;\nALTER TABLE users DROP COLUMN signup_pending_since;",
   },
 ];

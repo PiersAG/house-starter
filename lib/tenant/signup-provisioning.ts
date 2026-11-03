@@ -11,17 +11,30 @@
 //   connect                   — the new database is opened through the catalog's
 //                               route, exactly as the first signed-in page will
 //                               open it, and its own tenant row is read back;
-//   never half-created        — any failure rolls the whole sign-up back: the
-//                               account is deleted, so the address is free to
-//                               sign up again, and the registration and the
-//                               database this sign-up made are deleted, or the
-//                               database is listed in tenant_orphans for the
-//                               factory's sweep when the delete is refused;
+//   never half-created        — the account is created SWITCHED OFF
+//                               (lib/users.ts registerUser: sign-in refuses it)
+//                               and switched on here only after its tenant and
+//                               database are fully provisioned and open, so no
+//                               failure, not even of every rollback step, leaves
+//                               a usable account without a database. Any failure
+//                               rolls the whole sign-up back: the account is
+//                               deleted, so the address is free to sign up
+//                               again, and the registration and the database
+//                               this sign-up made are deleted, or the database
+//                               is listed in tenant_orphans for the factory's
+//                               sweep when the delete is refused;
+//   never loses a database    — when the database cannot be listed, the
+//                               account is NOT deleted: it is kept, switched
+//                               off and due for erasure, so its link still
+//                               names the database and the retention job
+//                               erases the two together;
 //   only its own              — the rollback touches a tenant row or database
 //                               only when it is the id THIS sign-up minted and
 //                               linked; an account that already held a tenant
 //                               (an invited member, a re-link) is never rolled
-//                               back into someone else's workspace;
+//                               back into someone else's workspace — when it is
+//                               switched on and its workspace opens, it is
+//                               already set up and the person is signed in;
 //   never a crash             — the caller gets { ok: false } and shows a plain
 //                               message; nothing is thrown at it, even when a
 //                               rollback step itself fails (each is guarded and
@@ -29,7 +42,7 @@
 
 import "server-only";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, or } from "drizzle-orm";
 import { getCatalogDb } from "@/lib/catalog";
 import { getTenancyMode, resolveTenant } from "@/lib/db";
 import { logEvent } from "@/lib/observability/log";
@@ -39,14 +52,27 @@ import { clearTenantOrphan, recordTenantOrphan } from "@/lib/tenant/orphans";
 import type { AppDatabase } from "@/lib/users";
 
 export type SignupProvisionResult =
-  | { ok: true; tenantId: string }
+  | {
+      ok: true;
+      tenantId: string;
+      /** The account already had a working workspace (an invited member): nothing was made. */
+      alreadySetUp?: true;
+    }
   | {
       ok: false;
-      /** What the rollback did with a database that had been made. */
-      database: "none" | "removed" | "listed-for-sweep";
+      /**
+       * What the rollback did with a database that had been made:
+       * "kept-with-account" — it could not be listed, so the account was kept,
+       * switched off and due for erasure, its link naming the database.
+       */
+      database: "none" | "removed" | "listed-for-sweep" | "kept-with-account";
     };
 
-/** What a customer reads when it fails. The account does not exist afterwards. */
+/**
+ * What a customer reads when it fails. The account is gone afterwards, or (when
+ * its database could not be listed) kept switched off until the retention job
+ * erases it: either way nothing usable was saved.
+ */
 export const SIGNUP_PROVISION_FAILED_MESSAGE =
   "We could not finish setting up your account, so nothing was saved. " +
   "Please try again in a minute.";
@@ -84,6 +110,7 @@ export async function verifyTenantRoute(tenantId: string): Promise<void> {
 /** The rollback steps, by name, as they appear in the log when one fails. */
 export type RollbackStep =
   | "read-link"
+  | "keep-account"
   | "record-orphan"
   | "delete-account"
   | "deactivate-account"
@@ -114,15 +141,22 @@ export async function provisionNewAccount(
     // failure at any later step — even after Turso has made the database —
     // leaves a rollback that knows which database to delete. ensureTenantForUser
     // sees a linked id with no registration and provisions under that same id.
+    //
+    // Only an account that is switched on or is a sign-up being set up: an
+    // account its owner closed is never given a workspace or switched back on.
     const link = await catalog
       .update(users)
       .set({ tenantId: minted })
-      .where(and(eq(users.id, userId), isNull(users.tenantId)))
+      .where(and(eq(users.id, userId), isNull(users.tenantId), switchable()))
       .run();
     if (link.rowsAffected !== 1) {
       // No such account, or it already holds a tenant (an invited member, a
       // re-link): not a fresh sign-up. Nothing was made, so nothing is undone —
       // above all not the tenant the account already belongs to.
+      if (link.rowsAffected === 0) {
+        const existing = await alreadySetUp(catalog, userId, verifyRoute);
+        if (existing) return { ok: true, tenantId: existing, alreadySetUp: true };
+      }
       const reason = link.rowsAffected === 0 ? "account-missing-or-already-linked" : "link-changed-several-rows";
       console.error(`signup: the account's database was not set up (${reason}); nothing rolled back`);
       try {
@@ -138,6 +172,16 @@ export async function provisionNewAccount(
       throw new Error("ensureTenantForUser answered a different tenant than the one this sign-up linked");
     }
     await verifyRoute(tenantId);
+    // Only now, with its tenant registered and its database open, is the
+    // account switched on. Until this row changes, sign-in refuses it.
+    const on = await catalog
+      .update(users)
+      .set({ signupPendingSince: null, deactivatedAt: null, deletionDueAt: null })
+      .where(and(eq(users.id, userId), eq(users.tenantId, minted), switchable()))
+      .run();
+    if (on.rowsAffected !== 1) {
+      throw new Error("the account could not be switched on after its database was set up");
+    }
     return { ok: true, tenantId };
   } catch (error) {
     console.error("signup: the account's database could not be set up; rolling the sign-up back", error);
@@ -159,6 +203,45 @@ export async function provisionNewAccount(
   }
 }
 
+/** A row this sign-up may link and switch on: switched on already, or a sign-up being set up — never a closed account. */
+function switchable() {
+  return or(isNull(users.deactivatedAt), isNotNull(users.signupPendingSince));
+}
+
+/**
+ * The account already belongs to a working workspace — switched on (not a
+ * sign-up being set up, not closed), its tenant registered, and its database
+ * opening by the catalog's route. Then there is nothing to set up and the
+ * person can sign in: its tenant id. Otherwise null. Never throws.
+ */
+async function alreadySetUp(
+  catalog: AppDatabase,
+  userId: string,
+  verifyRoute: (tenantId: string) => Promise<void>,
+): Promise<string | null> {
+  try {
+    const [row] = await catalog
+      .select({ tenantId: users.tenantId, deactivatedAt: users.deactivatedAt, signupPendingSince: users.signupPendingSince })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
+      .all();
+    if (!row?.tenantId || row.deactivatedAt || row.signupPendingSince) return null;
+    const registered = await catalog
+      .select({ id: tenants.id })
+      .from(tenants)
+      .where(eq(tenants.id, row.tenantId))
+      .limit(1)
+      .all();
+    if (registered.length !== 1) return null;
+    await verifyRoute(row.tenantId);
+    return row.tenantId;
+  } catch (error) {
+    console.error("signup: could not confirm the account's existing workspace", error);
+    return null;
+  }
+}
+
 /** Run one rollback step; a throw is logged by the step's name, never passed on. */
 async function step<T>(name: RollbackStep, failed: RollbackStep[], run: () => Promise<T>): Promise<T | undefined> {
   try {
@@ -176,12 +259,19 @@ async function step<T>(name: RollbackStep, failed: RollbackStep[], run: () => Pr
  *
  *   1 read the account's link, and act on the tenant only if it is still `minted`;
  *   2 list the database in tenant_orphans — from here it cannot be lost;
- *   3 delete the account; if that fails, deactivate it with its erasure due now
- *     (sign-in refused; the retention job erases it and its database), and leave
- *     its registration and database alone, so it is never an account linked to a
- *     tenant with no database;
- *   4 delete the database; then its registration once the database is gone or
+ *   3 if it could NOT be listed while a database may exist, keep the account:
+ *     switched off with its erasure due now, its link is the record of the
+ *     database, and the retention job erases the two together. Nothing more is
+ *     touched;
+ *   4 otherwise delete the account; if that fails, deactivate it with its
+ *     erasure due now (sign-in refused; the retention job erases it and its
+ *     database), and leave its registration and database alone, so it is never
+ *     an account linked to a tenant with no database;
+ *   5 delete the database; then its registration once the database is gone or
  *     listed; and take it off the list once it is gone.
+ *
+ * The account was created switched off, so even if every step here fails it
+ * stays off: never a usable account linked to a tenant with no database.
  */
 async function rollBack(
   catalog: AppDatabase,
@@ -189,7 +279,7 @@ async function rollBack(
   minted: string | null,
   env: NodeJS.ProcessEnv,
   destroyOverride?: (tenantId: string) => Promise<boolean>,
-): Promise<{ database: "none" | "removed" | "listed-for-sweep"; failed: RollbackStep[] }> {
+): Promise<{ database: Extract<SignupProvisionResult, { ok: false }>["database"]; failed: RollbackStep[] }> {
   const failed: RollbackStep[] = [];
   const done = async (name: RollbackStep, run: () => Promise<unknown>) =>
     (await step(name, failed, async () => {
@@ -217,15 +307,26 @@ async function rollBack(
     ? await done("record-orphan", () => recordTenantOrphan(minted, "signup-rollback", catalog))
     : false;
 
+  const now = new Date();
+  const switchOff = () =>
+    catalog
+      .update(users)
+      .set({ deactivatedAt: now, deletionDueAt: now, sessionsValidFrom: now })
+      .where(eq(users.id, userId))
+      .run();
+
+  // A database may exist under `minted` (Turso may have made it before the
+  // failure, even with no `tenants` row yet) and the list could not record it:
+  // the account's link is then the only record of its name, so the account is
+  // kept, never deleted. It was created switched off; this makes its erasure
+  // due now, and the retention job erases it with the database it names.
+  if (minted && (ours || unsure) && !listed) {
+    await done("keep-account", switchOff);
+    return { database: "kept-with-account", failed };
+  }
+
   if (!(await done("delete-account", () => catalog.delete(users).where(eq(users.id, userId)).run()))) {
-    const now = new Date();
-    await done("deactivate-account", () =>
-      catalog
-        .update(users)
-        .set({ deactivatedAt: now, deletionDueAt: now, sessionsValidFrom: now })
-        .where(eq(users.id, userId))
-        .run(),
-    );
+    await done("deactivate-account", switchOff);
     // Its registration and database stay: the erasure job removes them with it.
     return { database: listed ? "listed-for-sweep" : "none", failed };
   }

@@ -59,6 +59,23 @@ export interface CreateUserInput {
   email: string;
   passwordHash: string;
   name?: string | null;
+  /**
+   * Create the account SWITCHED OFF, as a sign-up still being set up
+   * (app-business-core issue 358): sign-in refuses it until
+   * lib/tenant/signup-provisioning.ts switches it on once its database is
+   * ready. registerUser (every sign-up) passes true; the seeded owner
+   * (lib/owner-seed.ts) does not, as its tenant is made at first sign-in.
+   */
+  pendingSignup?: boolean;
+  now?: Date;
+}
+
+/** How long a sign-up that never finished is kept before the retention job erases it. */
+export const PENDING_SIGNUP_EXPIRY_MS = 60 * 60 * 1000;
+
+/** True when the account is a sign-up whose database is not yet ready. */
+export function isPendingSignup(user: { signupPendingSince?: Date | null } | null | undefined): boolean {
+  return Boolean(user?.signupPendingSince);
 }
 
 /** Insert a user row and return the persisted record (id generated here). */
@@ -67,6 +84,7 @@ export async function createUser(
   input: CreateUserInput,
 ): Promise<User> {
   const id = crypto.randomUUID();
+  const now = input.now ?? new Date();
   const rows = await db
     .insert(users)
     .values({
@@ -74,6 +92,16 @@ export async function createUser(
       email: normalizeEmail(input.email),
       passwordHash: input.passwordHash,
       name: input.name ?? null,
+      // Off until provisioned: `deactivatedAt` is what sign-in refuses
+      // (lib/auth.ts authorize → isDeactivated), and `deletionDueAt` lets the
+      // retention job erase a sign-up that never finished, with its database.
+      ...(input.pendingSignup
+        ? {
+            signupPendingSince: now,
+            deactivatedAt: now,
+            deletionDueAt: new Date(now.getTime() + PENDING_SIGNUP_EXPIRY_MS),
+          }
+        : {}),
     })
     .returning()
     .all();
@@ -108,7 +136,8 @@ export interface RegisterUserInput {
 
 /**
  * End-to-end account creation: enforce password policy, reject duplicate
- * emails, hash the password, and persist the user. Throws RegistrationError
+ * emails, hash the password, and persist the user — switched off, as a
+ * sign-up being set up, until provisionNewAccount switches it on. Throws RegistrationError
  * with an actionable message on policy/uniqueness failures.
  */
 export async function registerUser(
@@ -126,16 +155,23 @@ export async function registerUser(
   if (!fields.success) {
     throw new RegistrationError("invalid_input", firstIssue(fields.error));
   }
-  if (await getUserByEmail(db, input.email)) {
+  const existing = await getUserByEmail(db, input.email);
+  if (existing) {
     throw new RegistrationError(
       "email_taken",
-      "An account with this email already exists. Try signing in instead.",
+      isPendingSignup(existing)
+        ? "An account with this email is still being set up. Please try again in an hour."
+        : "An account with this email already exists. Try signing in instead.",
     );
   }
   const passwordHash = await hashPassword(input.password);
+  // Every sign-up starts SWITCHED OFF (issue 358): the caller gives it its
+  // database with provisionNewAccount, which switches it on only when that is
+  // finished, so no failure at any point leaves a usable account with none.
   return await createUser(db, {
     email: fields.data.email,
     passwordHash,
     name: fields.data.name ?? null,
+    pendingSignup: true,
   });
 }

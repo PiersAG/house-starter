@@ -20,7 +20,7 @@ import "server-only";
 
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { recordAuditEvent } from "@/lib/audit/trail";
-import { billingInvoices, erasures, subscriptions, users, type User } from "@/lib/schema";
+import { billingInvoices, erasures, subscriptions, tenants, users, type User } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";
 import {
   DELETION_GRACE_DAYS,
@@ -220,8 +220,21 @@ export async function eraseAccount(
   // the table loop below deletes.
   let tenantDatabase: ErasureResult["tenantDatabase"] = "none";
   if (ownTenant(subject.tenantId) && opts.tenantPlane) {
-    await wipeTenantDatabase(await opts.tenantPlane.open(subject.tenantId));
-    tenantDatabase = "wiped";
+    // A sign-up that failed before its registration was written (app-business-
+    // core issue 358) is kept, linked, as the only record of a database the
+    // platform may have made. That database never held customer data and
+    // cannot be opened by the catalog's route, so it is removed by name only
+    // (a refusal lists it for the factory's sweep — lib/privacy/runtime.ts).
+    const registered = await db
+      .select({ id: tenants.id })
+      .from(tenants)
+      .where(eq(tenants.id, subject.tenantId))
+      .limit(1)
+      .all();
+    if (registered.length > 0) {
+      await wipeTenantDatabase(await opts.tenantPlane.open(subject.tenantId));
+      tenantDatabase = "wiped";
+    }
     if (opts.tenantPlane.destroy && (await opts.tenantPlane.destroy(subject.tenantId))) {
       tenantDatabase = "removed";
     }

@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS users (
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
   sessions_valid_from INTEGER,
   deactivated_at INTEGER,
-  deletion_due_at INTEGER
+  deletion_due_at INTEGER,
+  signup_pending_since INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS revoked_sessions (
@@ -590,10 +591,7 @@ export async function migrate(
 }
 
 /** Bring the CATALOG (control-plane) database up to schema. */
-export async function migrateCatalog(
-  url: string | undefined,
-  authToken?: string,
-): Promise<void> {
+export async function migrateCatalog(url: string | undefined, authToken?: string): Promise<void> {
   await migrate(url, authToken, { role: "catalog" });
 }
 
