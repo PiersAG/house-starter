@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const SIGNUP_ROUTE_EDIT_PENDING = true;
+const SIGNUP_ROUTE_EDIT_PENDING = false;
 
 const state = vi.hoisted(() => ({
   provision: { ok: true, tenantId: "t".padEnd(33, "0") } as { ok: boolean; tenantId?: string; database?: string },
