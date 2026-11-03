@@ -15,6 +15,7 @@
 import "server-only";
 
 import { getEmailProvider } from "@/lib/email/provider";
+import { checkSendingDomain } from "@/lib/email/sending-domain";
 
 export type EmailSendMode = "log" | "live";
 
@@ -108,6 +109,13 @@ export async function sendEmail<TData>(
     throw new Error(
       "lib/email/send.ts: EMAIL_FROM is not set but EMAIL_SEND_MODE=live. " +
         "EMAIL_FROM is the app-supplied sender address (source=app in .env.contract).",
+    );
+  }
+  // Transactional mail only from its own subdomain (app-business-core issue 757).
+  const domain = checkSendingDomain(process.env);
+  if (!domain.ok) {
+    throw new Error(
+      `lib/email/send.ts: not sending — ${domain.detail}. See lib/email/sending-domain.ts.`,
     );
   }
 

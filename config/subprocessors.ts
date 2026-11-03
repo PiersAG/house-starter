@@ -113,12 +113,15 @@ export const SUBPROCESSORS: readonly Subprocessor[] = [
   {
     id: "aws",
     name: "Amazon Web Services",
-    purpose: "Holds the app's own keys and passwords in a locked store (the key vault).",
-    personalData: "None: it holds the app's keys, never customer data.",
-    location: "EU (London or Ireland region chosen for the vault).",
-    transfer: "Not applicable: no personal data is sent.",
+    purpose:
+      "Holds the app's own keys in a locked store (the key vault), and the nightly copy of the app's databases kept outside the database provider, for recovery (backups).",
+    personalData:
+      "The backup copy holds everything the app's databases hold, encrypted at rest; the key vault holds no customer data.",
+    location: "United Kingdom (London region).",
+    transfer: "Not applicable: stored in the UK.",
     dpa: "https://aws.amazon.com/compliance/gdpr-center/",
-    deletion: "Not applicable: no personal data is held.",
+    deletion:
+      "Each backup copy is locked against change for 30 days, then deleted automatically; after any restore, every account in the erasure ledger is deleted again before the app reopens.",
     status: "in_use",
     ref: "#822 (the vault)",
   },
@@ -137,15 +140,16 @@ export const SUBPROCESSORS: readonly Subprocessor[] = [
   },
   {
     id: "email",
-    name: "Email provider (to be chosen)",
+    name: "Resend",
     purpose: "Sends the app's emails: password resets, receipts and account notices.",
     personalData: "Your email address and the message sent to you.",
-    location: "To be recorded when the provider is chosen.",
-    transfer: "To be recorded when the provider is chosen.",
-    dpa: "To be recorded when the provider is chosen.",
-    deletion: "To be recorded when the provider is chosen.",
-    status: "pending_decision",
-    ref: "#470 (open)",
+    location: "Sent from the EU (Ireland); Resend is a US company.",
+    transfer: "EU Standard Contractual Clauses with the UK Addendum, in Resend's DPA.",
+    dpa: "https://resend.com/legal/dpa",
+    deletion:
+      "Resend keeps a record of each message for its plan's history window; the app keeps only whether it was delivered, never the address or the message.",
+    status: "chosen_not_connected",
+    ref: "#470 (CEO choice, Dispatch AG)",
   },
 ];
 

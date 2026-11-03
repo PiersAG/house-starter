@@ -131,7 +131,7 @@
       "detail": "martinrrm",
       "reviewed_on": "2026-11-02",
       "by": "Claude Code (Dispatch AF)",
-      "reason": "Added at 7.8.6 (published 2026-11-02 17:05 UTC). 7.8.6 was published by GitHub Actions through npm trusted publishing with SLSA provenance, from the release commit b37b033b (\"chore: release 7.8.6 (#940)\") in npm/node-semver. martinrrm has 18 commits and 37 pull requests across npm's own repositories (npm/cli, pacote, bin-links, promise-spawn, template-oss) since July 2026: npm CLI team. Existing maintainers npm-cli-ops, reggi and saquibkhan remain. Neither lockfile installs 7.8.6 (both pin 7.8.1)."
+      "reason": "Added at 7.8.6 (published 2026-11-02 17:05 UTC). 7.8.6 was published by GitHub Actions through npm trusted publishing with SLSA provenance, from the release commit b37b033b (\"chore: release 7.8.6 (#940)\") in npm/node-semver. martinrrm has 18 commits and 37 pull requests across npm's own repositories (npm/cli, pacote, bin-links, promise-spawn, template-oss) since July 2026: npm CLI team. Existing maintainers npm-cli-ops, reggi and saquibkhan remain. Neither lockfile installs 7.8.6. house-starter locks 7.8.5 at the top level and 6.3.1 under eslint-config-next, eslint-plugin-import and node-exports-info; the dashboard locks 6.3.1 at the top level, 7.8.1 under @typescript-eslint/typescript-estree and is-bun-module, and 7.8.5 under sharp (lockfiles read by Dispatch AG, 2026-11-02)."
     }
   ]
 }
