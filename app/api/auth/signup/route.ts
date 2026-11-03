@@ -11,6 +11,7 @@ import { registerUser, RegistrationError } from "@/lib/users";
 import { startTrialForNewOwner } from "@/lib/billing/trial";
 import {
   provisionNewAccount,
+  SIGNUP_FAILED_RETRY_SECONDS,
   SIGNUP_PROVISION_FAILED_MESSAGE,
 } from "@/lib/tenant/signup-provisioning";
 import { AUTH_RATE_LIMITS, checkAuthRateLimit } from "@/lib/auth-rate-limit";
@@ -93,14 +94,16 @@ async function postWithoutLimit(request: Request): Promise<Response> {
     const user = await registerUser(catalogDb, parsed.data);
     // ADR-023: give the new account its OWN database — all or nothing
     // (app-business-core issue 358). Same call the UI signup path makes: it
-    // retries Turso's passing errors, checks the database opens by the
-    // catalog's route, and on failure rolls the sign-up back, so the caller
-    // gets a clean 503 to retry and the address is free to sign up again.
+    // records the new tenant id first, retries Turso's passing errors,
+    // checks the database opens by the catalog's route, and on failure rolls
+    // the sign-up back. Every failure gets the one fixed message (CEO ruling
+    // 2026-11-03: never told to wait), and a retry with the same email works
+    // at once (lib/users.ts registerUser removes an unfinished sign-up).
     const provisioned = await provisionNewAccount(user.id, user.email);
     if (!provisioned.ok) {
       return NextResponse.json(
         { error: SIGNUP_PROVISION_FAILED_MESSAGE },
-        { status: 503, headers: { "Retry-After": "60" } },
+        { status: 503, headers: { "Retry-After": String(SIGNUP_FAILED_RETRY_SECONDS) } },
       );
     }
     // Step 6: give the new owner a trial subscription so the step-5 paywall does
@@ -121,13 +124,14 @@ async function postWithoutLimit(request: Request): Promise<Response> {
       const status = error.code === "email_taken" ? 409 : 422;
       return NextResponse.json({ error: error.message }, { status });
     }
-    // Anything else is unexpected: logged here, never shown. The caller gets
-    // the same fixed answer to retry as a failed set-up (issue 358: never a
-    // crash), not a 500 and not the error's own text.
+    // Anything else is unexpected — including a retry that lost to another
+    // retry at the same moment (lib/users.ts SignupRetryError): logged here,
+    // never shown (issue 358: never a crash), not a 500 and not the error's
+    // own text. The caller gets the same fixed answer as a failed set-up.
     console.error("signup: the account could not be created", error);
     return NextResponse.json(
       { error: SIGNUP_PROVISION_FAILED_MESSAGE },
-      { status: 503, headers: { "Retry-After": "60" } },
+      { status: 503, headers: { "Retry-After": String(SIGNUP_FAILED_RETRY_SECONDS) } },
     );
   }
 }

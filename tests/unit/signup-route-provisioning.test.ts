@@ -1,27 +1,24 @@
 // @vitest-environment node
 // POST /api/auth/signup is all or nothing (app-business-core issue 358: "NEVER a
-// half-created account, never a crash").
+// half-created account, never a crash"), and a failed sign-up never makes the
+// person wait (CEO ruling 2026-11-03, Dispatch AG-fix5): every failure answers
+// the one fixed "Something went wrong creating your account. Please try again."
+// — never an hour, never the error's details — and a retry may come at once.
 //
 // The route is in the sign-in kernel, which the safety gate keeps Claude Code
-// from writing; the CEO script applies the edit
-// (app-business-core Dispatch AG, blocked/apply_signup_route.py) and sets the
-// flag below to false in the same step. Until then this test pins the original
-// route, so it never passes by skipping; after, it requires the new behaviour.
-// The second flag is the route's outer catch (Dispatch AG-fix, review finding 2:
-// an unexpected error answered the fixed 503, never a 500 or its own text),
-// applied by the same step on the CEO's rerun.
+// from writing; the CEO script applies each edit (app-business-core Dispatch AG,
+// blocked/apply_signup_route.py, then blocked/apply_signup_route_fix5.py, which
+// installs this version of the test with its edit).
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const SIGNUP_ROUTE_EDIT_PENDING = false;
-const SIGNUP_ROUTE_CATCH_PENDING = false;
+import type { SignupProvisionResult } from "@/lib/tenant/signup-provisioning";
 
 const state = vi.hoisted(() => ({
-  provision: { ok: true, tenantId: "t".padEnd(33, "0") } as { ok: boolean; tenantId?: string; database?: string },
+  provision: null as SignupProvisionResult | null,
   trialThrows: false,
-  registerThrows: false,
+  register: "ok" as "ok" | "throws" | "retry-lost" | "taken",
   provisionThrows: false,
 }));
 
@@ -32,15 +29,35 @@ vi.mock("@/lib/auth-rate-limit", () => ({
   AUTH_RATE_LIMITS: { signup: {}, signupProvision: {} },
   checkAuthRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),
 }));
-vi.mock("@/lib/users", () => ({
-  RegistrationError: class extends Error {},
-  PENDING_SIGNUP_RETRY_SECONDS: 3600,
-  ACCOUNT_EXISTS_MESSAGE: "An account with this email already exists. Try signing in instead.",
-  registerUser: async () => {
-    if (state.registerThrows) throw new Error("planted: SQLITE_ERROR no such table: users");
-    return { id: "u1", email: "new@example.com", name: null };
-  },
-}));
+vi.mock("@/lib/users", async () => {
+  const { SIGNUP_FAILED_MESSAGE } = await import("@/lib/signup-failure");
+  class RegistrationError extends Error {
+    constructor(
+      public readonly code: string,
+      message: string,
+    ) {
+      super(message);
+    }
+  }
+  class SignupRetryError extends Error {
+    constructor() {
+      super(SIGNUP_FAILED_MESSAGE);
+    }
+  }
+  return {
+    RegistrationError,
+    SignupRetryError,
+    ACCOUNT_EXISTS_MESSAGE: "An account with this email already exists. Try signing in instead.",
+    registerUser: async () => {
+      if (state.register === "throws") throw new Error("planted: SQLITE_ERROR no such table: users");
+      if (state.register === "retry-lost") throw new SignupRetryError();
+      if (state.register === "taken") {
+        throw new RegistrationError("email_taken", "An account with this email already exists. Try signing in instead.");
+      }
+      return { id: "u1", email: "new@example.com", name: null };
+    },
+  };
+});
 vi.mock("@/lib/billing/trial", () => ({
   startTrialForNewOwner: async () => {
     if (state.trialThrows) throw new Error("planted trial failure");
@@ -58,10 +75,11 @@ vi.mock("@/lib/tenant/signup-provisioning", async (orig) => {
   };
 });
 
-import { SIGNUP_PROVISION_FAILED_MESSAGE } from "@/lib/tenant/signup-provisioning";
+import { signupFailure } from "@/lib/tenant/signup-provisioning";
 import { POST } from "@/app/api/auth/signup/route";
 
 const ROUTE_SRC = readFileSync(join(__dirname, "..", "..", "app/api/auth/signup/route.ts"), "utf8");
+const FIXED = "Something went wrong creating your account. Please try again.";
 
 function signup(): Promise<Response> {
   return (POST as (r: Request) => Promise<Response>)(
@@ -76,73 +94,64 @@ function signup(): Promise<Response> {
 beforeEach(() => {
   state.provision = { ok: true, tenantId: "t".padEnd(33, "0") };
   state.trialThrows = false;
-  state.registerThrows = false;
+  state.register = "ok";
   state.provisionThrows = false;
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
-// Before the edit every case checks the route is still the original (so nothing
-// is skipped either way); after it, each case checks the new behaviour.
-function pinnedOriginal(): boolean {
-  if (!SIGNUP_ROUTE_EDIT_PENDING) return false;
-  expect(ROUTE_SRC).toContain("await ensureTenantForUser(user.id, { label: user.email });");
-  expect(ROUTE_SRC).not.toContain("provisionNewAccount");
-  return true;
+/** A failed sign-up: 503, the fixed message, a retry at once, nothing about an hour or the error. */
+async function expectFixed503(r: Response) {
+  expect(r.status).toBe(503);
+  expect(r.headers.get("Retry-After")).toBe("1");
+  const text = await r.text();
+  expect(JSON.parse(text)).toEqual({ error: FIXED });
+  expect(text).not.toMatch(/hour|SQLITE/i);
 }
 
 describe("the sign-up route, all or nothing", () => {
   it("creates the account when its database is set up", async () => {
-    if (pinnedOriginal()) return;
     expect((await signup()).status).toBe(201);
   });
-  it("answers a clean 503 to retry — never a 500 — when the database could not be set up", async () => {
-    if (pinnedOriginal()) return;
-    state.provision = { ok: false, database: "removed" };
-    const r = await signup();
-    expect(r.status).toBe(503);
-    expect(r.headers.get("Retry-After")).toBe("60");
-    expect(await r.json()).toEqual({ error: SIGNUP_PROVISION_FAILED_MESSAGE });
-  });
+  for (const account of ["removed", "kept", "exists", "unknown"] as const) {
+    for (const database of ["none", "removed", "listed-for-sweep"] as const) {
+      it(`a failed set-up (account ${account}, database ${database}): the fixed 'please try again', Retry-After 1`, async () => {
+        state.provision = signupFailure(account, database);
+        await expectFixed503(await signup());
+      });
+    }
+  }
   it("keeps a finished account when only the trial fails, as the form does", async () => {
-    if (pinnedOriginal()) return;
     state.trialThrows = true;
     expect((await signup()).status).toBe(201);
   });
+  it("a switched-on or closed account holds the address: 409, told to sign in, as before", async () => {
+    state.register = "taken";
+    const r = await signup();
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual({ error: "An account with this email already exists. Try signing in instead." });
+  });
   it("no longer calls ensureTenantForUser itself", () => {
-    if (pinnedOriginal()) return;
     expect(ROUTE_SRC).not.toContain("ensureTenantForUser");
   });
 });
 
-// Before the catch edit each case checks the route's outer catch still rethrows
-// (so nothing is skipped either way); after it, each checks the fixed 503.
-function catchPinned(): boolean {
-  if (!SIGNUP_ROUTE_CATCH_PENDING) return false;
-  expect(ROUTE_SRC).toMatch(/return NextResponse\.json\(\{ error: error\.message \}, \{ status \}\);\n {4}\}\n {4}throw error;\n/);
-  return true;
-}
-
-async function expectFixed503(r: Response) {
-  expect(r.status).toBe(503);
-  expect(r.headers.get("Retry-After")).toBe("60");
-  const body = await r.json();
-  expect(body).toEqual({ error: SIGNUP_PROVISION_FAILED_MESSAGE });
-  expect(JSON.stringify(body)).not.toContain("SQLITE");
-}
-
-describe("the sign-up route never crashes", () => {
-  it("answers the fixed 503, not a 500 or the error's text, when registration fails unexpectedly", async () => {
-    if (catchPinned()) return;
-    state.registerThrows = true;
+describe("the sign-up route never crashes, and an unexpected error gets the same fixed answer", () => {
+  it("registration fails unexpectedly: the fixed 503, not a 500 or the error's text", async () => {
+    state.register = "throws";
     await expectFixed503(await signup());
   });
-  it("answers the fixed 503 even if provisioning threw past its own rollback", async () => {
-    if (catchPinned()) return;
+  it("a retry that lost to another retry at the same moment: the fixed 503", async () => {
+    state.register = "retry-lost";
+    await expectFixed503(await signup());
+  });
+  it("provisioning threw past its own rollback: the same", async () => {
     state.provisionThrows = true;
     await expectFixed503(await signup());
   });
   it("no longer rethrows from its outer catch", () => {
-    if (catchPinned()) return;
     expect(ROUTE_SRC).not.toMatch(/\n {4}throw error;\n/);
+  });
+  it("never answers with a message of its own about waiting", () => {
+    expect(ROUTE_SRC).not.toMatch(/in an hour|in a minute|SIGNUP_UNSURE|provisioned\.message/);
   });
 });
