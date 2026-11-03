@@ -190,7 +190,8 @@ describe("handleTokenRenewal", () => {
 
   it("RENEW_AFTER_SECONDS is the constant used to extend the renewal window", () => {
     expect(typeof RENEW_AFTER_SECONDS).toBe("number");
-    expect(RENEW_AFTER_SECONDS).toBeGreaterThan(0);
+    // "strict" (CEO ruling on #559, 2026-11-02): the window is 0 — every server request is checked
+    expect(RENEW_AFTER_SECONDS).toBe(0);
   });
 });
 
