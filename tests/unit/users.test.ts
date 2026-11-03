@@ -18,7 +18,9 @@ import {
   createUser,
   getUserByEmail,
   getUserById,
+  isPendingSignup,
   normalizeEmail,
+  PENDING_SIGNUP_EXPIRY_MS,
   registerUser,
   type AppDatabase,
 } from "@/lib/users";
@@ -140,6 +142,27 @@ describe("registerUser — end-to-end account creation", () => {
     await expect(
       getUserByEmail(db, "bad-input@example.com"),
     ).resolves.toBeUndefined();
+  });
+
+  // app-business-core issue 358: every sign-up starts switched off; the seeded
+  // owner (createUser with no pendingSignup) starts on.
+  it("creates a sign-up switched off and a seeded account switched on, and names which one holds an address", async () => {
+    const signup = await registerUser(db, { email: "new@example.com", password: "correct horse battery staple" });
+    expect(signup.signupPendingSince).not.toBeNull();
+    expect(signup.deactivatedAt).not.toBeNull();
+    expect(signup.deletionDueAt!.getTime() - signup.signupPendingSince!.getTime()).toBe(PENDING_SIGNUP_EXPIRY_MS);
+    expect(isPendingSignup(signup)).toBe(true);
+    await expect(
+      registerUser(db, { email: "new@example.com", password: "a different fine password" }),
+    ).rejects.toThrow("still being set up");
+
+    const seeded = await createUser(db, { email: "owner@example.com", passwordHash: "x" });
+    expect(seeded.signupPendingSince).toBeNull();
+    expect(seeded.deactivatedAt).toBeNull();
+    expect(isPendingSignup(seeded)).toBe(false);
+    await expect(
+      registerUser(db, { email: "owner@example.com", password: "a different fine password" }),
+    ).rejects.toThrow("already exists. Try signing in");
   });
 
   it("rejects a duplicate email — including case/whitespace variants — leaving one row", async () => {

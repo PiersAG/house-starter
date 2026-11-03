@@ -67,15 +67,14 @@ export interface CreateUserInput {
    * (lib/owner-seed.ts) does not, as its tenant is made at first sign-in.
    */
   pendingSignup?: boolean;
-  now?: Date;
 }
 
 /** How long a sign-up that never finished is kept before the retention job erases it. */
 export const PENDING_SIGNUP_EXPIRY_MS = 60 * 60 * 1000;
 
 /** True when the account is a sign-up whose database is not yet ready. */
-export function isPendingSignup(user: { signupPendingSince?: Date | null } | null | undefined): boolean {
-  return Boolean(user?.signupPendingSince);
+export function isPendingSignup(user: { signupPendingSince: Date | null }): boolean {
+  return user.signupPendingSince !== null;
 }
 
 /** Insert a user row and return the persisted record (id generated here). */
@@ -84,7 +83,7 @@ export async function createUser(
   input: CreateUserInput,
 ): Promise<User> {
   const id = crypto.randomUUID();
-  const now = input.now ?? new Date();
+  const now = new Date();
   const rows = await db
     .insert(users)
     .values({
