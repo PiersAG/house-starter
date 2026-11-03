@@ -400,11 +400,11 @@ export const OUTSIDE_LOCATIONS: readonly OutsideLocation[] = [
   },
   {
     id: "backups",
-    name: "Database backups (point-in-time restore)",
+    name: "Database backups (point-in-time restore, and a nightly copy kept outside the database provider)",
     what: "A copy of the databases, for recovery after a fault.",
-    processors: ["turso"],
+    processors: ["turso", "aws"],
     deletion:
-      "Your own database's backups are deleted with it. The shared account database's backups age out within its restore window; if one is ever restored, every account in the erasure ledger is deleted again before the app reopens (`npm run privacy:replay-erasures`, scripts/erasure-ledger.ts).",
+      "Your own database's backups are deleted with it. The shared account database's backups age out within its restore window. The nightly outside copy is locked for 30 days and then deleted automatically, so it holds no erased account for longer than that. If any backup is ever restored, every account in the erasure ledger is deleted again before the app reopens (`npm run privacy:replay-erasures`, scripts/erasure-ledger.ts).",
   },
   {
     id: "analytics",

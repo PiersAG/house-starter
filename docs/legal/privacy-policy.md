@@ -33,7 +33,7 @@ This list is produced from the app's own data map, so it names everything the ap
 - Your own data: your workspace's name; the settings you chose; the history of changes you made to your records.
 - Rate-limit counters: Your IP address and account id, as request counters.
 - Hosting request logs: Your IP address, the pages you open and when.
-- Database backups (point-in-time restore): A copy of the databases, for recovery after a fault.
+- Database backups (point-in-time restore, and a nightly copy kept outside the database provider): A copy of the databases, for recovery after a fault.
 - Sent emails: Your email address and the messages the app sends you.
 
 ## What we use it for
@@ -74,7 +74,7 @@ These services handle it on our behalf, under a data processing agreement with e
 - Turso (in use): The app's databases: your account and your own data. Your account details and everything you keep in the app.
 - Upstash (in use): Counts requests so the app can limit abuse (rate limits). Your IP address and account id, as counters that expire within a day.
 - Stripe (in use): Takes subscription payments. Your email address, name and payment details, which you give to Stripe directly on its payment page; the app never sees your card.
-- Amazon Web Services (in use): Holds the app's own keys and passwords in a locked store (the key vault). None: it holds the app's keys, never customer data.
+- Amazon Web Services (in use): Holds the app's own keys in a locked store (the key vault), and the nightly copy of the app's databases kept outside the database provider, for recovery (backups). The backup copy holds everything the app's databases hold, encrypted at rest; the key vault holds no customer data.
 - Sentry (chosen, not connected yet): Records app errors so they can be fixed quickly (error tracking). When connected: the account id and the page involved in an error, never a password, a form's contents or an email address.
 - Email provider (to be chosen) (not chosen yet): Sends the app's emails: password resets, receipts and account notices. Your email address and the message sent to you.
 
@@ -84,7 +84,7 @@ These services handle it on our behalf, under a data processing agreement with e
 - Turso: The region chosen for the app's database group. Transfers: UK Addendum to the EU Standard Contractual Clauses, in Turso's DPA.
 - Upstash: The region chosen for the app's Redis database. Transfers: UK Addendum to the EU Standard Contractual Clauses, in Upstash's DPA.
 - Stripe: United States, with EU and UK entities. Transfers: UK Addendum to the EU Standard Contractual Clauses, in Stripe's DPA.
-- Amazon Web Services: EU (London or Ireland region chosen for the vault). Transfers: Not applicable: no personal data is sent.
+- Amazon Web Services: United Kingdom (London region). Transfers: Not applicable: stored in the UK.
 
 ## How long we keep it
 
@@ -110,7 +110,7 @@ A few records the law requires us to keep (invoices, for tax) are kept without y
 
 - Rate-limit counters: Each counter expires on its own within 24 hours; nothing to delete.
 - Hosting request logs: Expire on their own within the hosting plan's log window.
-- Database backups (point-in-time restore): Your own database's backups are deleted with it. The shared account database's backups age out within its restore window; if one is ever restored, every account in the erasure ledger is deleted again before the app reopens (`npm run privacy:replay-erasures`, scripts/erasure-ledger.ts).
+- Database backups (point-in-time restore, and a nightly copy kept outside the database provider): Your own database's backups are deleted with it. The shared account database's backups age out within its restore window. The nightly outside copy is locked for 30 days and then deleted automatically, so it holds no erased account for longer than that. If any backup is ever restored, every account in the erasure ledger is deleted again before the app reopens (`npm run privacy:replay-erasures`, scripts/erasure-ledger.ts).
 - Analytics: Not applicable. An app that adds an analytics service lists it in config/third-party.ts with the personal data it reads; it then loads only after you agree, and its deletion route is recorded here.
 - Sent emails: Recorded when the email provider is chosen (#470).
 
