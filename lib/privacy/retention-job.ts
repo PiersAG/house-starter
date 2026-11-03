@@ -64,14 +64,18 @@ export async function purgeByAge(db: AppDatabase, now: Date): Promise<Record<str
   return purged;
 }
 
-/** Accounts whose erasure is due now. */
-async function dueAccounts(db: AppDatabase, now: Date): Promise<string[]> {
+/**
+ * Accounts whose erasure is due now. `signup` marks a sign-up that never
+ * finished (app-business-core issue 358): it was never switched on, so no
+ * erasure confirmation is sent for it.
+ */
+async function dueAccounts(db: AppDatabase, now: Date): Promise<{ id: string; signup: boolean }[]> {
   const rows = await db
-    .select({ id: users.id })
+    .select({ id: users.id, signupPendingSince: users.signupPendingSince })
     .from(users)
     .where(and(isNotNull(users.deactivatedAt), isNotNull(users.deletionDueAt), lte(users.deletionDueAt, now)))
     .all();
-  return rows.map((r) => r.id);
+  return rows.map((r) => ({ id: r.id, signup: r.signupPendingSince !== null }));
 }
 
 /** One run of the retention job. */
@@ -81,11 +85,11 @@ export async function runRetentionJob(
 ): Promise<RetentionRun> {
   const now = opts.now ?? new Date();
   const erased: ErasureResult[] = [];
-  for (const id of await dueAccounts(db, now)) {
+  for (const { id, signup } of await dueAccounts(db, now)) {
     const r = await eraseAccount(db, id, { now, tenantPlane: opts.tenantPlane });
     if (!r) continue;
     erased.push(r);
-    if (r.verified && opts.confirm) {
+    if (r.verified && opts.confirm && !signup) {
       try {
         await opts.confirm(r.email, r);
       } catch (e) {

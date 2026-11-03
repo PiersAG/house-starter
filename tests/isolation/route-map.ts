@@ -189,6 +189,11 @@ export const ROUTE_EXCLUSIONS: { prefix: string; reason: string }[] = [
     reason:
       "the daily retention job, called by Vercel's scheduler with CRON_SECRET, never by a browser session; GET only, answers counts, never tenant data (issue 722)",
   },
+  {
+    prefix: "/api/email/events",
+    reason:
+      "the email provider's delivery reports, called by the provider's servers with a signature checked against EMAIL_EVENTS_SECRET, never by a browser session; records delivery counts, returns no tenant data (issue 757)",
+  },
 ];
 
 /**
@@ -202,6 +207,14 @@ export const ROUTE_EXCLUSIONS: { prefix: string; reason: string }[] = [
  * tests/unit/isolation-route-coverage.test.ts.
  */
 export const WRITABLE_ROUTE_EXEMPTIONS: { path: string; reason: string }[] = [
+  {
+    path: "/api/email/events",
+    reason:
+      "The email provider's servers post delivery reports here without a session. It reads no " +
+      "session and no tenant, refuses any report not signed with EMAIL_EVENTS_SECRET, and writes " +
+      "only a delivery count row to the shared catalog (no tenant's data), so a signed-in tenant-A " +
+      "caller has no other tenant's data to reach through it (issue 757).",
+  },
   {
     path: "/api/csp-report",
     reason:

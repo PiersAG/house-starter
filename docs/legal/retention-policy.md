@@ -32,6 +32,8 @@ Produced from config/personal-data.ts. The retention job (lib/privacy/retention-
 - userMfaRecoveryCodes (Sign-in security records): While your account is open. On account deletion: deleted.
 - retainedRecords (Records kept after deletion): Until the expiry date each record carries (6 years for tax records). On account deletion: nothing to erase.
 - erasures (Records kept after deletion): As long as backups that predate the deletion exist; the ids name nobody once the account is gone. On account deletion: nothing to erase.
+- tenantOrphans (Databases waiting to be deleted): Until the sign-up finishes or the database is deleted; the id names no person. On account deletion: nothing to erase.
+- emailEvents (Email delivery reports): 90 days. Rows older than 90 days are deleted. On account deletion: nothing to erase.
 - tenantMeta (Your own data): While your account is open. On account deletion: the account's own database is wiped and removed.
 - settingValues (Your own data): While your account is open. On account deletion: the account's own database is wiped and removed.
 - recordEvents (Your own data): While your account is open. On account deletion: the account's own database is wiped and removed.

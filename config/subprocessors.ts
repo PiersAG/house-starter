@@ -140,15 +140,16 @@ export const SUBPROCESSORS: readonly Subprocessor[] = [
   },
   {
     id: "email",
-    name: "Email provider (to be chosen)",
+    name: "Resend",
     purpose: "Sends the app's emails: password resets, receipts and account notices.",
     personalData: "Your email address and the message sent to you.",
-    location: "To be recorded when the provider is chosen.",
-    transfer: "To be recorded when the provider is chosen.",
-    dpa: "To be recorded when the provider is chosen.",
-    deletion: "To be recorded when the provider is chosen.",
-    status: "pending_decision",
-    ref: "#470 (open)",
+    location: "Sent from the EU (Ireland); Resend is a US company.",
+    transfer: "EU Standard Contractual Clauses with the UK Addendum, in Resend's DPA.",
+    dpa: "https://resend.com/legal/dpa",
+    deletion:
+      "Resend keeps a record of each message for its plan's history window; the app keeps only whether it was delivered, never the address or the message.",
+    status: "chosen_not_connected",
+    ref: "#470 (CEO choice, Dispatch AG)",
   },
 ];
 

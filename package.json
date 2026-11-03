@@ -31,6 +31,7 @@
     "privacy:run-retention": "tsx scripts/run-retention.ts",
     "privacy:export-ledger": "tsx scripts/erasure-ledger.ts export",
     "privacy:replay-erasures": "tsx scripts/erasure-ledger.ts replay",
+    "email:domain-status": "tsx scripts/email-domain-status.ts",
     "prepare": "husky"
   },
   "dependencies": {

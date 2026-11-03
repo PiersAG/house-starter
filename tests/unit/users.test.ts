@@ -18,7 +18,9 @@ import {
   createUser,
   getUserByEmail,
   getUserById,
+  isPendingSignup,
   normalizeEmail,
+  PENDING_SIGNUP_EXPIRY_MS,
   registerUser,
   type AppDatabase,
 } from "@/lib/users";
@@ -142,10 +144,38 @@ describe("registerUser — end-to-end account creation", () => {
     ).resolves.toBeUndefined();
   });
 
+  // app-business-core issue 358: every sign-up starts switched off; the seeded
+  // owner (createUser with no pendingSignup) starts on.
+  it("creates a sign-up switched off and a seeded account switched on, and names which one holds an address", async () => {
+    const signup = await registerUser(db, { email: "new@example.com", password: "correct horse battery staple" });
+    expect(signup.signupPendingSince).not.toBeNull();
+    expect(signup.deactivatedAt).not.toBeNull();
+    expect(signup.deletionDueAt!.getTime() - signup.signupPendingSince!.getTime()).toBe(PENDING_SIGNUP_EXPIRY_MS);
+    expect(isPendingSignup(signup)).toBe(true);
+    // A retry at once removes the unfinished sign-up and signs up afresh
+    // (CEO ruling 2026-11-03: never "try again in an hour").
+    const retry = await registerUser(db, { email: "new@example.com", password: "a different fine password" });
+    expect(retry.id).not.toBe(signup.id);
+    await expect(getUserById(db, signup.id)).resolves.toBeUndefined();
+
+    const seeded = await createUser(db, { email: "owner@example.com", passwordHash: "x" });
+    expect(seeded.signupPendingSince).toBeNull();
+    expect(seeded.deactivatedAt).toBeNull();
+    expect(isPendingSignup(seeded)).toBe(false);
+    await expect(
+      registerUser(db, { email: "owner@example.com", password: "a different fine password" }),
+    ).rejects.toThrow("already exists. Try signing in");
+  });
+
   it("rejects a duplicate email — including case/whitespace variants — leaving one row", async () => {
-    await registerUser(db, {
+    const first = await registerUser(db, {
       email: "taken@example.com",
       password: "correct horse battery staple",
+    });
+    // Its sign-up finished (switched on), so a second sign-up never takes it over.
+    await client.execute({
+      sql: "UPDATE users SET signup_pending_since = NULL, deactivated_at = NULL, deletion_due_at = NULL WHERE id = ?",
+      args: [first.id],
     });
 
     await expect(

@@ -302,4 +302,29 @@ export const SCHEMA_CHANGES: SchemaChange[] = [
     reverse:
       "ALTER TABLE users DROP COLUMN deactivated_at;\nALTER TABLE users DROP COLUMN deletion_due_at;\nDROP TABLE IF EXISTS erasures;\nDROP TABLE IF EXISTS retained_records;",
   },
+  {
+    id: "0003-hosting-orphans-and-email-events",
+    date: "2026-11-02",
+    plane: "catalog",
+    kind: "expand",
+    summary:
+      "Hosting and accounts (Dispatch AG, house-starter #154; app-business-core #358, #757, #857): customer databases waiting for the factory's sweep, the email provider's delivery reports, and new accounts held switched off until their database is ready (each sign-up's tenant id is listed in tenant_orphans before its database is asked for).",
+    adds: [
+      "email_events",
+      "email_events.bounce_kind",
+      "email_events.id",
+      "email_events.message_id",
+      "email_events.received_at",
+      "email_events.type",
+      "index:email_events_received_idx",
+      "tenant_orphans",
+      "tenant_orphans.cleared_at",
+      "tenant_orphans.reason",
+      "tenant_orphans.recorded_at",
+      "tenant_orphans.tenant_id",
+      "users.signup_pending_since",
+    ],
+    reverse:
+      "DROP INDEX IF EXISTS email_events_received_idx;\nDROP TABLE IF EXISTS email_events;\nDROP TABLE IF EXISTS tenant_orphans;\nALTER TABLE users DROP COLUMN signup_pending_since;",
+  },
 ];

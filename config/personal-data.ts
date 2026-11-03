@@ -312,6 +312,38 @@ export const PERSONAL_DATA_MAP: Record<string, DataMapEntry> = {
     retention: "As long as backups that predate the deletion exist; the ids name nobody once the account is gone.",
     onErasure: { rule: "none" },
   },
+  tenantOrphans: {
+    plane: "catalog",
+    personal: [],
+    linkedBy: null,
+    category: "Databases waiting to be deleted",
+    holds: "the id of a new account's database while its sign-up is being finished, or of one left behind by an unfinished sign-up or a deletion, until it is deleted",
+    purpose: "So a database no account points to is always deleted, never forgotten.",
+    lawfulBasis: "legitimate_interests",
+    processors: HOST,
+    retention: "Until the sign-up finishes or the database is deleted; the id names no person.",
+    onErasure: { rule: "none" },
+    notPersonal: {
+      tenantId: "The random id of a database; it names no person and is never linked to an account here.",
+    },
+  },
+  emailEvents: {
+    plane: "catalog",
+    personal: [],
+    linkedBy: null,
+    category: "Email delivery reports",
+    holds: "whether each email was delivered, bounced or marked as spam — never an address, a subject or the message",
+    purpose: "To see that the app's emails arrive, and to be warned when they stop.",
+    lawfulBasis: "legitimate_interests",
+    processors: HOST,
+    retention: "90 days.",
+    ageLimitDays: 90,
+    ageColumn: "receivedAt",
+    onErasure: { rule: "none" },
+    notPersonal: {
+      messageId: "The email provider's id for a message; no address or content is kept with it.",
+    },
+  },
   tenantMeta: {
     plane: "tenant",
     personal: ["tenantId", "label", "createdAt"],
@@ -387,7 +419,8 @@ export const OUTSIDE_LOCATIONS: readonly OutsideLocation[] = [
     name: "Sent emails",
     what: "Your email address and the messages the app sends you.",
     processors: ["email"],
-    deletion: "Recorded when the email provider is chosen (#470).",
+    deletion:
+      "Resend keeps a record of each message for its plan's history window, then deletes it; the app keeps only delivery reports with no address or message (email_events, 90 days).",
   },
 ];
 

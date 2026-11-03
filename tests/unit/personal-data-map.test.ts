@@ -96,11 +96,12 @@ describe("the personal-data map covers what the app really holds (#745)", () => 
 });
 
 describe("the subprocessor list (#350)", () => {
-  it("names the services chosen: Vercel, Upstash, Turso, Stripe, AWS (vault) and Sentry, with the email provider pending", () => {
+  it("names the services chosen: Vercel, Upstash, Turso, Stripe, AWS (vault), Sentry and Resend for email", () => {
     const by = Object.fromEntries(SUBPROCESSORS.map((s) => [s.id, s]));
     for (const id of ["vercel", "upstash", "turso", "stripe", "aws"]) expect(by[id]?.status, id).toBe("in_use");
     expect(by.sentry?.status).toBe("chosen_not_connected");
-    expect(by.email?.status).toBe("pending_decision");
+    expect(by.email?.name).toBe("Resend");
+    expect(by.email?.status).toBe("chosen_not_connected");
     expect(by.email?.ref).toContain("#470");
   });
 

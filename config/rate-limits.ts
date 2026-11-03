@@ -88,6 +88,9 @@ export const ROUTE_LIMITS = {
   // The daily retention job (app-business-core issue 722): Vercel's scheduler calls
   // it once a day with CRON_SECRET; a few a minute is already far more than enough.
   "jobs.retention": { perClient: { limit: 5, windowSeconds: 60 }, public: true },
+  // The email provider's delivery reports (app-business-core issue 757): one per
+  // message sent, delivered or bounced, from the provider's own servers.
+  "email.events": { perClient: { limit: 600, windowSeconds: 60 }, public: true },
   // The default for any feature route a build adds: a generated route names
   // this (or a group of its own added here) — never nothing.
   "app.default": {
