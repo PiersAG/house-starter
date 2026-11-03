@@ -419,7 +419,8 @@ export const OUTSIDE_LOCATIONS: readonly OutsideLocation[] = [
     name: "Sent emails",
     what: "Your email address and the messages the app sends you.",
     processors: ["email"],
-    deletion: "Recorded when the email provider is chosen (#470).",
+    deletion:
+      "Resend keeps a record of each message for its plan's history window, then deletes it; the app keeps only delivery reports with no address or message (email_events, 90 days).",
   },
 ];
 

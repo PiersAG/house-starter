@@ -76,7 +76,7 @@ These services handle it on our behalf, under a data processing agreement with e
 - Stripe (in use): Takes subscription payments. Your email address, name and payment details, which you give to Stripe directly on its payment page; the app never sees your card.
 - Amazon Web Services (in use): Holds the app's own keys in a locked store (the key vault), and the nightly copy of the app's databases kept outside the database provider, for recovery (backups). The backup copy holds everything the app's databases hold, encrypted at rest; the key vault holds no customer data.
 - Sentry (chosen, not connected yet): Records app errors so they can be fixed quickly (error tracking). When connected: the account id and the page involved in an error, never a password, a form's contents or an email address.
-- Email provider (to be chosen) (not chosen yet): Sends the app's emails: password resets, receipts and account notices. Your email address and the message sent to you.
+- Resend (chosen, not connected yet): Sends the app's emails: password resets, receipts and account notices. Your email address and the message sent to you.
 
 ## Where it is held
 
@@ -112,7 +112,7 @@ A few records the law requires us to keep (invoices, for tax) are kept without y
 - Hosting request logs: Expire on their own within the hosting plan's log window.
 - Database backups (point-in-time restore, and a nightly copy kept outside the database provider): Your own database's backups are deleted with it. The shared account database's backups age out within its restore window. The nightly outside copy is locked for 30 days and then deleted automatically, so it holds no erased account for longer than that. If any backup is ever restored, every account in the erasure ledger is deleted again before the app reopens (`npm run privacy:replay-erasures`, scripts/erasure-ledger.ts).
 - Analytics: Not applicable. An app that adds an analytics service lists it in config/third-party.ts with the personal data it reads; it then loads only after you agree, and its deletion route is recorded here.
-- Sent emails: Recorded when the email provider is chosen (#470).
+- Sent emails: Resend keeps a record of each message for its plan's history window, then deletes it; the app keeps only delivery reports with no address or message (email_events, 90 days).
 
 ## Your rights
 

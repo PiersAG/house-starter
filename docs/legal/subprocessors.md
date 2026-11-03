@@ -68,12 +68,12 @@ The outside services that handle data for [app name], what each receives, where 
 - Data processing agreement: https://sentry.io/legal/dpa/
 - On account deletion: Error records expire within the plan's history window (about 30 days).
 
-## Email provider (to be chosen)
+## Resend
 
-- Status: Not chosen yet
+- Status: Chosen, not connected yet
 - What it does: Sends the app's emails: password resets, receipts and account notices.
 - Personal data it receives: Your email address and the message sent to you.
-- Where: To be recorded when the provider is chosen.
-- Transfers out of the UK: To be recorded when the provider is chosen.
-- Data processing agreement: To be recorded when the provider is chosen.
-- On account deletion: To be recorded when the provider is chosen.
+- Where: Sent from the EU (Ireland); Resend is a US company.
+- Transfers out of the UK: EU Standard Contractual Clauses with the UK Addendum, in Resend's DPA.
+- Data processing agreement: https://resend.com/legal/dpa
+- On account deletion: Resend keeps a record of each message for its plan's history window; the app keeps only whether it was delivered, never the address or the message.
