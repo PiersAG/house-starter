@@ -22,9 +22,12 @@ import { DeletionError, requestAccountDeletion } from "@/lib/privacy/deletion";
 import { sendDeletionRequested } from "@/lib/privacy/runtime";
 import { z } from "zod";
 import { parseForm, passwordField } from "@/lib/validation/input";
+import { accessMessage, checkSensitiveAccess } from "@/lib/session/guard";
 
-export type DownloadState = { error?: string; report?: string } | null;
-export type DeleteState = { error?: string } | null;
+export type DownloadState = { error?: string; report?: string; loginPath?: string } | null;
+export type DeleteState = { error?: string; loginPath?: string } | null;
+
+const PRIVACY_PAGE = "/account/privacy";
 
 const NOT_AVAILABLE = "This is not available in this app.";
 
@@ -46,6 +49,10 @@ export async function downloadMyDataAction(): Promise<DownloadState> {
   if (!userId) return { error: "Your session has ended. Sign in again." };
   if (await guardRouteAction("account.write", { accountId: userId })) return { error: ROUTE_LIMIT_MESSAGE };
   if (await limited(userId)) return { error: "Too many attempts. Please try again shortly." };
+  // Context-aware access (issue 741): a copy of everything held on the person.
+  const access = await checkSensitiveAccess(catalogDb, session, "privacy.data-report", PRIVACY_PAGE);
+  const refused = accessMessage(access);
+  if (refused) return { error: refused, loginPath: access.loginPath };
   let tenant = null;
   try {
     tenant = await getTenantDb();
@@ -74,6 +81,10 @@ export async function deleteMyAccountAction(_prev: DeleteState, formData: FormDa
   if (await guardRouteAction("account.write", { accountId: userId })) return { error: ROUTE_LIMIT_MESSAGE };
   // The password check is a password guess, so it is limited like one.
   if (await limited(userId)) return { error: "Too many attempts. Please try again shortly." };
+  // Context-aware access (issue 741): closing the account.
+  const access = await checkSensitiveAccess(catalogDb, session, "privacy.delete-account", PRIVACY_PAGE);
+  const refused = accessMessage(access);
+  if (refused) return { error: refused, loginPath: access.loginPath };
 
   const form = parseForm(deleteForm, formData);
   if (!form.ok) return { error: form.error };

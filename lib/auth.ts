@@ -54,9 +54,8 @@ import {
   RENEW_AFTER_SECONDS,
   revokeSession,
 } from "@/lib/revoked-sessions";
-
-const DAY_SECONDS = 24 * 60 * 60;
-const THIRTY_DAY_SECONDS = 30 * DAY_SECONDS;
+import { checkSessionRecord, onSessionStart } from "@/lib/session/hooks";
+import { sessionMaxAge } from "@/lib/session/lifetime";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -192,10 +191,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.mfa = (user as { mfa?: JWT["mfa"] }).mfa ?? "none";
         const rememberMe = (user as { rememberMe?: boolean }).rememberMe ?? false;
         token.rememberMe = rememberMe;
-        token.maxAge = rememberMe ? THIRTY_DAY_SECONDS : DAY_SECONDS;
+        // The session's life comes from the one session setting
+        // (config/sessions.ts SESSION_POLICY, CEO decision #559).
+        token.maxAge = sessionMaxAge(rememberMe);
         token.sessionId = crypto.randomUUID();
         token.renewAfter = Math.floor(Date.now() / 1000) + RENEW_AFTER_SECONDS;
         token.authTime = Math.floor(Date.now() / 1000);
+        // The session record (lib/session/hooks.ts; #506, #519): the cap on
+        // devices and the new-device alert. Never throws.
+        await onSessionStart(catalogDb, token);
         return token;
       }
 
@@ -214,6 +218,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           readRole: (userId) => readSessionRole(catalogDb, userId),
           revoke: (jti, userId) => revokeSession(catalogDb, jti, userId),
         },
+        // The session record (#506, #519, #741): a removed device, impossible
+        // travel, the risk score and the strict policy's fixed life.
+        (t, nowSeconds) => checkSessionRecord(catalogDb, t, nowSeconds),
       );
     },
 

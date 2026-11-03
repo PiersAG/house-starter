@@ -88,6 +88,9 @@ export default auth((req) => {
     const loginUrl = req.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.search = "";
+    // Back to this page after signing in again (issue 525); the sign-in page and
+    // action accept only a local path (lib/session/return-path.ts).
+    loginUrl.searchParams.set("callbackUrl", `${pathname}${req.nextUrl.search}`);
     return finish(NextResponse.redirect(loginUrl));
   }
 

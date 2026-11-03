@@ -137,7 +137,7 @@ export function SupportWidget({ appId, defaultFrom = "", endpoint }: SupportWidg
           </button>
         </div>
       ) : (
-        <form onSubmit={submit} className="space-y-3">
+        <form id="support-message" data-keep-draft onSubmit={submit} className="space-y-3">
           <label className="block text-xs text-text-secondary">
             Your email (optional)
             <input

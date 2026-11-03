@@ -327,4 +327,30 @@ export const SCHEMA_CHANGES: SchemaChange[] = [
     reverse:
       "DROP INDEX IF EXISTS email_events_received_idx;\nDROP TABLE IF EXISTS email_events;\nDROP TABLE IF EXISTS tenant_orphans;\nALTER TABLE users DROP COLUMN signup_pending_since;",
   },
+  {
+    id: "0004-session-records",
+    date: "2026-11-03",
+    plane: "catalog",
+    kind: "expand",
+    summary:
+      "Sign-in sessions (Dispatch AH, house-starter #155; app-business-core #506, #519, #741): one row per signed-in device, for the device cap and list, the new-device alert, impossible travel and the session's risk score (lib/session/sql.ts).",
+    adds: [
+      "index:user_sessions_user_idx",
+      "user_sessions",
+      "user_sessions.country",
+      "user_sessions.device_id",
+      "user_sessions.device_label",
+      "user_sessions.end_reason",
+      "user_sessions.ended_at",
+      "user_sessions.id",
+      "user_sessions.last_seen_at",
+      "user_sessions.latitude",
+      "user_sessions.longitude",
+      "user_sessions.risk_score",
+      "user_sessions.started_at",
+      "user_sessions.user_id",
+    ],
+    reverse:
+      "DROP INDEX IF EXISTS user_sessions_user_idx;\nDROP TABLE IF EXISTS user_sessions;",
+  },
 ];
