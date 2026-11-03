@@ -317,14 +317,14 @@ export const PERSONAL_DATA_MAP: Record<string, DataMapEntry> = {
     personal: [],
     linkedBy: null,
     category: "Databases waiting to be deleted",
-    holds: "the id of a database left behind by an unfinished sign-up or a deletion, until the factory deletes it",
+    holds: "the id of a new account's database while its sign-up is being finished, or of one left behind by an unfinished sign-up or a deletion, until it is deleted",
     purpose: "So a database no account points to is always deleted, never forgotten.",
     lawfulBasis: "legitimate_interests",
     processors: HOST,
-    retention: "Until the database is deleted; the id names nobody, as its account is gone.",
+    retention: "Until the sign-up finishes or the database is deleted; the id names no person.",
     onErasure: { rule: "none" },
     notPersonal: {
-      tenantId: "The id of a database whose account no longer exists; it names nobody.",
+      tenantId: "The random id of a database; it names no person and is never linked to an account here.",
     },
   },
   emailEvents: {

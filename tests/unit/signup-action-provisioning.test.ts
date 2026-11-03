@@ -25,6 +25,7 @@ vi.mock("@/lib/users", () => ({
   RegistrationError: class extends Error {},
   registerUser: async () => ({ id: "u1", email: "new@example.com", name: null }),
   PENDING_SIGNUP_RETRY_SECONDS: 3600,
+  ACCOUNT_EXISTS_MESSAGE: "An account with this email already exists. Try signing in instead.",
 }));
 vi.mock("@/lib/billing/trial", () => ({ startTrialForNewOwner: async () => {} }));
 vi.mock("@/lib/tenant/signup-provisioning", async (orig) => {

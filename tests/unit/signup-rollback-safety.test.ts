@@ -32,6 +32,7 @@ import {
   provisionNewAccount,
   SIGNUP_PROVISION_FAILED_MESSAGE,
   SIGNUP_STILL_BEING_SET_UP_MESSAGE,
+  SIGNUP_UNSURE_MESSAGE,
   verifyTenantRoute,
   type SignupProvisionDeps,
   type SignupProvisionResult,
@@ -40,6 +41,7 @@ import { isDeactivated } from "@/lib/privacy/deactivation";
 import { runRetentionJob } from "@/lib/privacy/retention-job";
 import { eraseAccount } from "@/lib/privacy/deletion";
 import {
+  ACCOUNT_EXISTS_MESSAGE,
   createUser,
   getUserById,
   PENDING_SIGNUP_EXPIRY_MS,
@@ -257,6 +259,13 @@ const removedAnswer = (database: string) => ({
   message: SIGNUP_PROVISION_FAILED_MESSAGE,
   retryAfterSeconds: 60,
 });
+const existsAnswer = (database: string) => ({
+  ok: false,
+  account: "exists",
+  database,
+  message: ACCOUNT_EXISTS_MESSAGE,
+  retryAfterSeconds: 60,
+});
 const keptAnswer = (database: string) => ({
   ok: false,
   account: "kept",
@@ -389,12 +398,44 @@ describe("record first, then create", () => {
     }) as AppDatabase;
     const destroy = vi.fn(async () => true);
     const result = await provisionNewAccount(id, email, { catalog, destroy });
-    expect(result.ok).toBe(false);
+    // The rollback reads the account it could not delete, so the answer is what a retry gets.
+    expect(result).toEqual(existsAnswer("listed-for-sweep"));
     // The account is on and linked: the rollback deleted neither it nor its database.
     const row = await account(id);
     expect(row.signup_pending_since).toBeNull();
     expect(destroy).not.toHaveBeenCalled();
     expect(existsSync(tenantFile(String(row.tenant_id)))).toBe(true);
+  });
+});
+
+describe("the account could not be read after it was not deleted", () => {
+  it("answers the message true either way", async () => {
+    const { id, email } = await newAccount();
+    const real = getCatalogDb();
+    let reads = 0;
+    // Switched on behind the sign-up's back, then the read of it fails.
+    const catalog = new Proxy(real, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "select") {
+          return (...args: unknown[]) => {
+            reads += 1;
+            if (reads >= 2) throw new Error("planted: reads fail");
+            return (value as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as AppDatabase;
+    const result = await provisionNewAccount(id, email, {
+      catalog,
+      provision: async () => {
+        await query("UPDATE users SET signup_pending_since = NULL, deactivated_at = NULL WHERE id = ?", [id]);
+        throw new Error("planted");
+      },
+    });
+    expect(result).toMatchObject({ ok: false, account: "unknown", message: SIGNUP_UNSURE_MESSAGE, retryAfterSeconds: 3600 });
+    expect(errors.join("\n")).toContain("rollback step read-account failed");
   });
 });
 
@@ -427,7 +468,7 @@ describe("review 1 — the rollback only ever touches this sign-up's own account
     expect(await provisionNewAccount(member.id, member.email, { provision, verifyRoute })).toEqual(result);
   });
 
-  it("an account whose existing workspace does not open is not told it is set up", async () => {
+  it("an account whose existing workspace does not open is not told it is set up, nor 'still being set up'", async () => {
     const owner = await inviter();
     const member = await activeAccount();
     await query("UPDATE users SET tenant_id = ? WHERE id = ?", [owner.tenantId, member.id]);
@@ -436,14 +477,17 @@ describe("review 1 — the rollback only ever touches this sign-up's own account
         throw new Error("planted: the workspace does not open");
       },
     });
-    expect(result).toEqual(keptAnswer("none"));
+    expect(result).toEqual(existsAnswer("none"));
+    // What a retry is told agrees.
+    await expect(registerUser(getCatalogDb(), { email: member.email, password: PASSWORD })).rejects.toThrow(ACCOUNT_EXISTS_MESSAGE);
   });
 
   it("an account its owner closed is never given a workspace or switched back on", async () => {
     const closed = await activeAccount();
     await query("UPDATE users SET deactivated_at = unixepoch(), deletion_due_at = unixepoch() + 86400 WHERE id = ?", [closed.id]);
     const provision = vi.fn(async () => undefined);
-    expect(await provisionNewAccount(closed.id, closed.email, { provision })).toEqual(keptAnswer("none"));
+    expect(await provisionNewAccount(closed.id, closed.email, { provision })).toEqual(existsAnswer("none"));
+    await expect(registerUser(getCatalogDb(), { email: closed.email, password: PASSWORD })).rejects.toThrow(ACCOUNT_EXISTS_MESSAGE);
     expect(provision).not.toHaveBeenCalled();
     const row = await account(closed.id);
     expect(row.tenant_id).toBeNull();
@@ -726,6 +770,7 @@ describe("property: every combination of failing rollback steps, at every point 
             expect(row, label).toBeUndefined();
             expect(result.message, label).toBe(SIGNUP_PROVISION_FAILED_MESSAGE);
           } else {
+            expect(result.account, label).toBe("kept"); // none of these runs ever switches the account on
             expect(row, label).toBeDefined();
             expect(row.tenant_id, label).not.toBe(made.id);
             expect(isDeactivated(await getUserById(getCatalogDb(), id)), label).toBe(true);

@@ -88,6 +88,9 @@ export const PENDING_SIGNUP_RETRY_SECONDS = PENDING_SIGNUP_EXPIRY_MS / 1000;
 export const PENDING_SIGNUP_MESSAGE =
   "An account with this email is still being set up. Please try again in an hour.";
 
+/** What a sign-up is told when a finished (or closed) account holds its address. */
+export const ACCOUNT_EXISTS_MESSAGE = "An account with this email already exists. Try signing in instead.";
+
 /** True when the account is a sign-up whose database is not yet ready. */
 export function isPendingSignup(user: { signupPendingSince: Date | null }): boolean {
   return user.signupPendingSince !== null;
@@ -194,7 +197,7 @@ export async function registerUser(
       "email_taken",
       isPendingSignup(existing)
         ? PENDING_SIGNUP_MESSAGE
-        : "An account with this email already exists. Try signing in instead.",
+        : ACCOUNT_EXISTS_MESSAGE,
     );
   }
   const passwordHash = await hashPassword(input.password);

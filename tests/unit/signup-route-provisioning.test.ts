@@ -35,6 +35,7 @@ vi.mock("@/lib/auth-rate-limit", () => ({
 vi.mock("@/lib/users", () => ({
   RegistrationError: class extends Error {},
   PENDING_SIGNUP_RETRY_SECONDS: 3600,
+  ACCOUNT_EXISTS_MESSAGE: "An account with this email already exists. Try signing in instead.",
   registerUser: async () => {
     if (state.registerThrows) throw new Error("planted: SQLITE_ERROR no such table: users");
     return { id: "u1", email: "new@example.com", name: null };

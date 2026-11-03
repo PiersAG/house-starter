@@ -46,7 +46,7 @@ import { logEvent } from "@/lib/observability/log";
 import { tenantOrphans, tenants, users } from "@/lib/schema";
 import { getProvisioner, newTenantId, provisionTenant } from "@/lib/tenant/provisioner";
 import { recordTenantOrphan } from "@/lib/tenant/orphans";
-import { PENDING_SIGNUP_RETRY_SECONDS, type AppDatabase } from "@/lib/users";
+import { ACCOUNT_EXISTS_MESSAGE, PENDING_SIGNUP_RETRY_SECONDS, type AppDatabase } from "@/lib/users";
 
 /** The account is gone, so the address is free again at once. */
 export const SIGNUP_PROVISION_FAILED_MESSAGE =
@@ -73,8 +73,14 @@ export const SIGNUP_UNSURE_RETRY_SECONDS = PENDING_SIGNUP_RETRY_SECONDS;
 
 export type SignupProvisionFailure = {
   ok: false;
-  /** "kept": the account still exists, switched off, until it is erased an hour after it was made. */
-  account: "removed" | "kept";
+  /**
+   * What became of the account, so the answer is true and agrees with a retry:
+   * "removed" — gone, the address free at once; "kept" — still a sign-up being
+   * set up, switched off, until it is erased an hour after it was made;
+   * "exists" — a finished (or closed) account, which a retry is told to sign in
+   * to; "unknown" — it could not be read.
+   */
+  account: "removed" | "kept" | "exists" | "unknown";
   /**
    * "none" — no database was asked for; "removed" — it was made and is gone;
    * "listed-for-sweep" — it may exist, and its tenant_orphans record stays.
@@ -126,16 +132,32 @@ export async function verifyTenantRoute(tenantId: string): Promise<void> {
 }
 
 /** The rollback steps, by name, as they appear in the log when one fails. */
-export type RollbackStep = "delete-account" | "read-links" | "delete-database" | "delete-registration" | "clear-record";
+export type RollbackStep =
+  | "delete-account"
+  | "read-account"
+  | "read-links"
+  | "delete-database"
+  | "delete-registration"
+  | "clear-record";
 
 /** The failure answer for what the rollback left. */
 export function signupFailure(
   account: SignupProvisionFailure["account"],
   database: SignupProvisionFailure["database"],
 ): SignupProvisionFailure {
-  return account === "removed"
-    ? { ok: false, account, database, message: SIGNUP_PROVISION_FAILED_MESSAGE, retryAfterSeconds: SIGNUP_FAILED_RETRY_SECONDS }
-    : { ok: false, account, database, message: SIGNUP_STILL_BEING_SET_UP_MESSAGE, retryAfterSeconds: PENDING_SIGNUP_RETRY_SECONDS };
+  const [message, retryAfterSeconds] = {
+    removed: [SIGNUP_PROVISION_FAILED_MESSAGE, SIGNUP_FAILED_RETRY_SECONDS],
+    kept: [SIGNUP_STILL_BEING_SET_UP_MESSAGE, PENDING_SIGNUP_RETRY_SECONDS],
+    exists: [ACCOUNT_EXISTS_MESSAGE, SIGNUP_FAILED_RETRY_SECONDS],
+    unknown: [SIGNUP_UNSURE_MESSAGE, SIGNUP_UNSURE_RETRY_SECONDS],
+  }[account] as [string, number];
+  return { ok: false, account, database, message, retryAfterSeconds };
+}
+
+/** What the account is now, read from its row (undefined: no such account). */
+function accountState(row: { signupPendingSince: Date | null } | undefined): SignupProvisionFailure["account"] {
+  if (!row) return "removed";
+  return row.signupPendingSince !== null ? "kept" : "exists";
 }
 
 /**
@@ -168,7 +190,7 @@ export async function provisionNewAccount(
       const reason = row ? "account-not-a-fresh-sign-up" : "account-missing";
       console.error(`signup: the account's database was not set up (${reason}); nothing made or rolled back`);
       safeLog({ level: "error", event: "signup.provision_refused", userId, fields: { reason } });
-      return signupFailure(row ? "kept" : "removed", "none");
+      return signupFailure(accountState(row), "none");
     }
 
     // 1 record first: if this fails, the catch below deletes the account and nothing else.
@@ -299,7 +321,8 @@ async function step<T>(name: RollbackStep, failed: RollbackStep[], run: () => Pr
  * never written, so no database was asked for). Each step runs only if the one
  * before it succeeded; whatever is not deleted keeps its record:
  *
- *   1 delete the account, only while it is still a sign-up being set up;
+ *   1 delete the account, only while it is still a sign-up being set up (if it
+ *     is not, it is read, so the answer says what it is);
  *   2 read who links `minted`: nobody, or stop;
  *   3 delete the database: gone, or stop;
  *   4 delete its registration, then 5 its record.
@@ -322,7 +345,16 @@ async function rollBack(
       .where(and(eq(users.id, userId), isNotNull(users.signupPendingSince)))
       .run(),
   );
-  const account: SignupProvisionFailure["account"] = deleted?.rowsAffected === 1 ? "removed" : "kept";
+  // Deleted; or not deleted because it is no longer a sign-up being set up (read
+  // it, so the answer says what it is); or the delete failed, leaving it as it was.
+  let account: SignupProvisionFailure["account"] = "kept";
+  if (deleted?.rowsAffected === 1) account = "removed";
+  else if (deleted !== undefined) {
+    const rows = await step("read-account", failed, () =>
+      catalog.select({ signupPendingSince: users.signupPendingSince }).from(users).where(eq(users.id, userId)).limit(1).all(),
+    );
+    account = rows === undefined ? "unknown" : accountState(rows[0]);
+  }
   if (!minted) return { account, database: "none", failed };
 
   const left = { account, database: "listed-for-sweep" as const, failed };
