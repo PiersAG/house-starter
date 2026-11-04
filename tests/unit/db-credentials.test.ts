@@ -22,6 +22,7 @@ import {
   provisionTenant,
 } from "@/lib/tenant/provisioner";
 import {
+  DEFAULT_CREDENTIAL_MODE,
   SHORT_LIVED_EXPIRATION,
   __resetHeldTokensForTests,
   credentialMode,
@@ -116,8 +117,11 @@ function tursoEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 }
 
 describe("credentialMode", () => {
-  it("defaults to stored, takes short-lived, and rejects anything else", () => {
-    expect(credentialMode({ NODE_ENV: "test" } as NodeJS.ProcessEnv)).toBe("stored");
+  it("defaults to short-lived (D7: no tenant key outlives an hour), takes stored only when asked, and rejects anything else", () => {
+    expect(DEFAULT_CREDENTIAL_MODE).toBe("short-lived");
+    expect(credentialMode({ NODE_ENV: "test" } as NodeJS.ProcessEnv)).toBe("short-lived");
+    expect(credentialMode({ NODE_ENV: "test", TENANT_DB_CREDENTIALS: " " } as NodeJS.ProcessEnv)).toBe("short-lived");
+    expect(credentialMode({ NODE_ENV: "test", TENANT_DB_CREDENTIALS: "stored" } as NodeJS.ProcessEnv)).toBe("stored");
     expect(credentialMode({ NODE_ENV: "test", TENANT_DB_CREDENTIALS: "short-lived" } as NodeJS.ProcessEnv)).toBe("short-lived");
     expect(() => credentialMode({ NODE_ENV: "test", TENANT_DB_CREDENTIALS: "forever" } as NodeJS.ProcessEnv)).toThrow(
       /TENANT_DB_CREDENTIALS/,
@@ -243,8 +247,34 @@ describe("short-lived mode (#746)", () => {
   });
 });
 
-describe("stored mode (the default) — unchanged, and audited", () => {
+describe("the default mode at sign-up (Dispatch AO)", () => {
+  it("with nothing set, sign-up asks for a one-hour token and stores none", async () => {
+    process.env.TENANT_DB_DIR = join(dir, "tenants-default");
+    process.env.TENANT_PROVISIONER = "file";
+    const realCreate = FileTenantProvisioner.prototype.create;
+    const seen: unknown[] = [];
+    vi.spyOn(FileTenantProvisioner.prototype, "create").mockImplementation(async function (
+      this: FileTenantProvisioner,
+      id: string,
+      opts?: unknown,
+    ) {
+      seen.push(opts);
+      return { ...(await realCreate.call(this, id)), authToken: "jwt-migrate-only", authTokenExpiresAt: new Date(Date.now() + 3600_000) };
+    });
+    await provisionTenant("t0dflt");
+    expect(seen[0]).toEqual({ expiration: SHORT_LIVED_EXPIRATION });
+    const c = createClient({ url: catalogUrl });
+    const row = (await c.execute("SELECT db_auth_token FROM tenants WHERE id = 't0dflt'")).rows[0];
+    c.close();
+    expect(row.db_auth_token).toBeNull();
+    const issued = (await events()).filter((e) => e.event === "issue");
+    expect(Number(issued[0].expires_at)).toBeGreaterThan(0); // an end time is recorded
+  });
+});
+
+describe("stored mode (opt-in) — unchanged, and audited", () => {
   it("records the issue at sign-up and each use; the token is never in the log", async () => {
+    process.env.TENANT_DB_CREDENTIALS = "stored";
     process.env.TENANT_DB_DIR = join(dir, "tenants2");
     process.env.TENANT_PROVISIONER = "file";
     process.env[MFA_KEY_ENV] = randomBytes(32).toString("base64");
