@@ -10,14 +10,17 @@
 // including against the real report of a scan of the template with a seeded
 // cross-site-scripting flaw behind sign-in (tests/unit/fixtures/).
 
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { discoverAllRoutes } from "../isolation/route-map";
 import { assertLocalTarget, cookieHeader, DOCKER_HOST, sessionFromSetCookie, SESSION_COOKIE } from "../../scripts/dast/session";
-import { ACTIVE_SCAN_MINUTES, automationPlan, bodyFields, openApiFor, SCAN_EXCLUSIONS } from "../../scripts/dast/plan";
-import { judge, refusals, summary, type ZapReport } from "../../scripts/dast/gate";
+import { ACTIVE_SCAN_MINUTES, automationPlan, bodyFields, extraStarts, openApiFor, ownerSettingKey, SCAN_EXCLUSIONS } from "../../scripts/dast/plan";
+import { findings, judge, refusals, summary, type ZapReport } from "../../scripts/dast/gate";
 
 const ROOT = join(__dirname, "..", "..");
+const fixture = (name: string) =>
+  JSON.parse(readFileSync(join(__dirname, "fixtures", name), "utf8")) as ZapReport;
 const SESSION = { cookie: "c00kie", csrfHeader: "x-csrf-token", csrfToken: "t0ken", email: "active-scan@example.invalid" };
 
 describe("target: the locally served app only", () => {
@@ -83,10 +86,20 @@ describe("the scan's input covers every API route (app/api)", () => {
     expect(Object.keys(signup!.requestBody!.content["application/json"].schema.properties).length).toBeGreaterThan(0);
   });
 
-  it("fills route parameters", () => {
+  it("fills route parameters, with a real owner-writable setting for the settings route", () => {
     const op = api.paths["/api/settings/{key}"];
     expect(op).toBeDefined();
     expect(JSON.stringify(op)).toContain('"in":"path"');
+    const key = ownerSettingKey();
+    expect(key).toMatch(/^[a-z]+\.[a-z_]+$/);
+    expect(JSON.stringify(op)).toContain(`"example":"${key}"`);
+  });
+
+  it("adds the self-test's seeded page as a crawl start only when asked", () => {
+    expect(extraStarts({})).toEqual([]);
+    expect(extraStarts({ SCAN_EXTRA_START: "/dashboard/canary?q=hello, //evil.example, nope" })).toEqual(["/dashboard/canary?q=hello"]);
+    const plan = automationPlan("http://127.0.0.1:3000", SESSION, "/zap/wrk", ["/dashboard/canary?q=hello"]);
+    expect(JSON.stringify(plan.jobs)).toContain("http://127.0.0.1:3000/dashboard/canary?q=hello");
   });
 });
 
@@ -147,6 +160,26 @@ describe("the gate: blocks on High, fail-closed", () => {
     expect(judge({ report: { site: [] }, zapLog: done, stillSignedIn: true }).passed).toBe(false);
     expect(judge({ report: report("1"), zapLog: "Job activeScan started\n", stillSignedIn: true }).passed).toBe(false);
     expect(judge({ report: report("1"), zapLog: done, stillSignedIn: false }).problems.join()).toMatch(/signed out/);
+  });
+
+  it("catches the seeded cross-site-scripting flaw behind sign-in (real scan report)", () => {
+    const seeded = fixture("zap-active-seeded-xss.json");
+    const v = judge({ report: seeded, zapLog: done, stillSignedIn: true });
+    expect(v.passed).toBe(false);
+    const high = findings(seeded).filter((f) => f.risk === 3);
+    expect(high.some((f) => /Cross Site Scripting/i.test(f.name) && f.where.includes("/dashboard/"))).toBe(true);
+  });
+
+  it("passes the clean template (real scan report)", () => {
+    const clean = fixture("zap-active-clean.json");
+    expect(judge({ report: clean, zapLog: done, stillSignedIn: true }).passed).toBe(true);
+  });
+
+  it("passes the seeded report in self-test mode only when the flaw is at the seeded page", () => {
+    const seeded = fixture("zap-active-seeded-xss.json");
+    expect(judge({ report: seeded, zapLog: done, stillSignedIn: true, expectHigh: "/dashboard/canary" }).passed).toBe(true);
+    expect(judge({ report: fixture("zap-active-clean.json"), zapLog: done, stillSignedIn: true, expectHigh: "/dashboard/canary" }).passed).toBe(false);
+    expect(judge({ report: seeded, zapLog: done, stillSignedIn: false, expectHigh: "/dashboard/canary" }).passed).toBe(false);
   });
 
   it("counts what the app's own defences refused", () => {

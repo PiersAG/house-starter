@@ -26,6 +26,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverAllRoutes, type DiscoveredRoute } from "../../tests/isolation/route-map";
 import { assertLocalTarget, SCAN_ADDRESS, SESSION_COOKIE, type ScanSession } from "./session";
+import { ALL_DEFINITIONS } from "@/lib/settings/registry";
 
 /** Requests the scan never sends, as path regexes relative to the base. */
 export const SCAN_EXCLUSIONS: { pattern: string; reason: string }[] = [
@@ -41,6 +42,26 @@ export const ACTIVE_SCAN_MINUTES = 20;
 export const SPIDER_MINUTES = 3;
 
 const SAMPLE = "zap";
+
+/**
+ * Route-parameter values that reach the handler. An unknown setting key is
+ * refused before the body is read (measured: 1,955 of the first CI scan's
+ * settings requests answered 404), so the settings route gets a real setting an
+ * owner may write, and the payloads reach its value handling. Every other
+ * parameter gets the sample.
+ */
+export function ownerSettingKey(): string {
+  const writable = ALL_DEFINITIONS.filter((d) => d.ownerEditable !== false && !d.operatorOnly);
+  return (writable.find((d) => d.valueType === "text") ?? writable[0])?.key ?? SAMPLE;
+}
+
+export const PARAM_EXAMPLES: Record<string, Record<string, () => string>> = {
+  "/api/settings/[key]": { key: ownerSettingKey },
+};
+
+function paramExample(route: string, name: string): string {
+  return PARAM_EXAMPLES[route]?.[name]?.() ?? SAMPLE;
+}
 
 /** Field names a route's source validates, from `name: z.…` and `name: …Field` entries. */
 export function bodyFields(source: string): string[] {
@@ -63,7 +84,7 @@ export function openApiFor(routes: DiscoveredRoute[], base: string, read = (f: s
       name,
       in: "path",
       required: true,
-      schema: { type: "string", example: SAMPLE },
+      schema: { type: "string", example: paramExample(route.path, name) },
     }));
     for (const method of route.methods.filter((m) => m !== "OPTIONS" && m !== "HEAD")) {
       const op: Operation = {
