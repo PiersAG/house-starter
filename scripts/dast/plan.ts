@@ -46,12 +46,14 @@ const SAMPLE = "zap";
 /**
  * Route-parameter values that reach the handler. An unknown setting key is
  * refused before the body is read (measured: 1,955 of the first CI scan's
- * settings requests answered 404), so the settings route gets a real setting an
- * owner may write, and the payloads reach its value handling. Every other
- * parameter gets the sample.
+ * settings requests answered 404), and so is a key whose capability is switched
+ * off (the second scan's `billing.invoice_notes`: the template ships with
+ * payments off). So the settings route gets a CORE setting an owner may write —
+ * core is on in every app — and the payloads reach its value handling. Every
+ * other parameter gets the sample.
  */
 export function ownerSettingKey(): string {
-  const writable = ALL_DEFINITIONS.filter((d) => d.ownerEditable !== false && !d.operatorOnly);
+  const writable = ALL_DEFINITIONS.filter((d) => d.capability === "core" && d.ownerEditable !== false && !d.operatorOnly);
   return (writable.find((d) => d.valueType === "text") ?? writable[0])?.key ?? SAMPLE;
 }
 

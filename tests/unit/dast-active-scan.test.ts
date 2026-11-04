@@ -91,7 +91,7 @@ describe("the scan's input covers every API route (app/api)", () => {
     expect(op).toBeDefined();
     expect(JSON.stringify(op)).toContain('"in":"path"');
     const key = ownerSettingKey();
-    expect(key).toMatch(/^[a-z]+\.[a-z_]+$/);
+    expect(key).toMatch(/^core\.[a-z_]+$/); // core is on in every app; a switched-off capability's key answers 404
     expect(JSON.stringify(op)).toContain(`"example":"${key}"`);
   });
 

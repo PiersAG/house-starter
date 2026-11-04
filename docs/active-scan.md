@@ -17,7 +17,7 @@ The factory's planted security scan still runs ZAP's **baseline** (signed out, p
 2. `scripts/dast/session.ts` creates a throwaway test account through the app's own sign-up endpoint, signs it in through the login form's endpoint, and checks that a signed-in page answers 200.
 3. `scripts/dast/plan.ts` writes ZAP's Automation Framework plan:
    - the session cookie and the request token (`lib/csrf.ts`) are added to every request, so the scan runs signed in and its writes pass the request check;
-   - every API route under `app/api` is fed in as an OpenAPI description. The routes are found from the source, so a route the builder adds is scanned next time. Each write gets an example body built from the field names its source validates. The settings route gets a real setting an owner may write (`PARAM_EXAMPLES`), so the payloads get past its key lookup;
+   - every API route under `app/api` is fed in as an OpenAPI description. The routes are found from the source, so a route the builder adds is scanned next time. Each write gets an example body built from the field names its source validates. The settings route gets a real core setting an owner may write (`PARAM_EXAMPLES`; core is on in every app), so the payloads get past its key lookup;
    - the spider crawls the pages from `/dashboard` and from `/`;
    - ZAP's **active** scan then runs for at most 20 minutes.
    - The scan never sends the requests listed in `SCAN_EXCLUSIONS` (sign-out, sign-in attempts, session revoke), because they would end its own session. Each exclusion carries its reason.
