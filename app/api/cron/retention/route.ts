@@ -3,7 +3,10 @@
 // manual cleanup"). Called once a day by Vercel's scheduler (vercel.json
 // `crons`), which sends `Authorization: Bearer <CRON_SECRET>`. Erases accounts
 // whose 30 days are up, deletes expired retained records and rows past their
-// age limit (lib/privacy/retention-job.ts).
+// age limit (lib/privacy/retention-job.ts). Then sends the dispute-deadline
+// reminders (issue 370, lib/disputes/reminders.ts: one a day to the owner in the last 3
+// days before a dispute's evidence deadline, with the evidence pack), when the app
+// sells a subscription.
 //
 // Refused without the right secret (401), and when CRON_SECRET is not set
 // (503): the job then does not run, and /api/health's `deletions` check turns
@@ -19,6 +22,12 @@ import { cronAuthorised } from "@/lib/privacy/cron-auth";
 import { runRetentionJob } from "@/lib/privacy/retention-job";
 import { liveTenantPlane, sendErasureConfirmation } from "@/lib/privacy/runtime";
 import { readSecret } from "@/lib/secrets";
+import { runDisputeReminders } from "@/lib/disputes/reminders";
+import { isSubscriptionBillingActive } from "@/lib/billing/routes";
+import { sendEmail } from "@/lib/email/send";
+import { getAppName } from "@/lib/branding";
+import { canonicalBaseUrl } from "@/lib/app-url";
+import { recordError } from "@/lib/observability/error-log";
 
 export const runtime = "nodejs";
 
@@ -35,8 +44,20 @@ async function handleGET(request: Request): Promise<Response> {
     tenantPlane: liveTenantPlane,
     confirm: sendErasureConfirmation,
   });
+  const disputes = await runDisputeReminders(catalogDb, {
+    now: new Date(),
+    enabled: isSubscriptionBillingActive(),
+    ownerEmail: process.env.OWNER_EMAIL?.trim() || null,
+    appName: await getAppName(),
+    baseUrl: reminderBaseUrl(request),
+    send: sendEmail,
+    report: async (message, context) => {
+      await recordError({ message: `billing: ${message}`, route: "/api/cron/retention", method: "GET", context });
+    },
+  });
   return NextResponse.json(
     {
+      disputeReminders: disputes.sent,
       erased: run.erased.length,
       unverified: run.erased.filter((r) => !r.verified).length,
       expiredRetained: run.expiredRetained,
@@ -44,6 +65,15 @@ async function handleGET(request: Request): Promise<Response> {
     },
     { headers: { "Cache-Control": "no-store" } },
   );
+}
+
+/** The app's address for links in the reminder (the configured one, else this request's). */
+function reminderBaseUrl(request: Request): string {
+  try {
+    return canonicalBaseUrl(undefined, new URL(request.url).origin);
+  } catch {
+    return new URL(request.url).origin;
+  }
 }
 
 export const GET = withRequestLog("/api/cron/retention", withRouteLimit("jobs.retention", handleGET));

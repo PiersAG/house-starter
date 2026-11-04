@@ -17,7 +17,18 @@ Open the dispute in Stripe (Payments → Disputes; the email names its id).
 
 ## 2. The evidence pack
 
-Everything below is in the app or in Stripe; nothing has to be collected by hand.
+The app assembles it (#370): every field of Stripe's dispute form the app can
+fill, under the field's own name, from the customer's records.
+
+- **Before the deadline** the app emails it to you once a day for the last 3
+  days, while the dispute still needs your answer (the daily job,
+  `lib/disputes/reminders.ts`). The reminders stop when you send evidence or
+  accept, or when the bank decides.
+- **At any time:** `npx tsx scripts/dispute-evidence.ts <dispute id>` prints it.
+
+Copy each part into the field of the same name in Stripe's form. Two things are
+added by hand: a screenshot of the payment page showing the refund policy link,
+and any emails with the customer. What the pack draws on:
 
 - The customer's account email and sign-up date.
 - The subscription and its invoices: `billing_invoices` holds every invoice the
