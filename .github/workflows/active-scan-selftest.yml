@@ -1,0 +1,82 @@
+name: Active scan self-test
+
+# Proves the signed-in active scan catches what it is for (app-business-core
+# issue 533 acceptance: "a seeded XSS flaw behind login is caught; the clean
+# template passes"). The clean half is the `active-scan` job in ci.yml, on every
+# pull request. This is the seeded half: in its own throwaway checkout it copies
+# tests/dast/canary-page.tsx — a signed-in page with a reflected cross-site
+# scripting flaw — to app/dashboard/canary/page.tsx, builds, runs the same scan
+# (scripts/dast/run.sh), and PASSES ONLY IF the gate raised a High finding at
+# that page. If the scan ever stops seeing a flaw it should see, this goes red.
+#
+# Runs when the scan's own parts change, weekly, and on demand. Not a required
+# check: the seeded copy is never the app, and nothing it builds is kept.
+
+on:
+  pull_request:
+    paths:
+      - "scripts/dast/**"
+      - "tests/dast/**"
+      - ".github/workflows/active-scan-selftest.yml"
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  seeded-flaw:
+    name: Active scan catches a seeded flaw behind sign-in
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0
+      SCAN_BASE: http://127.0.0.1:3000
+      SCAN_OUT: dast-results
+      SCAN_EXTRA_START: /dashboard/canary?q=hello
+      AUTH_SECRET: ci-active-scan-only-dummy-secret-not-used-anywhere-real
+      TENANCY_MODE: per_tenant
+      DATABASE_URL: file:active-scan.db
+      RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+      RATE_LIMIT_SAFE_TEST_FACTOR: "1000"
+      STRIPE_SECRET_KEY: sk_test_ci-active-scan-only-dummy-not-a-real-key
+      STRIPE_WEBHOOK_SECRET: whsec_ci-active-scan-only-dummy-not-a-real-secret
+      APP_LIFECYCLE_STATE: LAUNCHED
+      EMAIL_PROVIDER_API_KEY: re_ci-active-scan-only-dummy-not-a-real-key
+      EMAIL_SEND_MODE: log
+      MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Plant the seeded flaw (this checkout only)
+        run: |
+          mkdir -p app/dashboard/canary
+          cp tests/dast/canary-page.tsx app/dashboard/canary/page.tsx
+
+      - name: Build the seeded copy
+        run: npm run build
+
+      - name: Scan, and require the seeded flaw to be caught
+        run: bash scripts/dast/run.sh --expect-high /dashboard/canary
+
+      - name: Upload the self-test report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: active-scan-selftest-report
+          path: dast-results/
+          retention-days: 14
