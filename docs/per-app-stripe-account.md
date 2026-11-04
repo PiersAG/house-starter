@@ -89,10 +89,11 @@ placeholder, clearly marked as one**, and is never blocked for want of a price.
    (`--dry-run` first to see the change). It records the new price with
    `placeholder: false` and raises `price_version`; merge it through a pull request.
 2. Run the app's billing provisioning (`provision-app-billing.yml` with the build id).
-   The raised version lets it create the new test price under the app's lookup key and
-   archive the old one (Stripe prices never change once made; existing subscribers keep
-   the price they signed up on). It opens a pull request here stamping the new price id
-   with `pricePlaceholder: false`.
+   The raised version lets it create the new test price under the app's lookup key. The
+   old price is left active, because this app keeps sending its id until the pull request
+   stamping the new one merges, and Stripe refuses an archived price at checkout (Stripe
+   prices never change once made; existing subscribers keep the price they signed up on).
+   It opens a pull request here stamping the new price id with `pricePlaceholder: false`.
 3. Live mode: at the live switch-over (#469) the live price is created at the amount
    recorded in step 1, and its id is stamped by pull request.
 
