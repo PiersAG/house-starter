@@ -105,6 +105,15 @@ if (!appIdMatch) {
 }
 const appId = appIdMatch[1];
 
+// The placeholder price (app-business-core #374, CEO ruling 2026-11-03): with no price
+// in the brief, the build uses a marked £20/month placeholder and stamps
+// `pricePlaceholder: true`. The build is never blocked for want of a price, so this
+// guard only WARNS about it; the launch checklist refuses it, and the app refuses a
+// live Stripe key while it is set (lib/billing/placeholder.ts). Absent = an app built
+// before the field existed: not a placeholder.
+const placeholderMatch = text.match(/\bpricePlaceholder\s*:\s*(true|false)\s*,/);
+const pricePlaceholder = placeholderMatch ? placeholderMatch[1] === "true" : false;
+
 const values = [...block[1].matchAll(/["']([^"']+)["']/g)].map((m) => m[1]);
 const defaultMatch = block[1].match(/\bdefault\s*:\s*["']([^"']+)["']/);
 if (!defaultMatch) {
@@ -128,6 +137,12 @@ if (expectStub) {
         `objects with another app's id.`,
     );
   }
+  if (pricePlaceholder) {
+    fail(
+      `template guard: ${CONFIG} has pricePlaceholder: true. The template carries no ` +
+        `price at all; only a scaffolded app's provisioning marks a placeholder.`,
+    );
+  }
   console.log(
     `OK (template): priceIds.default is the stub "${STUB}" and appId is the stub ` +
       `"${APP_ID_STUB}", as expected.`,
@@ -142,6 +157,12 @@ if (expectStub) {
 // someone hand-stubbed a price to satisfy the priced rule; both are the "fake
 // price" this guard exists to refuse.
 if (!subscriptionActive) {
+  if (pricePlaceholder) {
+    fail(
+      `${CONFIG} has subscriptionActive: false and pricePlaceholder: true. An app that ` +
+        `sells nothing has no price, placeholder or real — set pricePlaceholder: false.`,
+    );
+  }
   const real = values.filter((v) => /^price_[A-Za-z0-9]+$/.test(v) && v !== STUB);
   if (real.length > 0) {
     fail(
@@ -203,7 +224,15 @@ if (appId === APP_ID_STUB || appId.includes("_replace_me") || appId.trim() === "
       `which stamps it from the app slug.`,
   );
 }
+if (pricePlaceholder) {
+  console.log(
+    `::warning::check-billing-configured: this app's price is the build's £20/month ` +
+      `PLACEHOLDER (pricePlaceholder: true). Set the real price before launch ` +
+      `(app-business-core scripts/set_app_price.py); the launch checklist refuses a ` +
+      `placeholder, and the app refuses a live Stripe key while it is set.`,
+  );
+}
 console.log(
   `OK: priceIds.default is a real Stripe price id ("${defaultId}") and appId is ` +
-    `"${appId}"; no stubs present.`,
+    `"${appId}"; no stubs present` + (pricePlaceholder ? " (placeholder price)." : "."),
 );
