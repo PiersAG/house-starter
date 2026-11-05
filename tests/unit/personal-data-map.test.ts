@@ -21,6 +21,7 @@ import { schemaTables } from "@/lib/privacy/tables";
 import { categories, privacyPolicy, retentionPolicy, subprocessorList } from "@/lib/legal/privacy-policy";
 import { customerDpa, serviceAgreement, termsOfService } from "@/lib/legal/contracts";
 import { STUB_MARKER, isDraft, legalDocuments, toMarkdown } from "@/lib/legal/render";
+import { errorTrackingConfig } from "@/config/error-tracking";
 import type { LegalDocument } from "@/lib/legal/types";
 
 const ROOT = join(__dirname, "..", "..");
@@ -99,7 +100,7 @@ describe("the subprocessor list (#350)", () => {
   it("names the services chosen: Vercel, Upstash, Turso, Stripe, AWS (vault), Sentry and Resend for email", () => {
     const by = Object.fromEntries(SUBPROCESSORS.map((s) => [s.id, s]));
     for (const id of ["vercel", "upstash", "turso", "stripe", "aws"]) expect(by[id]?.status, id).toBe("in_use");
-    expect(by.sentry?.status).toBe("chosen_not_connected");
+    expect(by.sentry?.status).toBe(errorTrackingConfig.enabled ? "in_use" : "chosen_not_connected");
     expect(by.email?.name).toBe("Resend");
     expect(by.email?.status).toBe("chosen_not_connected");
     expect(by.email?.ref).toContain("#470");
