@@ -23,6 +23,19 @@ and fails when a page or a form exists that a list does not name: adding a scree
 adding one line there, and the gate tests it from then on. A page that adds a file field
 fails `server.spec.ts` until it is listed in `UPLOAD_FIELDS` with a 200 MB test of its own.
 
+## Safari's engine gets its own test server
+
+The page policy tells browsers to switch every request to https
+(`upgrade-insecure-requests`). Chromium and Firefox skip that for `localhost`;
+Safari's engine does not, so on a plain-http test server it fetched the page's own
+scripts and form posts over https and nothing worked (seen on the gate's first run).
+The WebKit projects therefore use a second server of the same build on port 3001,
+started with `CSP_PLAIN_HTTP_TEST_SERVER=1`: the one place `lib/csp.ts` leaves that
+directive out, and only in the safe test environment (`RATE_LIMIT_ALLOW_IN_MEMORY=true`
+and no `VERCEL_ENV`). A deployed app always has `VERCEL_ENV`, so it always sends the
+directive, and it is served over https, where the directive changes nothing. Both
+states are tested in `tests/unit/csp.test.ts`.
+
 ## Running it
 
 CI runs it on every pull request. Locally (Chromium only; WebKit and Firefox need system
