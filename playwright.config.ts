@@ -16,7 +16,28 @@ const RESPONSIVE_VIEWPORTS = [
   { name: "responsive-1920-desktop", viewport: { width: 1920, height: 1080 } },
 ] as const;
 
+// Issue 721 (Matt Murphy #296: "the slowest connection the smallest screen the oldest
+// browser"; #306 "opens it on safari"; #323 "a phone from 2019"). `slow` turns on the
+// slow connection and slowed processor in tests/support/slow-device.ts.
+const AWKWARD_PROJECTS = [
+  { name: "awkward-chromium", use: devices["Desktop Chrome"], slow: false },
+  { name: "awkward-firefox", use: devices["Desktop Firefox"], slow: false },
+  { name: "awkward-webkit", use: devices["Desktop Safari"], slow: false },
+  { name: "awkward-iphone-2019", use: devices["iPhone 11"], slow: false },
+  { name: "awkward-android-2019-slow", use: devices["Pixel 4"], slow: true },
+  {
+    name: "awkward-320-slow",
+    use: { ...devices["Desktop Chrome"], viewport: { width: 320, height: 640 } },
+    slow: true,
+  },
+] as const;
+
 export default defineConfig({
+  // A test that fails and then passes on its retry is a timing bug, not a pass
+  // (app-business-core issue 740; Matt Murphy #208: "the timeout you never thought
+  // about triggers the race condition that never reproduces locally"). CI reports
+  // it as a failure; docs/test-independence.md.
+  failOnFlakyTests: !!process.env.CI,
   testDir: "./tests",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -75,6 +96,36 @@ export default defineConfig({
         },
       },
     },
+    // THE CORRECTNESS GATE (app-business-core issue 413) — BLOCKING, CI job
+    // `correctness-gate`. docs/correctness-gate.md lists its legs.
+    //
+    // Accessibility on every page (issue 720): desktop, with the keyboard walk, and a
+    // phone, where the same axe and accessibility-tree checks run on the narrow layout.
+    {
+      name: "a11y",
+      testDir: "./tests/a11y",
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "a11y-phone",
+      testDir: "./tests/a11y",
+      testIgnore: /keyboard\.spec\.ts$/,
+      use: { ...devices["Pixel 5"] },
+    },
+    // Awkward input and devices (issue 721). The same suite in Chromium, Firefox and
+    // Safari's engine (WebKit), on a 2019 iPhone (WebKit) and a 2019 Android phone on a
+    // slow connection with a slowed processor, and at the smallest screen. The
+    // connection and processor are slowed through Chromium's DevTools protocol, so the
+    // slow-device projects are Chromium-based; tests/awkward/devices.spec.ts applies it.
+    ...AWKWARD_PROJECTS.map((p) => ({
+      name: p.name,
+      testDir: "./tests/awkward",
+      // The full form matrix and the server tests run once, in Chromium; every
+      // browser and device runs the first-visit journeys.
+      testMatch: p.name === "awkward-chromium" ? /\.spec\.ts$/ : /journeys\.spec\.ts$/,
+      use: { ...p.use },
+      metadata: { slow: p.slow },
+    })),
     // Spec C4 — multi-viewport advisory gate.
     // Every project runs the same responsive.spec.ts, so the single suite
     // executes five times, once per gated width.
@@ -88,7 +139,9 @@ export default defineConfig({
     })),
   ],
   webServer: {
-    command: "npm run build && npm run start",
+    // The correctness gate builds once, checks the built scripts against the oldest
+    // supported browser, then sets E2E_PREBUILT so this starts that same build.
+    command: process.env.E2E_PREBUILT ? "npm run start" : "npm run build && npm run start",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
