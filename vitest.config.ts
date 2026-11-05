@@ -332,6 +332,20 @@ export default defineConfig({
           branches: 100,
           functions: 100,
         },
+        // Breached passwords and oversized requests (Dispatch AR): a branch here is
+        // a breached password let through, or a too-large request not refused.
+        "**/lib/password-breach.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
+        "**/lib/request-size.ts": {
+          lines: 100,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+        },
       },
     },
   },

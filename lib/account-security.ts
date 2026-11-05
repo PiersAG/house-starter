@@ -23,6 +23,7 @@ import { eq } from "drizzle-orm";
 import { users } from "@/lib/schema";
 import { getUserById, type AppDatabase } from "@/lib/users";
 import { hashPassword, validatePasswordStrength, verifyPassword } from "@/lib/password";
+import { breachedPasswordError } from "@/lib/password-breach";
 import { cancelOpenResetTokens } from "@/lib/password-reset";
 import { logSecurityEvent } from "@/lib/security-log";
 import { endAllSessionRecords } from "@/lib/session/records";
@@ -81,6 +82,8 @@ export async function changePassword(
       "Choose a new password that is different from your current one.",
     );
   }
+  const breached = await breachedPasswordError(newPassword, "change");
+  if (breached) throw new ChangePasswordError("weak_password", breached);
   const passwordHash = await hashPassword(newPassword);
   await db
     .update(users)

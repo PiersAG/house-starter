@@ -11,6 +11,7 @@ import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { passwordResetTokens, users, type User } from "@/lib/schema";
 import { hashPassword, validatePasswordStrength } from "@/lib/password";
+import { breachedPasswordError } from "@/lib/password-breach";
 import { SIGNUP_FAILED_MESSAGE } from "@/lib/signup-failure";
 import { z } from "zod";
 import {
@@ -222,6 +223,9 @@ export async function registerUser(
   if (!fields.success) {
     throw new RegistrationError("invalid_input", firstIssue(fields.error));
   }
+  // Known from a data breach (issue 356): only a 5-character hash prefix leaves.
+  const breached = await breachedPasswordError(input.password, "signup");
+  if (breached) throw new RegistrationError("weak_password", breached);
   const existing = await getUserByEmail(db, input.email);
   if (existing && !isPendingSignup(existing)) {
     throw new RegistrationError("email_taken", ACCOUNT_EXISTS_MESSAGE);
