@@ -9,8 +9,10 @@
 // too, and the signed-in account's opaque id is attached from the session —
 // the account count Sentry shows for an issue includes browser errors.
 //
-// OFF (config/error-tracking.ts switched off, or no EU SENTRY_DSN): 404 to
-// everyone, before the body is read — the route is absent.
+// OFF (config/error-tracking.ts switched off, or no EU SENTRY_DSN): 404 before
+// the body is read — the route is absent to the app's own pages. A request
+// from another website is refused 403 first, in both states, like every other
+// write endpoint (tests/e2e/csrf.spec.ts), so it learns nothing of the switch.
 //
 // ON, it is bounded: same-origin requests only (lib/csrf.ts verifySameOrigin),
 // 16 KB per body, one report per body in a fixed shape (anything else is
@@ -46,9 +48,10 @@ const reportSchema = z
 const NO_CONTENT = () => new Response(null, { status: 204 });
 
 async function handlePOST(request: Request): Promise<Response> {
-  if (!errorTrackingTarget()) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  // Another website is refused first, in both states (so it cannot tell which).
   const foreign = verifySameOrigin(request);
   if (foreign) return foreign;
+  if (!errorTrackingTarget()) return NextResponse.json({ error: "Not found." }, { status: 404 });
 
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (declared > ERROR_REPORT_MAX_BYTES) return NO_CONTENT();

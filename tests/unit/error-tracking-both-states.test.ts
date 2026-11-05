@@ -145,6 +145,19 @@ describe(describeState, () => {
 });
 
 describe("in both states", () => {
+  it("another website's report is refused 403, whichever state the switch is in", async () => {
+    const res = await errorReportPOST(
+      new Request("https://app.example.com/api/error-report", {
+        method: "POST",
+        headers: { origin: "https://evil.example", "sec-fetch-site": "cross-site" },
+        body: JSON.stringify({ type: "E", message: "m", page: "/", kind: "error" }),
+      }),
+    );
+    await flushErrorTracking();
+    expect(res.status).toBe(403);
+    expect(sent).toEqual([]);
+  });
+
   it("the page policy never names Sentry", () => {
     expect(JSON.stringify(cspHeaders("nonce"))).not.toMatch(/sentry/i);
   });
