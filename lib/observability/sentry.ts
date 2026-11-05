@@ -39,6 +39,12 @@
 // number, a boolean or a short code (letters, digits, - _ . :) and the field's
 // name is not one that holds personal data.
 //
+// LIMITS, RECORDED RATHER THAN HIDDEN. A pattern cannot recognise a person's
+// name written unquoted in free text ("no dog for Jane"), or a page address
+// whose segment is a customer's name rather than an id (/clients/jane-doe).
+// The template's own messages and routes carry neither (routes use ids); an
+// app that adds such a route or message keeps it out of errors.
+//
 // THE FREE PLAN. config/error-tracking.ts: a day's budget shared by every
 // instance (one counter in the shared rate-limit store), a per-instance hourly
 // cap, and repeats of the same error sent once per window then only sampled.
@@ -173,10 +179,14 @@ export function buildEvent(
 
 const HOUR = 3_600_000;
 
+/** Which limits an event counts against. */
+export type GateKind = "normal" | "browser" | "cross_tenant";
+
 /** Per-instance limits: the hourly caps, repeats of the same error, a 429 pause. */
 export class SendGate {
   private hourStart = 0;
   private sentThisHour = 0;
+  private browserThisHour = 0;
   private alertsThisHour = 0;
   private lastSent = new Map<string, number>();
   private pausedUntil = 0;
@@ -190,12 +200,13 @@ export class SendGate {
     if (now - this.hourStart >= HOUR) {
       this.hourStart = now;
       this.sentThisHour = 0;
+      this.browserThisHour = 0;
       this.alertsThisHour = 0;
     }
   }
 
   /** May an event with this grouping key be sent now? Counts it when yes. */
-  allow(key: string, kind: "normal" | "cross_tenant", now: number = Date.now()): boolean {
+  allow(key: string, kind: GateKind, now: number = Date.now()): boolean {
     if (now < this.pausedUntil) return false;
     this.roll(now);
     if (kind === "cross_tenant") {
@@ -203,7 +214,9 @@ export class SendGate {
       this.alertsThisHour += 1;
       return true;
     }
-    if (this.sentThisHour >= this.config.maxEventsPerHour) return false;
+    const browser = kind === "browser";
+    const cap = browser ? Math.ceil(this.config.maxEventsPerHour / 2) : this.config.maxEventsPerHour;
+    if ((browser ? this.browserThisHour : this.sentThisHour) >= cap) return false;
     const last = this.lastSent.get(key);
     const windowMs = this.config.dedupeWindowMinutes * 60_000;
     if (last !== undefined && now - last < windowMs && this.random() >= this.config.repeatSampleRate) {
@@ -214,7 +227,8 @@ export class SendGate {
       for (const [k, t] of this.lastSent) if (now - t >= windowMs) this.lastSent.delete(k);
       if (this.lastSent.size > 500) this.lastSent.clear();
     }
-    this.sentThisHour += 1;
+    if (browser) this.browserThisHour += 1;
+    else this.sentThisHour += 1;
     return true;
   }
 
@@ -224,8 +238,8 @@ export class SendGate {
   }
 }
 
-/** One counter for the whole app's day, in the shared store. No store: allowed. */
-async function underDailyBudget(config: ErrorTrackingConfig): Promise<boolean> {
+/** One counter per share of the whole app's day, in the shared store. No store: allowed. */
+async function underDailyBudget(config: ErrorTrackingConfig, browser: boolean): Promise<boolean> {
   let store;
   try {
     store = getRateLimiter();
@@ -233,8 +247,8 @@ async function underDailyBudget(config: ErrorTrackingConfig): Promise<boolean> {
     return true; // no shared store configured (local, CI): the per-instance caps still hold
   }
   try {
-    const n = await store.add("error-tracking:sent", 1, 86_400);
-    return n <= config.dailyBudget;
+    const n = await store.add(browser ? "error-tracking:sent:browser" : "error-tracking:sent:server", 1, 86_400);
+    return n <= (browser ? config.browserDailyBudget : config.dailyBudget - config.browserDailyBudget);
   } catch {
     return true; // a store blip must not lose an error; the per-instance caps still hold
   }
@@ -306,14 +320,15 @@ export function sendReport(
     const target = errorTrackingTarget(env, config);
     if (!target) return false;
     const event = buildEvent(report, env);
-    const kind = report.source === "cross_tenant" ? "cross_tenant" : "normal";
+    const kind: GateKind =
+      report.source === "cross_tenant" ? "cross_tenant" : report.source === "browser" ? "browser" : "normal";
     const top = event.exception?.values[0]?.stacktrace?.frames.at(-1);
     const key =
       event.fingerprint?.join("|") ??
       `${report.source}|${event.exception?.values[0]?.type ?? ""}|${(event.exception?.values[0]?.value ?? event.message?.formatted ?? "").slice(0, 200)}|${top?.filename ?? ""}:${top?.lineno ?? ""}`;
     if (!gate.allow(key, kind)) return false;
     schedule(async () => {
-      if (kind === "normal" && !(await underDailyBudget(config))) return;
+      if (kind !== "cross_tenant" && !(await underDailyBudget(config, kind === "browser"))) return;
       await post(target, event);
     });
     return true;
@@ -483,7 +498,8 @@ export function reportBrowserError(
   return sendReport(
     {
       source: "browser",
-      type: input.type || "Error",
+      // The type comes from the page, which anyone can forge: an identifier only.
+      type: /^[A-Za-z_$][\w$]{0,99}$/.test(input.type) ? input.type : "Error",
       message: input.message,
       stack: input.stack,
       route: input.page,

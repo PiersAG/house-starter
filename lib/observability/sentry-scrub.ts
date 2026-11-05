@@ -15,6 +15,8 @@ const MAX_MESSAGE = 1000;
 const MAX_TAG = 200;
 const MAX_FRAMES = 50;
 
+const CODE_NAME = /^(?:[a-z_$][\w$]*(?:[./:-][\w$]+)*|[A-Z][A-Z0-9_]+|[A-Z][A-Za-z]*(?:Error|Exception))$/;
+
 const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
   // A database error's parameter list (Drizzle: "Failed query: …\nparams: a,b").
   [/\bparams:\s*[\s\S]*$/gi, "params: [redacted]"],
@@ -35,10 +37,12 @@ const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
   [/[A-Za-z0-9_+-]{24,}={0,2}/g, (m) => (/\d/.test(m) && /[A-Za-z]/.test(m) ? "[redacted]" : m)],
   // Phone and card numbers: nine or more digits, spaces and dashes allowed.
   [/\+?\d[\d\s-]{7,}\d/g, (m) => (m.replace(/\D/g, "").length >= 9 ? "[number]" : m)],
-  // Quoted text that reads like a person's words, not a code name.
+  // Quoted text, unless it is plainly a code name: a lower-case identifier or
+  // dotted/slashed path ('tenantId', "users.email", 'lib/db'), a CONSTANT, or
+  // an error type. A quoted name ('Jane'), words or anything else is a value.
   [/"([^"\n]{1,200})"|'([^'\n]{1,200})'|`([^`\n]{1,200})`/g, (m, a, b, c) => {
     const inner = a ?? b ?? c ?? "";
-    return /\s|@|\d{4}/.test(inner) ? `${m[0]}[value]${m[0]}` : m;
+    return CODE_NAME.test(inner) ? m : `${m[0]}[value]${m[0]}`;
   }],
 ];
 

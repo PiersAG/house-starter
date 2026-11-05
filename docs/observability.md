@@ -81,7 +81,9 @@ signed-in account's opaque id (so Sentry counts the accounts an issue reached).
 
 **What never goes.** Emails, names, cookies, headers, request or response
 bodies, IP addresses, query strings, form contents. The event has no
-`request`, `extra` or `breadcrumbs` part. Free text is scrubbed first
+`request`, `extra` or `breadcrumbs` part. Not caught by any pattern, so kept
+out by the app: a person's name written unquoted in an error message, and a page
+address segment that is a name rather than an id (the template's routes use ids). Free text is scrubbed first
 (`lib/observability/sentry-scrub.ts`, every rule tested in
 `tests/unit/sentry-scrub.test.ts`); log-line fields go only as numbers,
 booleans and short codes.
@@ -91,12 +93,14 @@ booleans and short codes.
 (`lib/observability/sentry-dsn.ts`); any other address counts as unset.
 
 **The page policy never names Sentry.** The browser posts to the app's own
-`/api/error-report` (same origin only, 16 KB, one fixed shape, its own route
-limit); the server scrubs and sends on. So `lib/csp.ts` is unchanged in both
+`/api/error-report` (same origin only, 16 KB, one fixed shape, 10 a minute per
+client); the server scrubs and sends on. So `lib/csp.ts` is unchanged in both
 states.
 
 **The free plan's 5,000 errors a month.** `dailyBudget` 150 events a day across
-all instances (one counter in the shared rate-limit store, ≈4,650 a month),
+all instances (counters in the shared rate-limit store, ≈4,650 a month; browser
+reports, which anyone can post, may use only `browserDailyBudget` 50 of it and
+half the hourly cap, so forged ones cannot crowd out the server's errors),
 `maxEventsPerHour` 20 per instance, the same error once an hour per instance
 and then 10% of its repeats, at most 5 browser reports per page. Sentry
 answering 429 pauses sending. The cross-customer alert has its own cap (30 an

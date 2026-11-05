@@ -57,9 +57,13 @@ describe("scrubText", () => {
     expect(scrubText("Unexpected token < in JSON at position 0")).toBe("Unexpected token < in JSON at position 0");
   });
 
-  it("removes quoted text that reads like a person's words", () => {
+  it("removes quoted values, keeping quoted code names", () => {
     expect(scrubText('Invalid name "Jane Doe" for dog "Rex 2024"')).toBe('Invalid name "[value]" for dog "[value]"');
     expect(scrubText("value 'a@b' refused")).toBe("value '[value]' refused");
+    expect(scrubText('{"received":"Jane"}')).toBe('{"received":"[value]"}');
+    expect(scrubText("no column 'users.email' in 'lib/db', code 'SQLITE_ERROR', a 'TypeError'")).toBe(
+      "no column 'users.email' in 'lib/db', code 'SQLITE_ERROR', a 'TypeError'",
+    );
   });
 
   it("removes a URL's query string and fragment", () => {

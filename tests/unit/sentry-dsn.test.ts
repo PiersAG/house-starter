@@ -79,6 +79,10 @@ describe("config/error-tracking.ts keeps within the free plan", () => {
   it("the day's budget over a 31-day month leaves room under 5,000 for the cross-customer alerts", () => {
     expect(c.dailyBudget * 31).toBeLessThanOrEqual(SENTRY_FREE_PLAN_ERRORS_PER_MONTH - 300);
   });
+  it("browser reports, which anyone can post, have at most a third of the day's budget", () => {
+    expect(c.browserDailyBudget).toBeGreaterThan(0);
+    expect(c.browserDailyBudget * 3).toBeLessThanOrEqual(c.dailyBudget);
+  });
   it("one instance cannot spend the whole day's budget in under an hour", () => {
     expect(c.maxEventsPerHour).toBeLessThan(c.dailyBudget);
     expect(c.maxEventsPerHour).toBeGreaterThan(0);

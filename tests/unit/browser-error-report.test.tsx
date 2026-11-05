@@ -71,17 +71,22 @@ describe("sendBrowserError", () => {
 });
 
 describe("<ErrorReporter>", () => {
-  it("reports an uncaught error and an unhandled rejection while mounted, and nothing after", () => {
+  // The handlers are called directly: a real dispatched error event counts as
+  // an unhandled error in the test run.
+  it("reports an uncaught error and an unhandled rejection while mounted, and removes its handlers after", () => {
+    const add = vi.spyOn(window, "addEventListener");
+    const remove = vi.spyOn(window, "removeEventListener");
     const view = render(<ErrorReporter maxReportsPerPage={5} />);
-    window.dispatchEvent(new ErrorEvent("error", { error: new Error("uncaught"), message: "uncaught" }));
-    const rejection = new Event("unhandledrejection") as Event & { reason: unknown };
-    rejection.reason = new Error("rejected");
-    window.dispatchEvent(rejection);
+    const handler = (type: string) => add.mock.calls.find((c) => c[0] === type)?.[1] as (e: unknown) => void;
+    handler("error")({ error: new Error("uncaught"), message: "uncaught" });
+    handler("unhandledrejection")({ reason: new Error("rejected") });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(String((fetchMock.mock.calls[1] as [string, RequestInit])[1].body)).kind).toBe("unhandledrejection");
     view.unmount();
-    window.dispatchEvent(new ErrorEvent("error", { error: new Error("later"), message: "later" }));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual(expect.arrayContaining(["error", "unhandledrejection"]));
+    expect(sendBrowserError(new Error("later"), "error")).toBe(false);
+    add.mockRestore();
+    remove.mockRestore();
   });
 });
 

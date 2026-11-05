@@ -18,7 +18,9 @@
 //
 // THE FREE PLAN. 5,000 errors a month for the whole Sentry organisation. The
 // limits below keep one app inside it: at most `dailyBudget` events a day
-// across every server instance (counted in the shared rate-limit store), the
+// across every server instance (counted in the shared rate-limit store; browser
+// reports have their own smaller share, so forged ones cannot crowd out the
+// server's errors), the
 // same error sent once per `dedupeWindowMinutes` per instance and then only a
 // `repeatSampleRate` share of its repeats, and at most `maxEventsPerHour` per
 // instance so one burst cannot spend the day's budget. The cross-customer
@@ -30,7 +32,13 @@ export interface ErrorTrackingConfig {
   enabled: boolean;
   /** Events a day for this app, all instances together (shared store). */
   dailyBudget: number;
-  /** Events an hour from one server instance. */
+  /**
+   * The part of the day's budget browser reports may use. Anyone can post to
+   * /api/error-report, so browser reports have their own share and their own
+   * hourly cap: a flood of forged reports cannot crowd out the server's errors.
+   */
+  browserDailyBudget: number;
+  /** Events an hour from one server instance (browser reports: half of it, counted apart). */
   maxEventsPerHour: number;
   /** How long one instance waits before sending the same error again in full. */
   dedupeWindowMinutes: number;
@@ -45,6 +53,7 @@ export interface ErrorTrackingConfig {
 export const errorTrackingConfig: ErrorTrackingConfig = {
   enabled: false,
   dailyBudget: 150,
+  browserDailyBudget: 50,
   maxEventsPerHour: 20,
   dedupeWindowMinutes: 60,
   repeatSampleRate: 0.1,

@@ -253,11 +253,26 @@ describe("the free plan's limits", () => {
   });
 
   it("stops at the day's budget shared by every instance", async () => {
-    const c = config({ dailyBudget: 2 });
+    const c = config({ dailyBudget: 52, browserDailyBudget: 50 });
     __resetErrorTrackingForTests(c, () => 0.99);
     for (const m of ["one", "two", "three"]) sendReport({ source: "log", message: m }, ENV, c);
     await flushErrorTracking();
     expect(calls).toHaveLength(2);
+  });
+
+  it("gives browser reports their own share, so forged ones cannot crowd out server errors", async () => {
+    const c = config({ dailyBudget: 3, browserDailyBudget: 1 });
+    __resetErrorTrackingForTests(c, () => 0.99);
+    for (const m of ["b1", "b2", "b3"]) sendReport({ source: "browser", type: "Error", message: m }, ENV, c);
+    for (const m of ["s1", "s2"]) sendReport({ source: "server", type: "Error", message: m }, ENV, c);
+    await flushErrorTracking();
+    expect(events().map((e) => e.exception?.values[0].value).sort()).toEqual(["b1", "s1", "s2"]);
+  });
+
+  it("caps browser reports at half the hourly limit, counted apart from the server's", () => {
+    const gate = new SendGate(config({ maxEventsPerHour: 4 }));
+    expect(["a", "b", "c"].map((k) => gate.allow(k, "browser", 0))).toEqual([true, true, false]);
+    expect(["d", "e", "f", "g", "h"].map((k) => gate.allow(k, "normal", 0))).toEqual([true, true, true, true, false]);
   });
 
   it("pauses when Sentry answers 429 (over quota)", async () => {
@@ -307,6 +322,14 @@ describe("the request id", () => {
     const id = "3f2b8c1e-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
     expect(buildEvent({ source: "server", message: "m", requestId: id }, ENV).tags.request_id).toBe(id);
     expect(buildEvent({ source: "server", message: "m", requestId: "bad id!" }, ENV).tags.request_id).toBeUndefined();
+  });
+});
+
+describe("a forged browser report", () => {
+  it("cannot set an error type that is not an identifier", async () => {
+    reportBrowserError({ type: "Jane Doe <jane@example.com>", message: "m", page: "/", kind: "error" }, ENV);
+    await flushErrorTracking();
+    expect(events()[0].exception?.values[0].type).toBe("Error");
   });
 });
 
