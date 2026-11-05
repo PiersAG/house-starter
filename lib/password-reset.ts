@@ -22,6 +22,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { passwordResetTokens, users } from "@/lib/schema";
 import { getUserByEmail, type AppDatabase } from "@/lib/users";
 import { hashPassword, validatePasswordStrength } from "@/lib/password";
+import { breachedPasswordError } from "@/lib/password-breach";
 import { sendEmail } from "@/lib/email/send";
 import { resetPasswordTemplate } from "@/lib/email/templates/reset-password";
 import { logSecurityEvent } from "@/lib/security-log";
@@ -183,7 +184,8 @@ export async function resetPassword(
   newPassword: string,
   now: Date = new Date(),
 ): Promise<{ userId: string }> {
-  const strengthError = validatePasswordStrength(newPassword);
+  const strengthError =
+    validatePasswordStrength(newPassword) ?? (await breachedPasswordError(newPassword, "reset"));
   if (strengthError) {
     throw new PasswordResetError("weak_password", strengthError);
   }
