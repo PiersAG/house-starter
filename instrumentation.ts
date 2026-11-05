@@ -201,6 +201,12 @@ export async function register() {
     const { scrubSecretsFromEnv } = await import("./lib/secrets");
     scrubSecretsFromEnv();
 
+    // (1d) Readable server stacks (issue 761): while error tracking is on and
+    // connected, Node maps each stack frame back to the original file and line
+    // with the source maps the build kept (next.config.ts serverSourceMaps).
+    const { errorTrackingTarget } = await import("./lib/observability/sentry-dsn");
+    if (errorTrackingTarget()) process.setSourceMapsEnabled(true);
+
     // (2) Boot migration — apply the schema this instance needs without a
     // separate CLI step.
     //

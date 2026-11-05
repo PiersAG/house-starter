@@ -93,6 +93,9 @@ export const ROUTE_LIMITS = {
   // hour; browsers send CSP reports in bursts.
   "public.health": { perClient: { limit: 60, windowSeconds: 60 }, public: true },
   "public.csp-report": { perClient: { limit: 120, windowSeconds: 60 }, public: true },
+  // Browser error reports (app-business-core issue 761), relayed to Sentry; a
+  // page sends at most a handful (config/error-tracking.ts).
+  "public.error-report": { perClient: { limit: 30, windowSeconds: 60 }, public: true },
   "public.security-txt": { perClient: { limit: 30, windowSeconds: 60 }, public: true },
   // The daily retention job (app-business-core issue 722): Vercel's scheduler calls
   // it once a day with CRON_SECRET; a few a minute is already far more than enough.

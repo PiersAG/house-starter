@@ -508,6 +508,49 @@ jobs:
             node scripts/check-billing-configured.mjs --expect-stub
           fi
 
+  # Error-tracking both-states matrix (app-business-core issue 761): the per-app
+  # switch in config/error-tracking.ts, flipped like subscription_active. OFF:
+  # nothing reaches Sentry, the browser report route is 404 and the server may
+  # not connect to Sentry. ON: the same, until an EU SENTRY_DSN is set; then
+  # events go, stripped of personal data. tests/unit/error-tracking-both-states
+  # .test.ts reads the posture and asserts the matching behaviour. The ON leg
+  # re-renders the legal documents first, as a per-app build that switches it
+  # on must (Sentry becomes "in use" on the subprocessor list).
+  error-tracking-matrix:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quoted: YAML 1.1 reads bare on/off as booleans.
+        state: ["on", "off"]
+    name: error_tracking = ${{ matrix.state }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Flip the error-tracking switch (throwaway checkout)
+        run: node scripts/set-flag.mjs --flag error_tracking --state ${{ matrix.state }}
+
+      - name: Re-render the legal documents for this posture
+        run: npm run legal:render
+
+      - name: Show resulting error-tracking posture
+        run: grep -E "^  enabled:" config/error-tracking.ts
+
+      - name: Type check (error_tracking ${{ matrix.state }})
+        run: npm run type-check
+
+      - name: Unit suite (error_tracking = ${{ matrix.state }})
+        run: npm run test
+
   # ONE stable check for branch protection (app-business-core #776, #450). Every
   # app repo is born from this template, and build-init requires this check on
   # its `main` beside the security scan's summary. Listing each job by name
@@ -519,7 +562,7 @@ jobs:
   # cancelled job is not a pass).
   all-ci-passed:
     name: All CI checks passed
-    needs: [toolchain-guard, ci, capability-matrix, billing-matrix]
+    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, error-tracking-matrix]
     if: always()
     runs-on: ubuntu-24.04
     steps:

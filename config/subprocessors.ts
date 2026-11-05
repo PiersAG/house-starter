@@ -17,6 +17,12 @@
 // sign-up (wiki/policies/subprocessors.md in app-business-core).
 //
 // tests/unit/legal-documents.test.ts holds the rules above.
+//
+// Sentry's status follows the error-tracking switch (config/error-tracking.ts):
+// "in_use" while it is on, so a per-app build that switches it on re-renders
+// the legal documents (`npm run legal:render`) in the same change.
+
+import { errorTrackingConfig } from "@/config/error-tracking";
 
 export type SubprocessorStatus =
   /** Connected and receiving data. */
@@ -130,13 +136,13 @@ export const SUBPROCESSORS: readonly Subprocessor[] = [
     name: "Sentry",
     purpose: "Records app errors so they can be fixed quickly (error tracking).",
     personalData:
-      "When connected: the account id and the page involved in an error, never a password, a form's contents or an email address.",
+      "When connected: the account id, the page and the type of browser involved in an error; never a password, a form's contents, an email address or your IP address.",
     location: "EU data region.",
     transfer: "Not applicable while data stays in the EU region.",
     dpa: "https://sentry.io/legal/dpa/",
     deletion: "Error records expire within the plan's history window (about 30 days).",
-    status: "chosen_not_connected",
-    ref: "#700 (settled 2026-11-02)",
+    status: errorTrackingConfig.enabled ? "in_use" : "chosen_not_connected",
+    ref: "#700 (settled 2026-11-02); #761 (connected by config/error-tracking.ts)",
   },
   {
     id: "email",

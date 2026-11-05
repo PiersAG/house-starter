@@ -27,6 +27,8 @@ import "server-only";
 
 import net from "node:net";
 import allowFile from "./egress-allow.json";
+import { errorTrackingConfig, type ErrorTrackingConfig } from "@/config/error-tracking";
+import { errorTrackingTarget } from "@/lib/observability/sentry-dsn";
 
 export type EgressPolicy = "enforce" | "report" | "off";
 
@@ -67,7 +69,10 @@ function hostOf(value: string | undefined): string | null {
 }
 
 /** Every allowed host and suffix for this environment. */
-export function allowList(env: NodeJS.ProcessEnv = process.env): {
+export function allowList(
+  env: NodeJS.ProcessEnv = process.env,
+  errorTracking: Pick<ErrorTrackingConfig, "enabled"> = errorTrackingConfig,
+): {
   hosts: Set<string>;
   suffixes: string[];
 } {
@@ -87,6 +92,10 @@ export function allowList(env: NodeJS.ProcessEnv = process.env): {
     const h = hostOf(env[name]);
     if (h) hosts.add(h);
   }
+  // Sentry's EU ingest address (#761), only while error tracking is switched on
+  // (config/error-tracking.ts) and SENTRY_DSN is an EU address; off, it is refused.
+  const sentry = errorTrackingTarget(env, errorTracking);
+  if (sentry) hosts.add(sentry.host);
   for (const extra of (env.EGRESS_ALLOW ?? "").split(",")) {
     const h = hostOf(extra);
     if (h) hosts.add(h);
