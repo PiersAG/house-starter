@@ -13,6 +13,7 @@
 // API-level (no browser), like the other request-level specs.
 
 import { expect, test } from "@playwright/test";
+import { addressFor } from "../support/browser";
 import { relative } from "node:path";
 import { appDir, discoverAllRoutes, isWritable } from "../isolation/route-map";
 import { EXEMPT, PENDING } from "../unit/csrf-routes";
@@ -33,7 +34,7 @@ test.describe("request-verification tokens (#353)", () => {
 
   test("every write endpoint refuses a request from another website, even with a valid token", async () => {
     test.setTimeout(120_000);
-    const a = await client("203.0.113.97");
+    const a = await client(addressFor(test.info(), "97"));
     const email = `csrf-foreign-${Date.now()}@example.com`;
     await ensureAccount(a, email);
     await signIn(a, email);
@@ -52,8 +53,8 @@ test.describe("request-verification tokens (#353)", () => {
   });
 
   test("the settings write needs this session's token", async () => {
-    const a = await client("203.0.113.98");
-    const b = await client("203.0.113.99");
+    const a = await client(addressFor(test.info(), "98"));
+    const b = await client(addressFor(test.info(), "99"));
     const stamp = Date.now();
     await ensureAccount(a, `csrf-a-${stamp}@example.com`);
     await ensureAccount(b, `csrf-b-${stamp}@example.com`);

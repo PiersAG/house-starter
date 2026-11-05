@@ -8,8 +8,8 @@
 //
 // THE ADDRESS. Sign-in is limited per client address (lib/auth-rate-limit.ts),
 // and a local run has no proxy, so every request would share one budget. Each
-// spec passes its own documentation-range address (RFC 5737, 203.0.113.0/24)
-// so the specs do not spend each other's budget.
+// test passes an address of its own from addressFor (tests/support/browser.ts,
+// issue 740), so no test, retry or repeat spends another's budget.
 
 import { request as playwrightRequest, type APIRequestContext } from "@playwright/test";
 import { decode, encode } from "@auth/core/jwt";

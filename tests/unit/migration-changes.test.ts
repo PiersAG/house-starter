@@ -38,7 +38,11 @@ describe("the change log covers the DDL", () => {
     expect(changeLogProblems(SCHEMA_CHANGES, declared)).toEqual([]);
   });
 
-  it("runs every reverse on a fresh database, then migrates it back", async () => {
+  // Migrates two fresh databases per reversible change, one after another: seconds of
+  // real work, so it gets a limit sized for it rather than the 5-second default it
+  // passed only on an idle machine (issue 740, found by running the suite in random
+  // order under load).
+  it("runs every reverse on a fresh database, then migrates it back", { timeout: 120_000 }, async () => {
     for (const change of SCHEMA_CHANGES.filter((c) => c.reverse)) {
       const url = `file:${join(dir, `${change.id}.db`)}`;
       const migrate = change.plane === "catalog" ? migrateCatalog : migrateTenant;

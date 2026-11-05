@@ -4,10 +4,11 @@
 // overwrite it; a save based on the current version succeeds.
 
 import { expect, test } from "@playwright/test";
+import { addressFor } from "../support/browser";
 import { client, ensureAccount, signIn, writeHeaders } from "./session-helpers";
 
 test("a stale second write gets 409; the current-version write succeeds", async () => {
-  const a = await client("203.0.113.91");
+  const a = await client(addressFor(test.info(), "91"));
   const email = `stale-${Date.now()}@example.com`;
   await ensureAccount(a, email);
   await signIn(a, email);

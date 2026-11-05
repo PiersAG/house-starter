@@ -3,6 +3,7 @@
 // without a browser.
 
 import { test, expect } from "@playwright/test";
+import { addressFor } from "../support/browser";
 
 test("/security is public and covers every topic buyers check", async ({ request }) => {
   const res = await request.get("/security", { maxRedirects: 0 });
@@ -37,7 +38,7 @@ test("security.txt never takes its address from a forged Host header", async ({ 
 
 test("/api/csp-report accepts both report formats and answers 204", async ({ request }) => {
   const legacy = await request.post("/api/csp-report", {
-    headers: { "content-type": "application/csp-report", "x-forwarded-for": "203.0.113.71" },
+    headers: { "content-type": "application/csp-report", "x-forwarded-for": addressFor(test.info(), "71") },
     data: JSON.stringify({
       "csp-report": {
         "document-uri": "http://localhost:3000/login?x=1",
@@ -49,7 +50,7 @@ test("/api/csp-report accepts both report formats and answers 204", async ({ req
   });
   expect(legacy.status()).toBe(204);
   const modern = await request.post("/api/csp-report", {
-    headers: { "content-type": "application/reports+json", "x-forwarded-for": "203.0.113.71" },
+    headers: { "content-type": "application/reports+json", "x-forwarded-for": addressFor(test.info(), "71") },
     data: JSON.stringify([
       { type: "csp-violation", body: { documentURL: "http://localhost:3000/", effectiveDirective: "img-src", blockedURL: "data" } },
     ]),
@@ -60,7 +61,7 @@ test("/api/csp-report accepts both report formats and answers 204", async ({ req
 test("/api/csp-report says nothing to junk or an oversized body", async ({ request }) => {
   for (const data of ["not json", JSON.stringify({ hello: "world" }), "x".repeat(20 * 1024)]) {
     const res = await request.post("/api/csp-report", {
-      headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.72" },
+      headers: { "content-type": "application/json", "x-forwarded-for": addressFor(test.info(), "72") },
       data,
     });
     expect(res.status()).toBe(204);

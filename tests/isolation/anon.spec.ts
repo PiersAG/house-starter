@@ -5,6 +5,7 @@
 // (protected /dashboard route) and stays in place unchanged per app.
 
 import { expect, test } from "@playwright/test";
+import { addressFor } from "../support/browser";
 import { appDir, attackableRoutes } from "./route-map";
 import { BASE_URL, client, mintToken } from "../e2e/session-helpers";
 
@@ -45,7 +46,7 @@ for (const route of PROTECTED_ROUTES) {
 // when one route's own auth check is deleted:
 // tests/unit/route-session-check.test.ts.
 
-const SWEEP_ADDRESS = "203.0.113.16";
+const sweepAddress = () => addressFor(test.info(), "sweep");
 const SWEEP_ROUTES = attackableRoutes(appDir()).filter((r) => r.params.length === 0);
 
 /** The path itself and the variants a matcher can miss. */
@@ -102,7 +103,7 @@ test.describe("#516 anonymous and forged-cookie sweep", () => {
     test(`${route.path}: every variant, every bad cookie, never data`, async () => {
       const failures: string[] = [];
       for (const [label, cookie] of await forgedCookies()) {
-        const ctx = await client(SWEEP_ADDRESS, cookie);
+        const ctx = await client(sweepAddress(), cookie);
         for (const path of variants(route.path)) {
           const res = await ctx.get(`${BASE_URL}${path}`);
           const finalPath = new URL(res.url()).pathname;
