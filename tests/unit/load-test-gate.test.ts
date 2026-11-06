@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { evaluate, parseSamples, PROCESSOR_BOUND_PERCENT, report, type K6Summary } from "@/scripts/load/gate";
 import { LOAD_TEST, slug } from "@/config/load-test";
+import { isDroppedPrefetch } from "../support/browser";
 
 const ROOT = join(__dirname, "..", "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
@@ -103,6 +104,14 @@ describe("load-test gate", () => {
       { cpuPercent: 50, memoryKb: 3000 },
     ]);
     expect(parseSamples("100 10 1000\n")).toEqual([]);
+  });
+});
+
+describe("the browser failure watch", () => {
+  it("lets through only a dropped prefetch, never another script error", () => {
+    expect(isDroppedPrefetch("/localhost:3001/dashboard?_rsc=Uj5fJzh3oSqZfPD_ due to access control checks.")).toBe(true);
+    expect(isDroppedPrefetch("/localhost:3001/api/account due to access control checks.")).toBe(false);
+    expect(isDroppedPrefetch("TypeError: undefined is not an object")).toBe(false);
   });
 });
 

@@ -39,5 +39,6 @@ Run it on GitHub, not a laptop: 100 users and a flood are heavy. For a small loc
 
 - **The database is a local file.** Each sign-up makes a file, not a Turso database, so Turso's own speed and limits are not measured. Testing those needs a live service, which this test must not touch.
 - **One process, one machine.** Vercel runs many copies of the app. This test is stricter on processor and memory than production, and says nothing about cold starts.
+- **Speed varies between runs.** Runners are shared: two runs of the same code measured 95% of requests within 99 ms and 254 ms. The bar of 1,500 ms leaves room for that.
 - **Rate limits run at ten times their deployed values** (`SAFE_TEST_FACTOR`), and in memory, not in the shared store. The flood is sized to pass them anyway. The sign-up limit is the same as deployed.
 - **The breached-password lookup is skipped**, as in every test (`lib/password-breach.ts`), so sign-up here does not include that outside call.

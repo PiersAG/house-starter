@@ -53,6 +53,16 @@ export async function ownAddress(page: Page, testInfo: TestInfo, label = ""): Pr
 }
 
 /**
+ * Safari's engine reports a background page prefetch that dies as the page changes
+ * (Next.js's `?_rsc=` fetch, at the moment of a sign-out) as an uncaught script error.
+ * The user sees nothing, and a server error on that fetch is still caught by the
+ * response check below. Seen once in 141 tests on one run (Dispatch AV, 2026-11-06).
+ */
+export function isDroppedPrefetch(message: string): boolean {
+  return /\?_rsc=[\w-]+ due to access control checks\.$/.test(message);
+}
+
+/**
  * Watch a page for the failures a user would meet as a broken screen: a server error
  * (5xx) from this app, or an uncaught script error. `check()` fails the test with what
  * was seen.
@@ -64,7 +74,9 @@ export function watchForFailures(page: Page) {
       failures.push(`${res.status()} from ${res.request().method()} ${new URL(res.url()).pathname}`);
     }
   });
-  page.on("pageerror", (err) => failures.push(`script error: ${err.message}`));
+  page.on("pageerror", (err) => {
+    if (!isDroppedPrefetch(err.message)) failures.push(`script error: ${err.message}`);
+  });
   return {
     failures,
     check(context: string) {
