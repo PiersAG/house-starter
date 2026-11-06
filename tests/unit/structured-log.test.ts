@@ -242,6 +242,7 @@ describe("withRequestLog", () => {
     process.env.SLOW_REQUEST_MS = "1";
     expect(slowRequestMs()).toBe(1);
     const GET = withRequestLog("/api/slow", async () => {
+      // timing-safe: the handler itself is the slow thing under test; 5 ms is always over the 1 ms threshold.
       await new Promise((r) => setTimeout(r, 5));
       return new Response("ok");
     });

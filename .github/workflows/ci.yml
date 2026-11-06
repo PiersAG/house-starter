@@ -25,6 +25,12 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
@@ -417,6 +423,12 @@ jobs:
         state: ["on", "off"]
     name: capability ${{ matrix.flag }} = ${{ matrix.state }}
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
@@ -465,6 +477,12 @@ jobs:
         state: ["on", "off"]
     name: subscription_active = ${{ matrix.state }}
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
@@ -550,6 +568,12 @@ jobs:
       EMAIL_SEND_MODE: log
       MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
@@ -579,6 +603,209 @@ jobs:
           path: dast-results/
           retention-days: 14
 
+  # THE LOAD TEST (app-business-core #356; tool: k6, CEO ruling on #705; Matt Murphy #3:
+  # "Use tools such as k6 or Artillery to simulate at least 100 concurrent users before
+  # launch"). 100 virtual users sign up, sign in and use the app, on a production build
+  # served on this runner, while fresh sign-ups keep coming, one address floods sign-up
+  # and the health check, and another website's requests must stay refused. Plan and
+  # pass bar: config/load-test.ts. Part of "All CI checks passed", so it blocks every
+  # merge, here and in every app built from this template; the result is this job's
+  # summary and one comment on the pull request.
+  #
+  # LOCAL ONLY. scripts/load/run.sh refuses any address but this runner's loopback, and
+  # the values below are throwaway and reach nothing real (the same set as the active
+  # scan). k6 is free and open source and needs no account. Full write-up: docs/load-test.md.
+  load-test:
+    name: Load test (k6, 100 users)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # The last step only, for the comment. Checkout keeps no token, so the app and k6 never hold it.
+      pull-requests: write
+    env:
+      AUTH_SECRET: ci-load-test-only-dummy-secret-not-used-anywhere-real
+      TENANCY_MODE: per_tenant
+      DATABASE_URL: file:load-test.db
+      RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+      STRIPE_SECRET_KEY: sk_test_ci-load-test-only-dummy-not-a-real-key
+      STRIPE_WEBHOOK_SECRET: whsec_ci-load-test-only-dummy-not-a-real-secret
+      APP_LIFECYCLE_STATE: LAUNCHED
+      EMAIL_PROVIDER_API_KEY: re_ci-load-test-only-dummy-not-a-real-key
+      EMAIL_SEND_MODE: log
+    steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Make a throwaway two-step sign-in key
+        run: echo "MFA_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      - name: Build the app
+        run: npm run build
+
+      - name: Install k6 (pinned)
+        run: bash scripts/load/install-k6.sh "$RUNNER_TEMP/k6"
+
+      - name: Run the load test and gate on the pass bar
+        run: bash scripts/load/run.sh
+
+      - name: Upload the load test report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: load-test-report
+          path: load-results/
+          retention-days: 14
+
+      # A comment that cannot be posted (a fork's read-only token) never fails the job:
+      # the job's own result is the gate.
+      - name: Show the result on the pull request
+        if: always() && github.event_name == 'pull_request' && hashFiles('load-results/report.md') != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" --body-file load-results/report.md --edit-last --create-if-none
+
+  # THE CORRECTNESS GATE (app-business-core #413) — BLOCKING. The non-security half of
+  # "production-ready", one named job: accessibility on every page (#720), awkward
+  # input in every form, on every browser and device (#721), and the oldest supported
+  # browser. Its other two legs, layout overflow and visual regression, are the layout
+  # guardrail step in the `ci` job; the automated-test leg is the unit and e2e suites
+  # there, run in random order and failing on a test that passes only on its retry
+  # (#740). Full list: docs/correctness-gate.md. Part of "All CI checks passed", so it
+  # blocks every merge, here and in every app built from this template.
+  #
+  # LOCAL ONLY: the suites drive the app this job builds and serves on its own runner,
+  # with the same throwaway values as the Playwright step above; nothing real is reached.
+  correctness-gate:
+    name: Correctness gate (accessibility, awkward input, browsers)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      AUTH_SECRET: ci-e2e-only-dummy-secret-not-used-anywhere-real
+      TENANCY_MODE: per_tenant
+      DATABASE_URL: file:ci-correctness.db
+      RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+      STRIPE_SECRET_KEY: sk_test_ci-e2e-only-dummy-not-a-real-key
+      STRIPE_WEBHOOK_SECRET: whsec_ci-e2e-only-dummy-not-a-real-secret
+      APP_LIFECYCLE_STATE: LAUNCHED
+      EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
+      EMAIL_SEND_MODE: log
+      MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+    steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install the browsers (Chromium, Firefox, WebKit)
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Build the app
+        run: npm run build
+
+      # config/browser-support.ts: every shipped script must run on the oldest
+      # supported browsers (ES2020: Chrome and Edge 80, Firefox 74, Safari 13.1).
+      - name: Oldest supported browser runs every shipped script
+        run: npm run check:browser-floor
+
+      # E2E_PREBUILT: Playwright starts the build above instead of building again.
+      - name: Accessibility and awkward-input suites
+        env:
+          E2E_PREBUILT: "1"
+        run: npm run test:correctness
+
+      - name: Upload the correctness gate report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: correctness-gate-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+
+  # Error-tracking both-states matrix (app-business-core issue 761): the per-app
+  # switch in config/error-tracking.ts, flipped like subscription_active. OFF:
+  # nothing reaches Sentry, the browser report route is 404 and the server may
+  # not connect to Sentry. ON: the same, until an EU SENTRY_DSN is set; then
+  # events go, stripped of personal data. tests/unit/error-tracking-both-states
+  # .test.ts reads the posture and asserts the matching behaviour. The ON leg
+  # re-renders the legal documents first, as a per-app build that switches it
+  # on must (Sentry becomes "in use" on the subprocessor list).
+  error-tracking-matrix:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quoted: YAML 1.1 reads bare on/off as booleans.
+        state: ["on", "off"]
+    name: error_tracking = ${{ matrix.state }}
+    steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Flip the error-tracking switch (throwaway checkout)
+        run: node scripts/set-flag.mjs --flag error_tracking --state ${{ matrix.state }}
+
+      - name: Re-render the legal documents for this posture
+        run: npm run legal:render
+
+      - name: Show resulting error-tracking posture
+        run: grep -E "^  enabled:" config/error-tracking.ts
+
+      - name: Type check (error_tracking ${{ matrix.state }})
+        run: npm run type-check
+
+      - name: Unit suite (error_tracking = ${{ matrix.state }})
+        run: npm run test
+
   # ONE stable check for branch protection (app-business-core #776, #450). Every
   # app repo is born from this template, and build-init requires this check on
   # its `main` beside the security scan's summary. Listing each job by name
@@ -590,10 +817,16 @@ jobs:
   # cancelled job is not a pass).
   all-ci-passed:
     name: All CI checks passed
-    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, active-scan]
+    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, active-scan, load-test, correctness-gate, error-tracking-matrix]
     if: always()
     runs-on: ubuntu-24.04
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - name: Every job above succeeded
         env:
           NEEDS: ${{ toJSON(needs) }}

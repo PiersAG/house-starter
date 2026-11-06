@@ -12,7 +12,11 @@
 // DETECTION. A signed-in caller from tenant A opening tenant B's database is a
 // cross-tenant access: the row is marked cross_tenant = 1 and, the same moment,
 //   * an error-level `cross_tenant_access` line goes to the structured log and
-//     its sink (an outside alerting tool, once one is chosen, #700),
+//     its sink,
+//   * with error tracking on (config/error-tracking.ts), a distinct Sentry
+//     event goes out: level fatal, tag alert=cross_tenant_access, one group of
+//     its own, never sampled away — naming the account and the two customers'
+//     opaque ids, never their data (lib/observability/sentry.ts),
 //   * a row goes into the durable error log, and
 //   * /api/health's `tenant_isolation` check fails (503) while any such access
 //     happened in the last 24 hours, so the external prober raises the alert.
@@ -36,6 +40,7 @@ import { and, asc, eq, gte, lte } from "drizzle-orm";
 import { getCatalogDb } from "@/lib/catalog";
 import { recordError } from "@/lib/observability/error-log";
 import { logEvent } from "@/lib/observability/log";
+import { reportCrossTenantAccess } from "@/lib/observability/sentry";
 import { currentRequest, noteRequestUser } from "@/lib/observability/request-context";
 import { tenantAccessEvents } from "@/lib/schema";
 import type { AppDatabase } from "@/lib/users";
@@ -83,6 +88,14 @@ export async function noteTenantAccess(
       })
       .run();
     if (cross) {
+      reportCrossTenantAccess({
+        userId: caller.userId,
+        sessionTenantId: caller.tenantId,
+        dataTenantId,
+        route: ctx.route,
+        method: ctx.method,
+        requestId: ctx.requestId,
+      });
       logEvent({
         level: "error",
         event: "cross_tenant_access",

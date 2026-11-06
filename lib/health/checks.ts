@@ -44,6 +44,12 @@ export interface HealthDeps {
    * null (an app in log mode sends nothing) → no check.
    */
   emailHealth?: () => Promise<{ ok: boolean; detail: string } | null>;
+  /**
+   * Error tracking (#761): switched on but not connected (no SENTRY_DSN, or not
+   * an EU one) is shown as a failing NON-critical check — nothing is sent, and
+   * nothing else breaks. Optional: absent, or switched off → no check.
+   */
+  errorTracking?: () => { on: false } | { on: true; ok: boolean; detail: string };
   now: () => number;
   env: NodeJS.ProcessEnv;
 }
@@ -117,6 +123,13 @@ export async function assembleHealth(deps: HealthDeps): Promise<HealthReport> {
       email = null;
     }
     if (email) checks.push({ name: "email", ok: email.ok, critical: true, detail: email.detail });
+  }
+
+  // Error tracking (#761) — not critical: a missing or wrong Sentry address
+  // means errors are not sent, which must not take the app out of service.
+  if (deps.errorTracking) {
+    const et = deps.errorTracking();
+    if (et.on) checks.push({ name: "error_tracking", ok: et.ok, critical: false, detail: et.detail });
   }
 
   // Recent error rate — informational only. Its failure must not flip a

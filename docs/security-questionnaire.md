@@ -13,6 +13,8 @@ report a flaw through `/.well-known/security.txt`.
 |---|---|---|
 | Is data encrypted in transit? | Yes. HTTPS only; HTTP Strict Transport Security for two years, sub-domains included, on every response. | `next.config.ts` (headers), `tests/e2e/security-headers.spec.ts` |
 | How are passwords stored? | Never in readable form: a bcrypt hash only. | `lib/password.ts` |
+| Are passwords known from data breaches refused? | Yes, at sign-up, password reset and password change: checked against Have I Been Pwned's list of breached passwords by the first 5 characters of the password's hash only (the password and its full hash never leave the app). If the service cannot be reached, the password is accepted and the outage is logged. | `lib/password-breach.ts` |
+| Are oversized requests refused? | Yes: a request declared over 1 MB is answered "too large" (413) before the app reads it. | `lib/request-size.ts`, `middleware.ts` |
 | Is multi-factor sign-in available? | Yes, authenticator-app codes with recovery codes; the secrets are stored encrypted. | `lib/mfa/`, `lib/crypto/` |
 | Are sessions protected? | Signed session cookies (HttpOnly, Secure, SameSite=Lax), renewed every ten minutes with the role re-read; a new session id at sign-in and at a role change; sign out of all devices. | `auth.config.ts`, `lib/account-security.ts` |
 | How is one customer's data kept from another's? | A database per customer business by default (`TENANCY_MODE`); every change runs a test that signs in as one business and tries to read and change another's data. | `lib/db.ts`, `tests/isolation/per-tenant.spec.ts` |

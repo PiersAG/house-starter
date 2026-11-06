@@ -53,3 +53,6 @@ ci-e2e.db-*
 # and the ephemeral tenant databases the isolation attack is seeded into.
 # Orchestrator scratch, never source.
 /.build/
+# The load test's results and its k6 (scripts/load/).
+/load-results/
+/.load-tools/

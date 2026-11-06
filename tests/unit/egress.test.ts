@@ -35,6 +35,23 @@ async function localServer(): Promise<{ port: number; close: () => void }> {
   return { port: (srv.address() as net.AddressInfo).port, close: () => srv.close() };
 }
 
+// Its own state, whatever ran before (app-business-core issue 740: the suite runs in
+// random order). In written order an earlier test happened to reach this branch.
+describe("__uninstallEgressGuardForTests", () => {
+  it("does nothing when no guard was ever installed", () => {
+    const g = globalThis as unknown as { __egressOriginalConnect?: unknown };
+    const saved = g.__egressOriginalConnect;
+    const connect = net.Socket.prototype.connect;
+    delete g.__egressOriginalConnect;
+    try {
+      __uninstallEgressGuardForTests();
+      expect(net.Socket.prototype.connect).toBe(connect);
+    } finally {
+      if (saved !== undefined) g.__egressOriginalConnect = saved;
+    }
+  });
+});
+
 describe("egressPolicy", () => {
   it("enforces on a deployed instance and is off locally", () => {
     expect(egressPolicy(env({ VERCEL_ENV: "production" }))).toBe("enforce");
@@ -174,5 +191,17 @@ describe("installEgressGuard — every way a connection can be asked for", () =>
     await tryConnect({ host: "twice.invalid", port: 9 });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith("[egress] refused twice.invalid");
+  });
+});
+
+describe("Sentry's EU address follows the error-tracking switch (issue 761)", () => {
+  const dsn = "https://0123456789abcdef0123456789abcdef@o42.ingest.de.sentry.io/7";
+  const env = { SENTRY_DSN: dsn } as unknown as NodeJS.ProcessEnv;
+  it("is allowed out only while the switch is on and the DSN is an EU one", () => {
+    expect(isAllowed("o42.ingest.de.sentry.io", allowList(env, { enabled: true }))).toBe(true);
+    expect(isAllowed("o42.ingest.de.sentry.io", allowList(env, { enabled: false }))).toBe(false);
+    expect(isAllowed("sentry.io", allowList(env, { enabled: true }))).toBe(false);
+    const us = { SENTRY_DSN: dsn.replace(".de.", ".us.") } as unknown as NodeJS.ProcessEnv;
+    expect(isAllowed("o42.ingest.us.sentry.io", allowList(us, { enabled: true }))).toBe(false);
   });
 });

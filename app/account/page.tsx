@@ -46,6 +46,7 @@ export default async function AccountPage() {
       {isEmpty ? (
         <div className="mt-8">
           <EmptyState
+            level={2}
             title="No preferences yet"
             description="Preference options will appear here as features that use them are switched on."
           />
@@ -55,9 +56,9 @@ export default async function AccountPage() {
           <section key={cap.capability} className="mt-8" aria-label={cap.capability}>
             {cap.groups.map((grp) => (
               <div key={grp.functionalGroup} className="mt-4">
-                <h3 className="text-sm font-medium uppercase tracking-wide text-text-secondary">
+                <h2 className="text-sm font-medium uppercase tracking-wide text-text-secondary">
                   {grp.functionalGroup}
-                </h3>
+                </h2>
                 <div className="mt-1">
                   {grp.settings.map((setting) => (
                     <SettingControl

@@ -19,6 +19,7 @@ import { deletionsOverdue } from "@/lib/privacy/retention-job";
 import { pingDatabase } from "@/lib/health/db-ping";
 import { emailHealth } from "@/lib/email/health";
 import { errorCountSince } from "@/lib/observability/error-log";
+import { errorTrackingStatus } from "@/lib/observability/sentry-dsn";
 import { slowRequestCountSince, slowRequestMs } from "@/lib/observability/log";
 import { withRequestLog } from "@/lib/observability/with-request-log";
 import { crossTenantCountSince } from "@/lib/tenant/access-log";
@@ -58,6 +59,8 @@ export const GET = withRequestLog("/api/health", withRouteLimit("public.health",
     deletionsOverdue: () => deletionsOverdue(catalogDb),
     // Email setup and delivery (issue 757); nothing in log mode, which sends nothing.
     emailHealth: () => emailHealth(catalogDb),
+    // Error tracking switched on but not connected (issue 761): a non-critical check.
+    errorTracking: () => errorTrackingStatus(),
     now: () => Date.now(),
     env: process.env,
   });

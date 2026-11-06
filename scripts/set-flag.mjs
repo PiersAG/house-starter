@@ -13,6 +13,7 @@
 //   • capability flags (payments, booking, comms) → rewrites config/capabilities.ts
 //   • kernel flags (auth, subscription_billing, settings, nav) → rewrites config/kernel.ts
 //   • the per-app switch `subscription_active` → rewrites config/billing.ts
+//   • the per-app switch `error_tracking` → rewrites config/error-tracking.ts
 //
 // subscription_active is NOT a kernel flag and NOT a capability flag: it is the
 // per-app ACTIVE state of a kernel part (capability-model-spec §2.1). The kernel
@@ -37,6 +38,14 @@ const PER_APP_SWITCHES = {
     file: "config/billing.ts",
     record: "billingConfig",
     key: "subscriptionActive",
+  },
+  // Error tracking with Sentry (app-business-core issue 761). Switching it on
+  // also makes Sentry "in use" on the subprocessor list: run
+  // `npm run legal:render` after this (the CI leg does).
+  error_tracking: {
+    file: "config/error-tracking.ts",
+    record: "errorTrackingConfig",
+    key: "enabled",
   },
 };
 

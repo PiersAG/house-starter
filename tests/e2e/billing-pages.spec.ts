@@ -6,13 +6,14 @@
 // both are served; the off state is held by tests/unit/billing-routes-s13.test.ts.
 
 import { expect, test } from "@playwright/test";
+import { addressFor, uniqueEmail } from "../support/browser";
 import { client, ensureAccount, signIn } from "./session-helpers";
 
-const ADDRESS = "203.0.113.31";
-const EMAIL = "plan-card-375@house-starter.test";
+// Its own client address per test (issue 740): no test spends another's sign-in budget.
+const address = () => addressFor(test.info());
 
 test("/refund-policy is public and states the policy", async () => {
-  const ctx = await client(ADDRESS);
+  const ctx = await client(address());
   const res = await ctx.get("/refund-policy", { maxRedirects: 0 });
   expect(res.status()).toBe(200);
   const html = await res.text();
@@ -23,10 +24,11 @@ test("/refund-policy is public and states the policy", async () => {
 });
 
 test("a new owner's settings page offers Subscribe during the trial", async () => {
-  const setup = await client(ADDRESS);
+  const EMAIL = uniqueEmail(test.info(), "plan-card-375");
+  const setup = await client(address());
   await ensureAccount(setup, EMAIL);
   await setup.dispose();
-  const ctx = await client(ADDRESS);
+  const ctx = await client(address());
   await signIn(ctx, EMAIL);
   const res = await ctx.get("/dashboard/settings");
   expect(res.status()).toBe(200);

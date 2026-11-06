@@ -8,14 +8,16 @@
 // policy (config/sessions.ts, CEO decision #559) it runs on every request anyway.
 
 import { expect, test } from "@playwright/test";
+import { addressFor, uniqueEmail } from "../support/browser";
 import { client, ensureAccount, mintToken, readToken, signIn } from "./session-helpers";
 import { MAX_SESSIONS_PER_USER } from "../../config/sessions";
 
-const ADDRESS = "203.0.113.32";
+const address = () => addressFor(test.info());
 // sign-in is limited per client address (10 a minute): each browser has its own
-const browserAddress = (i: number) => `203.0.113.${60 + i}`;
+const browserAddress = (i: number) => addressFor(test.info(), `browser-${i}`);
 
-test.describe.configure({ mode: "serial" });
+// Each test makes its own account and uses its own client addresses (issue 740,
+// docs/test-independence.md), so the tests run in any order and a retry starts clean.
 
 async function dueForRenewal(token: string): Promise<string> {
   const claims = await readToken(token);
@@ -23,7 +25,7 @@ async function dueForRenewal(token: string): Promise<string> {
 }
 
 async function accountPageWith(cookie: string): Promise<string> {
-  const ctx = await client(ADDRESS, cookie);
+  const ctx = await client(address(), cookie);
   const res = await ctx.get("/account");
   const path = new URL(res.url()).pathname;
   await ctx.dispose();
@@ -31,8 +33,8 @@ async function accountPageWith(cookie: string): Promise<string> {
 }
 
 test("oldest-session eviction: one sign-in past the cap signs the oldest device out", async () => {
-  const email = "devices-cap-506@house-starter.test";
-  const setup = await client(ADDRESS);
+  const email = uniqueEmail(test.info(), "devices-cap-506");
+  const setup = await client(address());
   await ensureAccount(setup, email);
   await setup.dispose();
 
@@ -56,8 +58,8 @@ test("oldest-session eviction: one sign-in past the cap signs the oldest device 
 });
 
 test("two-browser revoke: signing one device out from the other ends it; the user carries on", async () => {
-  const email = "devices-revoke-506@house-starter.test";
-  const setup = await client(ADDRESS);
+  const email = uniqueEmail(test.info(), "devices-revoke-506");
+  const setup = await client(address());
   await ensureAccount(setup, email);
   await setup.dispose();
 
