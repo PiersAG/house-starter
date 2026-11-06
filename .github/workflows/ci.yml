@@ -526,6 +526,77 @@ jobs:
             node scripts/check-billing-configured.mjs --expect-stub
           fi
 
+  # ACTIVE, SIGNED-IN SCAN (app-business-core #533; Matt Murphy #223: "ZAP
+  # should crawl every page, test every form and probe every API endpoint for
+  # injection before the first user"). The factory's planted security scan runs
+  # ZAP's BASELINE: signed out, passive rules only, no attack payloads. This job
+  # builds the app, serves it on this runner, signs a throwaway test account in
+  # (scripts/dast/session.ts), feeds ZAP every API route under app/api with an
+  # example request (scripts/dast/plan.ts), crawls the pages, and runs ZAP's
+  # ACTIVE scan — injection, cross-site scripting and the rest of its attack
+  # rules — with the session on every request. scripts/dast/gate.ts fails on any
+  # High finding, on a missing or unfinished scan, and on a scan that lost its
+  # session. Part of "All CI checks passed", so it blocks every merge.
+  #
+  # LOCAL ONLY. The scripts refuse any address but this runner's loopback; the
+  # values below are throwaway and reach nothing real (the same set as the
+  # Playwright step above). RATE_LIMIT_SAFE_TEST_FACTOR raises the route limits
+  # for this one client in the safe test environment only (lib/abuse/route-limit.ts):
+  # at the default tenfold, 863 of 1,475 attack requests were refused before
+  # reaching the code. The attack filter stays on, as deployed. Full write-up:
+  # docs/active-scan.md.
+  active-scan:
+    name: Active scan (OWASP ZAP, signed in)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      # Pinned like every scanner: a scanner that changes its rules changes what blocks.
+      ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0
+      SCAN_BASE: http://127.0.0.1:3000
+      SCAN_OUT: dast-results
+      AUTH_SECRET: ci-active-scan-only-dummy-secret-not-used-anywhere-real
+      TENANCY_MODE: per_tenant
+      DATABASE_URL: file:active-scan.db
+      RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+      RATE_LIMIT_SAFE_TEST_FACTOR: "1000"
+      STRIPE_SECRET_KEY: sk_test_ci-active-scan-only-dummy-not-a-real-key
+      STRIPE_WEBHOOK_SECRET: whsec_ci-active-scan-only-dummy-not-a-real-secret
+      APP_LIFECYCLE_STATE: LAUNCHED
+      EMAIL_PROVIDER_API_KEY: re_ci-active-scan-only-dummy-not-a-real-key
+      EMAIL_SEND_MODE: log
+      MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the app
+        run: npm run build
+
+      # scripts/dast/run.sh: serve on this runner's loopback, sign in, write the
+      # plan, run ZAP (Docker, host network; progress on the console), gate on
+      # High, stop the app. The self-test workflow (active-scan-selftest.yml)
+      # runs the same script on a copy with a seeded flaw and must see it caught.
+      - name: Run the active scan and gate on High findings
+        run: bash scripts/dast/run.sh
+
+      - name: Upload the active scan report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: active-scan-report
+          path: dast-results/
+          retention-days: 14
+
   # ONE stable check for branch protection (app-business-core #776, #450). Every
   # app repo is born from this template, and build-init requires this check on
   # its `main` beside the security scan's summary. Listing each job by name
@@ -537,7 +608,7 @@ jobs:
   # cancelled job is not a pass).
   all-ci-passed:
     name: All CI checks passed
-    needs: [toolchain-guard, ci, capability-matrix, billing-matrix]
+    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, active-scan]
     if: always()
     runs-on: ubuntu-24.04
     steps:

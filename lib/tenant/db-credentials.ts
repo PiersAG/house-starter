@@ -4,18 +4,23 @@
 //
 // TWO MODES, CHOSEN BY TENANT_DB_CREDENTIALS
 // ------------------------------------------
-//   stored (default) — the provisioner mints one token per tenant database at
-//       sign-up and the catalog keeps it, sealed (lib/crypto/secret-box.ts).
-//       It does not expire. This is the only mode that works with an
-//       organisation-wide Turso token kept OUT of the app.
-//   short-lived — nothing is stored. Each server instance mints a ONE-HOUR token
-//       for a tenant's database the first time it needs it, keeps it in memory
-//       only, and mints a new one five minutes before the hour is up. The
-//       catalog then holds no tenant credential at all, so a catalog leak yields
-//       none. This needs a Turso token that can mint database tokens in the
-//       running app, so it is switched on only together with the app's own
-//       group-scoped token (#439, TURSO_GROUP): never with an
-//       organisation-wide token.
+//   short-lived (the default, Dispatch AO) — nothing is stored. Each server
+//       instance mints a ONE-HOUR token for a tenant's database the first time
+//       it needs it, keeps it in memory only, and mints a new one five minutes
+//       before the hour is up. The catalog then holds no tenant credential at
+//       all, so a catalog leak yields none, and no tenant key ever outlives an
+//       hour — which is how the 30-day replacement rule (vault decision D7)
+//       is met for tenant database keys: there is no long-lived one to replace.
+//       It mints with the app's own Turso token (TURSO_API_TOKEN), which on a
+//       rebuilt app is limited to the app's Turso group (#439, TURSO_GROUP,
+//       made by the factory's agents/turso_app_group.py). A local `file:`
+//       database takes no token, so local runs and CI are unaffected.
+//   stored — opt-in only (TENANT_DB_CREDENTIALS=stored): the provisioner mints
+//       one token per tenant database at sign-up and the catalog keeps it,
+//       sealed (lib/crypto/secret-box.ts). It does not expire and nothing
+//       re-issues it, so it does NOT meet D7 for the tokens themselves (only
+//       the sealing key is replaced, by `npm run db:reseal-secrets`). Kept for
+//       an app whose running code must hold no Turso platform token at all.
 //
 // "Per session" on serverless: the holder of a credential is one server
 // instance, which lives minutes to hours. A token is never shared across
@@ -42,10 +47,14 @@ const LIFETIME_MS = 60 * 60 * 1000;
 /** Mint a fresh token this long before the old one expires. */
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
+/** The mode an app gets when TENANT_DB_CREDENTIALS is not set (D7, Dispatch AO). */
+export const DEFAULT_CREDENTIAL_MODE: CredentialMode = "short-lived";
+
 /** Which mode this environment uses. Anything but the two names is an error. */
 export function credentialMode(env: NodeJS.ProcessEnv = process.env): CredentialMode {
   const raw = (env.TENANT_DB_CREDENTIALS ?? "").trim().toLowerCase();
-  if (raw === "" || raw === "stored") return "stored";
+  if (raw === "") return DEFAULT_CREDENTIAL_MODE;
+  if (raw === "stored") return "stored";
   if (raw === "short-lived") return "short-lived";
   throw new Error(
     `lib/tenant/db-credentials.ts: TENANT_DB_CREDENTIALS must be "stored" or ` +

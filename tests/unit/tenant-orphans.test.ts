@@ -28,7 +28,10 @@ vi.mock("@/lib/tenant/provisioner", async (orig) => {
 import { migrateCatalog } from "@/lib/migrate";
 import { __resetCatalogCacheForTests, getCatalogDb } from "@/lib/catalog";
 import { liveTenantPlane } from "@/lib/privacy/runtime";
-import { clearTenantOrphan, pendingTenantOrphans, recordTenantOrphan } from "@/lib/tenant/orphans";
+import { clearTenantOrphan, pendingTenantOrphans, recordTenantOrphan, settleTenantOrphans, SIGNUP_GRACE_MS } from "@/lib/tenant/orphans";
+import { runRetentionJob } from "@/lib/privacy/retention-job";
+import { tenantOrphans, tenants, users } from "@/lib/schema";
+import { eq } from "drizzle-orm";
 
 let dir: string;
 beforeAll(async () => {
@@ -74,5 +77,69 @@ describe("the orphan list", () => {
     expect((await pendingTenantOrphans(db)).filter((t) => t === T(4))).toHaveLength(1);
     await clearTenantOrphan(T(4), db);
     expect(await pendingTenantOrphans(db)).not.toContain(T(4));
+  });
+});
+
+describe("settling the list after the factory's erase job (Dispatch AO)", () => {
+  const HOUR = 60 * 60 * 1000;
+  async function row(id: string) {
+    return (await getCatalogDb().select().from(tenantOrphans).where(eq(tenantOrphans.tenantId, id)).all())[0];
+  }
+  async function register(id: string) {
+    await getCatalogDb().insert(tenants).values({ id, dbUrl: `file:${id}.db`, provisioner: "file" }).run();
+  }
+
+  it("clears an erasure row only when the platform says the database is gone", async () => {
+    const db = getCatalogDb();
+    await recordTenantOrphan(T(10), "erasure", db);
+    await recordTenantOrphan(T(11), "erasure", db);
+    const later = new Date(Date.now() + 2 * HOUR);
+    const r = await settleTenantOrphans(async (id) => id === T(11), db, later);
+    expect(r.cleared).toContain(T(10));
+    expect(r.waiting).toContain(T(11));
+    expect((await row(T(10))).clearedAt).not.toBeNull();
+    expect((await row(T(11))).clearedAt).toBeNull();
+  });
+
+  it("never clears on an unclear answer", async () => {
+    const db = getCatalogDb();
+    await recordTenantOrphan(T(12), "erasure", db);
+    const r = await settleTenantOrphans(async () => { throw new Error("planted 503"); }, db, new Date(Date.now() + 2 * HOUR));
+    expect(r.unknown).toContain(T(12));
+    expect((await row(T(12))).clearedAt).toBeNull();
+  });
+
+  it("leaves a sign-up row alone for its first hour, then removes its registration with it", async () => {
+    const db = getCatalogDb();
+    await recordTenantOrphan(T(13), "signup", db);
+    await register(T(13));
+    const early = await settleTenantOrphans(async () => false, db, new Date(Date.now() + SIGNUP_GRACE_MS / 2));
+    expect(early.waiting).toContain(T(13));
+    expect((await row(T(13))).clearedAt).toBeNull();
+    const r = await settleTenantOrphans(async () => false, db, new Date(Date.now() + 2 * HOUR));
+    expect(r.cleared).toContain(T(13));
+    expect(await db.select().from(tenants).where(eq(tenants.id, T(13))).all()).toHaveLength(0);
+  });
+
+  it("keeps a sign-up's registration while an account links the tenant", async () => {
+    const db = getCatalogDb();
+    await recordTenantOrphan(T(14), "signup", db);
+    await register(T(14));
+    await db.insert(users).values({ id: "u-ao-14", email: "ao14@example.test", passwordHash: "not-a-real-hash", tenantId: T(14) }).run();
+    await settleTenantOrphans(async () => false, db, new Date(Date.now() + 2 * HOUR));
+    expect(await db.select().from(tenants).where(eq(tenants.id, T(14))).all()).toHaveLength(1);
+  });
+
+  it("runs as step 4 of the daily retention job, and not at all without an existence check", async () => {
+    const db = getCatalogDb();
+    await recordTenantOrphan(T(15), "erasure", db);
+    const without = await runRetentionJob(db, { tenantPlane: { open: async () => { throw new Error("unused"); } } });
+    expect(without.orphans).toBeUndefined();
+    expect((await row(T(15))).clearedAt).toBeNull();
+    const run = await runRetentionJob(db, {
+      now: new Date(Date.now() + 2 * HOUR),
+      tenantPlane: { open: async () => { throw new Error("unused"); }, exists: async () => false },
+    });
+    expect(run.orphans?.cleared).toContain(T(15));
   });
 });

@@ -68,6 +68,22 @@ import { inSafeTestEnvironment } from "@/lib/auth-rate-limit";
  */
 export const SAFE_TEST_FACTOR = 10;
 
+/**
+ * The active scan's factor (app-business-core issue 533, scripts/dast/). ZAP's
+ * active scan is one client sending thousands of attack requests; at ten times
+ * it was refused 863 times in 1,475 API requests (measured 2026-11-04), so most
+ * payloads never reached the code they were aimed at. In the safe test
+ * environment ONLY, RATE_LIMIT_SAFE_TEST_FACTOR may raise the factor up to
+ * MAX_SAFE_TEST_FACTOR. It is never read anywhere else: a deployed instance
+ * keeps factor 1 whatever the variable says. The attack filter is unchanged.
+ */
+export const MAX_SAFE_TEST_FACTOR = 10_000;
+
+export function safeTestFactor(env: Record<string, string | undefined> = process.env): number {
+  const raw = Number(env.RATE_LIMIT_SAFE_TEST_FACTOR);
+  return Number.isInteger(raw) && raw >= SAFE_TEST_FACTOR && raw <= MAX_SAFE_TEST_FACTOR ? raw : SAFE_TEST_FACTOR;
+}
+
 export type RouteLimitRefusal = {
   allowed: false;
   reason: "banned" | "attack" | "probe" | "limit" | "unavailable";
@@ -95,10 +111,12 @@ export type RouteLimitDeps = {
   log?: (event: SecurityEvent, fields: Record<string, SecurityFieldValue>) => void;
   /** Defaults to inSafeTestEnvironment(); tests pin it. */
   safeTestEnvironment?: boolean;
+  /** Defaults to safeTestFactor(); read only in the safe test environment. */
+  safeTestFactor?: number;
 };
 
 const relaxOf = (deps: RouteLimitDeps) =>
-  (deps.safeTestEnvironment ?? inSafeTestEnvironment()) ? SAFE_TEST_FACTOR : 1;
+  (deps.safeTestEnvironment ?? inSafeTestEnvironment()) ? (deps.safeTestFactor ?? safeTestFactor()) : 1;
 
 const BAN = (client: string) => `abuse:ban:${client}`;
 const STRIKES = (client: string) => `abuse:strikes:${client}`;

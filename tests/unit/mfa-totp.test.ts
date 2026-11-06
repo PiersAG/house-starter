@@ -14,7 +14,11 @@ import {
   verifyTotpCode,
 } from "@/lib/mfa/totp";
 
-const secret = generateTotpSecret();
+// A FIXED secret (RFC 6238's test secret), never a random one. Each code is only six
+// digits, so with a random secret two steps sometimes share a code, and the "refused"
+// tests below then fail by chance (app-business-core Dispatch AO-fix). The first
+// verifyTotpCode test proves this secret's codes are all different.
+const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"; // gitleaks:allow — RFC 6238's public test value
 /** A fixed instant, exactly at the start of a time step. */
 const T0 = new Date(1_900_000_020 * 1000);
 const STEP = Math.floor(T0.getTime() / 1000 / TOTP_PERIOD_SECONDS);
@@ -28,8 +32,9 @@ async function codeAt(offsetSteps: number): Promise<string> {
 
 describe("generateTotpSecret / buildOtpauthUri", () => {
   it("makes a 160-bit base32 secret, different every time", () => {
-    expect(secret).toMatch(/^[A-Z2-7]{32}$/);
-    expect(generateTotpSecret()).not.toBe(secret);
+    const fresh = generateTotpSecret();
+    expect(fresh).toMatch(/^[A-Z2-7]{32}$/);
+    expect(generateTotpSecret()).not.toBe(fresh);
   });
 
   it("builds a scannable otpauth URI with issuer, account and standard parameters", () => {
@@ -54,6 +59,11 @@ describe("code shape", () => {
 });
 
 describe("verifyTotpCode", () => {
+  it("runs on a secret whose codes around T0 are all different", async () => {
+    const codes = await Promise.all([-2, -1, 0, 1, 2].map(codeAt));
+    expect(new Set(codes).size).toBe(codes.length);
+  });
+
   it("accepts the current code and reports its step", async () => {
     const result = await verifyTotpCode({ secret, code: await codeAt(0), lastUsedStep: null, now: T0 });
     expect(result).toEqual({ valid: true, step: STEP });
