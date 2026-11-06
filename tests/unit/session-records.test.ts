@@ -170,7 +170,8 @@ describe("#519 sign-in risk checks (Matt Murphy #89)", () => {
     await startSessionRecord(db, { sessionId: "flight-aaaaaaaa", userId, context: ctx(), now: new Date(t0) });
     const dayLater = (t0 + 26 * 3_600_000) / 1000;
     expect(
-      await checkSessionRecord(db, token("flight-aaaaaaaa"), dayLater, { context: async () => ctx({ ...SYDNEY }), ...ok, contextAccess: false }),
+      // the travel rule only: the 8-hour life of "strict" is tested in session-policy.test.ts
+      await checkSessionRecord(db, token("flight-aaaaaaaa"), dayLater, { context: async () => ctx({ ...SYDNEY }), ...ok, contextAccess: false, policy: "renewal" }),
     ).toBe("ok");
     await startSessionRecord(db, { sessionId: "off-aaaaaaaaaaa", userId, context: ctx(), now: new Date(t0) });
     expect(

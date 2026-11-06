@@ -12,8 +12,11 @@ import { SESSION_POLICY } from "@/config/sessions";
 import { ACTION_SENSITIVITY } from "@/config/data-sensitivity";
 
 describe("#559 the one session setting", () => {
-  it("is today's ruling until the CEO decides", () => {
-    expect(SESSION_POLICY).toBe("renewal");
+  it("is the CEO's ruling of 2026-11-02: strict (checked on every request; 8 hours / 7 days)", () => {
+    expect(SESSION_POLICY).toBe("strict");
+    expect(renewAfterSeconds()).toBe(0);
+    expect(sessionMaxAge(false)).toBe(8 * 3600);
+    expect(sessionMaxAge(true)).toBe(7 * 86_400);
   });
 
   it("renewal: 1 day / 30 days, checked every 10 minutes (the 2026-07-15 ruling)", () => {

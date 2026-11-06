@@ -14,6 +14,8 @@
 // The template ships a STUB price id so template CI (which never talks to
 // Stripe) stays truthful — the shape is exercised, no real charge is possible.
 
+import type Stripe from "stripe";
+
 export interface BillingConfig {
   /**
    * Stripe price IDs the checkout route may subscribe a customer to. `default`
@@ -80,6 +82,14 @@ export interface BillingConfig {
    * the suite with this field flipped BOTH ways.
    */
   subscriptionActive: boolean;
+  /**
+   * The payment methods the checkout offers (Stripe `payment_method_types`;
+   * PiersAG/app-business-core#780). Only these are shown on Stripe's payment page,
+   * whatever is switched on in the Stripe dashboard, so no method is offered
+   * untested. Each needs a desktop and a phone path in tests/e2e/payment-paths.ts
+   * (tests/unit/payment-methods.test.ts fails otherwise).
+   */
+  paymentMethods: Stripe.Checkout.SessionCreateParams.PaymentMethodType[];
 }
 
 export const billingConfig: BillingConfig = {
@@ -98,6 +108,8 @@ export const billingConfig: BillingConfig = {
   // commission explicitly declared "no subscription"
   // (agents/build/provision_stripe_price.py · stamp_subscription_inactive).
   subscriptionActive: true,
+  // Card only until another method's paths are written and run (#780).
+  paymentMethods: ["card"],
 };
 
 /**

@@ -25,8 +25,8 @@
 
 export type SessionPolicy = "renewal" | "strict";
 
-/** #559 — the CEO's ruling goes here. Until then: the 2026-07-15 ruling. */
-export const SESSION_POLICY: SessionPolicy = "renewal";
+/** #559 — the CEO's ruling of 2026-11-02: "strict" (app-business-core wiki/decisions.md). */
+export const SESSION_POLICY: SessionPolicy = "strict";
 
 export const SESSION_POLICIES: Record<
   SessionPolicy,
