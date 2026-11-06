@@ -34,12 +34,19 @@ const count = (s: K6Summary, metric: string): number => value(s, metric, "count"
 const ms = (n: number | undefined): string => (n === undefined ? "not measured" : `${Math.round(n)} ms`);
 const percent = (n: number | undefined): string => (n === undefined ? "not measured" : `${(n * 100).toFixed(2)}%`);
 
+/**
+ * run.sh's rows ("at, processor seconds so far, memory KB") as a share of one core
+ * between each row and the one before it.
+ */
 export function parseSamples(text: string): ServerSample[] {
-  return text
+  const rows = text
     .split("\n")
     .map((row) => row.trim().split(/\s+/).map(Number))
-    .filter((row) => row.length === 2 && row.every(Number.isFinite))
-    .map(([cpuPercent, memoryKb]) => ({ cpuPercent, memoryKb }));
+    .filter((row) => row.length === 3 && row.every(Number.isFinite));
+  return rows.slice(1).flatMap(([at, cpu, memoryKb], i) => {
+    const [lastAt, lastCpu] = rows[i];
+    return at > lastAt ? [{ cpuPercent: ((cpu - lastCpu) / (at - lastAt)) * 100, memoryKb }] : [];
+  });
 }
 
 /** The whole verdict, from k6's summary and the app's samples. */

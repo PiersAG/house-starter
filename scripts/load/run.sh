@@ -48,13 +48,15 @@ if [ -z "$up" ]; then
 fi
 echo "App answered after ${up}s."
 
-# Every 5 seconds: the app's processor share (100 = one core flat out) and memory in
-# KB, summed over its process group. The report names the limiting component from this.
+# Every 5 seconds: the seconds of processor time the app has used so far, and its memory
+# in KB, summed over its process group. The gate turns the time into a share of a core
+# between samples (ps's own %CPU is an average since the process started, which hides a
+# peak). The report names the limiting component from this.
 group="$(cat "$OUT/server.pid")"
 (
   while sleep 5; do
-    ps -o pcpu=,rss= -g "$group" 2>/dev/null \
-      | awk '{ cpu += $1; rss += $2 } END { if (NR) print cpu, rss }' >> "$OUT/server-samples.txt"
+    ps -o cputimes=,rss= -g "$group" 2>/dev/null \
+      | awk -v at="$(date +%s)" '{ cpu += $1; rss += $2 } END { if (NR) print at, cpu, rss }' >> "$OUT/server-samples.txt"
   done
 ) &
 echo "$!" > "$OUT/sampler.pid"

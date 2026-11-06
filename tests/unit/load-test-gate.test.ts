@@ -82,9 +82,10 @@ describe("load-test gate", () => {
     expect(calm.steps[0].name).toBe("sign up");
     expect(calm.limiting).toContain("Slowest step: sign up");
     expect(calm.limiting).toContain("was not the ceiling");
-    const bound = evaluate({ metrics }, parseSamples(`50 1000\n${PROCESSOR_BOUND_PERCENT} 2000\n`), 0);
+    const bound = evaluate({ metrics }, parseSamples(`100 10 1000\n105 15 2000\n`), 0);
+    expect(PROCESSOR_BOUND_PERCENT).toBeLessThanOrEqual(100);
     expect(bound.limiting).toContain("first ceiling");
-    expect(bound.serverPeak).toEqual({ cpuPercent: PROCESSOR_BOUND_PERCENT, memoryKb: 2000 });
+    expect(bound.serverPeak).toEqual({ cpuPercent: 100, memoryKb: 2000 });
     expect(evaluate({}, [], 0).limiting).toContain("Not measured");
   });
 
@@ -96,11 +97,12 @@ describe("load-test gate", () => {
     expect(report(run())).toContain("## Load test: passed");
   });
 
-  it("reads the processor samples and skips what is not a sample", () => {
-    expect(parseSamples("12.5 1000\n\nnot a sample\n7 2000\n")).toEqual([
-      { cpuPercent: 12.5, memoryKb: 1000 },
-      { cpuPercent: 7, memoryKb: 2000 },
+  it("turns processor time into a share of a core between samples, skipping what is not one", () => {
+    expect(parseSamples("100 10 1000\n\nnot a sample\n105 11 2000\n110 13.5 3000\n110 14 3000\n")).toEqual([
+      { cpuPercent: 20, memoryKb: 2000 },
+      { cpuPercent: 50, memoryKb: 3000 },
     ]);
+    expect(parseSamples("100 10 1000\n")).toEqual([]);
   });
 });
 
