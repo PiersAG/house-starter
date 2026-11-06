@@ -603,6 +603,87 @@ jobs:
           path: dast-results/
           retention-days: 14
 
+  # THE LOAD TEST (app-business-core #356; tool: k6, CEO ruling on #705; Matt Murphy #3:
+  # "Use tools such as k6 or Artillery to simulate at least 100 concurrent users before
+  # launch"). 100 virtual users sign up, sign in and use the app, on a production build
+  # served on this runner, while fresh sign-ups keep coming, one address floods sign-up
+  # and the health check, and another website's requests must stay refused. Plan and
+  # pass bar: config/load-test.ts. Part of "All CI checks passed", so it blocks every
+  # merge, here and in every app built from this template; the result is this job's
+  # summary and one comment on the pull request.
+  #
+  # LOCAL ONLY. scripts/load/run.sh refuses any address but this runner's loopback, and
+  # the values below are throwaway and reach nothing real (the same set as the active
+  # scan). k6 is free and open source and needs no account. Full write-up: docs/load-test.md.
+  load-test:
+    name: Load test (k6, 100 users)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # The last step only, for the comment. Checkout keeps no token, so the app and k6 never hold it.
+      pull-requests: write
+    env:
+      AUTH_SECRET: ci-load-test-only-dummy-secret-not-used-anywhere-real
+      TENANCY_MODE: per_tenant
+      DATABASE_URL: file:load-test.db
+      RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+      STRIPE_SECRET_KEY: sk_test_ci-load-test-only-dummy-not-a-real-key
+      STRIPE_WEBHOOK_SECRET: whsec_ci-load-test-only-dummy-not-a-real-secret
+      APP_LIFECYCLE_STATE: LAUNCHED
+      EMAIL_PROVIDER_API_KEY: re_ci-load-test-only-dummy-not-a-real-key
+      EMAIL_SEND_MODE: log
+    steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Make a throwaway two-step sign-in key
+        run: echo "MFA_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      - name: Build the app
+        run: npm run build
+
+      - name: Install k6 (pinned)
+        run: bash scripts/load/install-k6.sh "$RUNNER_TEMP/k6"
+
+      - name: Run the load test and gate on the pass bar
+        run: bash scripts/load/run.sh
+
+      - name: Upload the load test report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: load-test-report
+          path: load-results/
+          retention-days: 14
+
+      # A comment that cannot be posted (a fork's read-only token) never fails the job:
+      # the job's own result is the gate.
+      - name: Show the result on the pull request
+        if: always() && github.event_name == 'pull_request' && hashFiles('load-results/report.md') != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" --body-file load-results/report.md --edit-last --create-if-none
+
   # THE CORRECTNESS GATE (app-business-core #413) — BLOCKING. The non-security half of
   # "production-ready", one named job: accessibility on every page (#720), awkward
   # input in every form, on every browser and device (#721), and the oldest supported
@@ -736,7 +817,7 @@ jobs:
   # cancelled job is not a pass).
   all-ci-passed:
     name: All CI checks passed
-    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, active-scan, correctness-gate, error-tracking-matrix]
+    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, active-scan, load-test, correctness-gate, error-tracking-matrix]
     if: always()
     runs-on: ubuntu-24.04
     steps:
