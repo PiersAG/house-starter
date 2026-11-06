@@ -193,3 +193,15 @@ describe("installEgressGuard — every way a connection can be asked for", () =>
     expect(warn).toHaveBeenCalledWith("[egress] refused twice.invalid");
   });
 });
+
+describe("Sentry's EU address follows the error-tracking switch (issue 761)", () => {
+  const dsn = "https://0123456789abcdef0123456789abcdef@o42.ingest.de.sentry.io/7";
+  const env = { SENTRY_DSN: dsn } as unknown as NodeJS.ProcessEnv;
+  it("is allowed out only while the switch is on and the DSN is an EU one", () => {
+    expect(isAllowed("o42.ingest.de.sentry.io", allowList(env, { enabled: true }))).toBe(true);
+    expect(isAllowed("o42.ingest.de.sentry.io", allowList(env, { enabled: false }))).toBe(false);
+    expect(isAllowed("sentry.io", allowList(env, { enabled: true }))).toBe(false);
+    const us = { SENTRY_DSN: dsn.replace(".de.", ".us.") } as unknown as NodeJS.ProcessEnv;
+    expect(isAllowed("o42.ingest.us.sentry.io", allowList(us, { enabled: true }))).toBe(false);
+  });
+});

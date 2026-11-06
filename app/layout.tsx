@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { getAppName } from "@/lib/branding";
 import { OfflineNotice } from "@/components/OfflineNotice";
+import { ErrorReporter } from "@/components/ErrorReporter";
+import { errorTrackingConfig } from "@/config/error-tracking";
+import { errorTrackingTarget } from "@/lib/observability/sentry-dsn";
 import "./globals.css";
 
 // Title comes from the owner-set app name (settings registry), neutral
@@ -27,6 +30,11 @@ export default async function RootLayout({
     <html lang="en">
       <body className="bg-background text-text-primary">
         <OfflineNotice />
+        {/* Browser errors to Sentry, through the app's own /api/error-report —
+            mounted only while error tracking is on and connected (issue 761). */}
+        {errorTrackingTarget() ? (
+          <ErrorReporter maxReportsPerPage={errorTrackingConfig.browserMaxReportsPerPage} />
+        ) : null}
         {children}
         <footer className="border-t border-border py-6 text-center text-sm text-text-secondary">
           <a href="/contact" className="underline underline-offset-4">Contact</a>

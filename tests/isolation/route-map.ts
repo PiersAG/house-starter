@@ -165,6 +165,11 @@ export const ROUTE_EXCLUSIONS: { prefix: string; reason: string }[] = [
       "a page that only throws, for the crash-screen test (issue 502); 404 unless the test server sets E2E_CRASH_ROUTE=1, and it reads no data",
   },
   {
+    prefix: "/api/error-report",
+    reason:
+      "browser error reports relayed to Sentry (issue 761); 404 while error tracking is off; holds and returns no tenant data",
+  },
+  {
     prefix: "/api/csp-report",
     reason: "browser CSP violation reports, sent without a session; holds and returns no tenant data",
   },
@@ -218,6 +223,14 @@ export const WRITABLE_ROUTE_EXEMPTIONS: { path: string; reason: string }[] = [
       "session and no tenant, refuses any report not signed with EMAIL_EVENTS_SECRET, and writes " +
       "only a delivery count row to the shared catalog (no tenant's data), so a signed-in tenant-A " +
       "caller has no other tenant's data to reach through it (issue 757).",
+  },
+  {
+    path: "/api/error-report",
+    reason:
+      "The app's pages post browser errors here (issue 761). It reads the session only for the " +
+      "caller's own opaque account id, opens no tenant database, sends a scrubbed report to Sentry " +
+      "and answers 204 (404 while error tracking is off), so a signed-in tenant-A caller has no " +
+      "other tenant's data to reach through it.",
   },
   {
     path: "/api/csp-report",
