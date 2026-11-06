@@ -37,7 +37,10 @@ export type SecurityEvent =
   | "session_impossible_travel"
   | "session_risk_scored"
   | "access_stepped_up"
-  | "access_denied";
+  | "access_denied"
+  // Breached-password check (lib/password-breach.ts, app-business-core #356)
+  | "password_breached_refused"
+  | "password_breach_check_unavailable";
 
 export type SecurityFieldValue = string | number | boolean | null;
 

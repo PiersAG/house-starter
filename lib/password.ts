@@ -15,9 +15,10 @@ export const MIN_PASSWORD_LENGTH = 8;
 /**
  * A small embedded breached-password denylist. The quality baseline requires
  * screening new passwords against a breached-password list on account creation
- * "regardless of tier". A full HaveIBeenPwned k-anonymity lookup needs network
- * access that the starter avoids in its test environment, so we screen against
- * the most common breached passwords offline. Comparison is case-insensitive.
+ * "regardless of tier". This list refuses the commonest ones offline, before any
+ * network call; every new password is then checked against Have I Been Pwned's
+ * whole breached-password list by hash prefix (lib/password-breach.ts, issue 356).
+ * Comparison is case-insensitive.
  */
 const BREACHED_PASSWORDS = new Set(
   [

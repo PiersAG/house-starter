@@ -4,6 +4,7 @@
     "api.turso.tech": "Turso platform API: create a tenant's database and mint its tokens (lib/tenant/provisioner.ts)",
     "api.stripe.com": "Stripe: subscription billing (lib/billing/stripe.ts)",
     "api.resend.com": "Resend: sending email (lib/email/provider.ts)",
+    "api.pwnedpasswords.com": "Have I Been Pwned's free range API: refusing breached passwords; only a 5-character hash prefix is sent (lib/password-breach.ts)",
     "secretsmanager.eu-west-2.amazonaws.com": "The factory vault: reading a key moved into it (lib/vault.ts)",
     "sts.amazonaws.com": "AWS sign-in for the vault read (lib/vault.ts, Vercel OIDC)",
     "sts.eu-west-2.amazonaws.com": "AWS sign-in for the vault read, regional address",
