@@ -568,6 +568,12 @@ jobs:
       EMAIL_SEND_MODE: log
       MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
@@ -597,6 +603,79 @@ jobs:
           path: dast-results/
           retention-days: 14
 
+  # THE CORRECTNESS GATE (app-business-core #413) — BLOCKING. The non-security half of
+  # "production-ready", one named job: accessibility on every page (#720), awkward
+  # input in every form, on every browser and device (#721), and the oldest supported
+  # browser. Its other two legs, layout overflow and visual regression, are the layout
+  # guardrail step in the `ci` job; the automated-test leg is the unit and e2e suites
+  # there, run in random order and failing on a test that passes only on its retry
+  # (#740). Full list: docs/correctness-gate.md. Part of "All CI checks passed", so it
+  # blocks every merge, here and in every app built from this template.
+  #
+  # LOCAL ONLY: the suites drive the app this job builds and serves on its own runner,
+  # with the same throwaway values as the Playwright step above; nothing real is reached.
+  correctness-gate:
+    name: Correctness gate (accessibility, awkward input, browsers)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      AUTH_SECRET: ci-e2e-only-dummy-secret-not-used-anywhere-real
+      TENANCY_MODE: per_tenant
+      DATABASE_URL: file:ci-correctness.db
+      RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+      STRIPE_SECRET_KEY: sk_test_ci-e2e-only-dummy-not-a-real-key
+      STRIPE_WEBHOOK_SECRET: whsec_ci-e2e-only-dummy-not-a-real-secret
+      APP_LIFECYCLE_STATE: LAUNCHED
+      EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
+      EMAIL_SEND_MODE: log
+      MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+    steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install the browsers (Chromium, Firefox, WebKit)
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Build the app
+        run: npm run build
+
+      # config/browser-support.ts: every shipped script must run on the oldest
+      # supported browsers (ES2020: Chrome and Edge 80, Firefox 74, Safari 13.1).
+      - name: Oldest supported browser runs every shipped script
+        run: npm run check:browser-floor
+
+      # E2E_PREBUILT: Playwright starts the build above instead of building again.
+      - name: Accessibility and awkward-input suites
+        env:
+          E2E_PREBUILT: "1"
+        run: npm run test:correctness
+
+      - name: Upload the correctness gate report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: correctness-gate-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+
   # ONE stable check for branch protection (app-business-core #776, #450). Every
   # app repo is born from this template, and build-init requires this check on
   # its `main` beside the security scan's summary. Listing each job by name
@@ -608,7 +687,7 @@ jobs:
   # cancelled job is not a pass).
   all-ci-passed:
     name: All CI checks passed
-    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, active-scan]
+    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, active-scan, correctness-gate]
     if: always()
     runs-on: ubuntu-24.04
     steps:

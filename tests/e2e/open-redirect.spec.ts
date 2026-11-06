@@ -16,6 +16,7 @@
 // still ends on the app's own origin, which is the acceptance test.
 
 import { expect, test } from "@playwright/test";
+import { addressFor, uniqueEmail } from "../support/browser";
 import {
   client,
   csrfToken,
@@ -36,11 +37,15 @@ const HOSTILE = [
   ["javascript", "javascript:alert(document.domain)"],
 ] as const;
 
-const ADDRESS = "203.0.113.14";
-const EMAIL = "open-redirect-514@house-starter.test";
+// Its own client address per test (issue 740): no test spends another's sign-in budget.
+const address = () => addressFor(test.info());
+// One account per run of this file, made in beforeAll and only read by the tests
+// (they sign it in; none changes it). Unique per run and per retry (issue 740).
+let EMAIL = "";
 
 test.beforeAll(async () => {
-  const ctx = await client(ADDRESS);
+  EMAIL = uniqueEmail(test.info(), "open-redirect-514");
+  const ctx = await client(address());
   await ensureAccount(ctx, EMAIL);
   await ctx.dispose();
 });
@@ -58,7 +63,7 @@ async function expectStaysOnApp(
 
 test.describe("#514 login", () => {
   test("positive control: a plain sign-in succeeds and lands on the app", async () => {
-    const ctx = await client(ADDRESS);
+    const ctx = await client(address());
     const res = await postSignIn(ctx, EMAIL, "/dashboard");
     expect(await sessionCookie(ctx)).toBeTruthy();
     expect(new URL(res.headers()["location"]).pathname).toBe("/dashboard");
@@ -69,7 +74,7 @@ test.describe("#514 login", () => {
   // four kinds the ticket names are posted, not all seven.
   for (const [kind, target] of HOSTILE.slice(0, 4)) {
     test(`a ${kind} callbackUrl at sign-in ends on the app`, async () => {
-      const ctx = await client(ADDRESS);
+      const ctx = await client(address());
       const res = await postSignIn(ctx, EMAIL, target);
       await expectStaysOnApp(ctx, res.headers()["location"], "sign-in");
       await ctx.dispose();
@@ -78,7 +83,7 @@ test.describe("#514 login", () => {
 
   for (const [kind, target] of HOSTILE) {
     test(`the sign-in entry point with a ${kind} callbackUrl ends on the app`, async () => {
-      const ctx = await client(ADDRESS);
+      const ctx = await client(address());
       const res = await ctx.get(`/api/auth/signin?callbackUrl=${encodeURIComponent(target)}`, {
         maxRedirects: 0,
       });
@@ -91,7 +96,7 @@ test.describe("#514 login", () => {
 test.describe("#514 logout", () => {
   for (const [kind, target] of HOSTILE) {
     test(`a ${kind} callbackUrl at sign-out ends on the app`, async () => {
-      const ctx = await client(ADDRESS);
+      const ctx = await client(address());
       const res = await ctx.post("/api/auth/signout", {
         form: { csrfToken: await csrfToken(ctx), callbackUrl: target },
         maxRedirects: 0,

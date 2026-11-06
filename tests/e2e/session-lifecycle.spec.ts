@@ -18,6 +18,7 @@
 // the open CEO decision #559.
 
 import { expect, test } from "@playwright/test";
+import { addressFor, uniqueEmail } from "../support/browser";
 import {
   client,
   csrfToken,
@@ -27,10 +28,10 @@ import {
   signIn,
 } from "./session-helpers";
 
-const ADDRESS = "203.0.113.25";
-const EMAIL = "session-lifecycle-798@house-starter.test";
+const address = () => addressFor(test.info());
 
-test.describe.configure({ mode: "serial" });
+// Each test makes its own account and uses its own client addresses (issue 740,
+// docs/test-independence.md), so the tests run in any order and a retry starts clean.
 
 /** The old token as it will look once its renewal time has passed. */
 async function dueForRenewal(token: string): Promise<string> {
@@ -40,7 +41,7 @@ async function dueForRenewal(token: string): Promise<string> {
 
 /** Where a GET of the account page ends, following redirects. */
 async function accountPageWith(cookie: string): Promise<string> {
-  const ctx = await client(ADDRESS, cookie);
+  const ctx = await client(address(), cookie);
   const res = await ctx.get("/account");
   const path = new URL(res.url()).pathname;
   await ctx.dispose();
@@ -48,12 +49,13 @@ async function accountPageWith(cookie: string): Promise<string> {
 }
 
 test("a new session identifier at every sign-in; the old one stops working after sign-out", async () => {
-  const setup = await client(ADDRESS);
+  const EMAIL = uniqueEmail(test.info(), "session-lifecycle-798");
+  const setup = await client(address());
   await ensureAccount(setup, EMAIL);
   await setup.dispose();
 
-  const first = await client(ADDRESS);
-  const second = await client(ADDRESS);
+  const first = await client(address());
+  const second = await client(address());
   const tokenA = await signIn(first, EMAIL);
   const tokenB = await signIn(second, EMAIL);
 

@@ -9,6 +9,7 @@
 // names that page's origin — so "cannot read" is "no such header".
 
 import { test, expect, type APIRequestContext } from "@playwright/test";
+import { addressFor, uniqueEmail } from "../support/browser";
 import { BASE_URL, client, ensureAccount, signIn } from "./session-helpers";
 
 const APPROVED = new URL(BASE_URL).origin;
@@ -19,17 +20,21 @@ const UNAPPROVED = [
   "http://127.0.0.1:3000",
   APPROVED.toUpperCase(),
 ];
-const EMAIL = "cors-742@example.com";
-const ADDRESS = "203.0.113.74";
+// One account per run of this file, made in beforeAll and only read by the tests
+// (they sign it in; none changes it). Unique per run and per retry (issue 740).
+let EMAIL = "";
+// Its own client address per test (issue 740): no test spends another's sign-in budget.
+const address = () => addressFor(test.info());
 
 let signedIn: APIRequestContext;
 let anonymous: APIRequestContext;
 
 test.beforeAll(async () => {
-  anonymous = await client(ADDRESS);
+  EMAIL = uniqueEmail(test.info(), "cors-742");
+  anonymous = await client(address());
   await ensureAccount(anonymous, EMAIL);
-  const token = await signIn(await client(ADDRESS), EMAIL);
-  signedIn = await client(ADDRESS, token);
+  const token = await signIn(await client(address()), EMAIL);
+  signedIn = await client(address(), token);
 });
 
 test.afterAll(async () => {
