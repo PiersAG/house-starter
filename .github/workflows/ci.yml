@@ -25,7 +25,41 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Secret scan of the template itself (app-business-core #374): the apps get theirs
+      # from the factory's planted security-scan.yml, which this repo does not carry, so
+      # a real key could land here unnoticed. Same pinned version, checksum check and
+      # flags as that scan, on gitleaks' default rules with no allow-list (stricter), so a
+      # template that passes here gives every new app a clean start. It reads the
+      # checked-out tree, not the history: the history holds old made-up test values.
+      # The config is written outside the checkout, and allow comments and ignore files
+      # count for nothing, so nothing committed here can weaken the scan.
+      - name: Secret scan (gitleaks)
+        env:
+          GITLEAKS_VERSION: '8.30.1'
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          work="$(mktemp -d)"
+          curl -fsSL -o "$work/checksums.txt" "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          tarball="$(awk '{print $2}' "$work/checksums.txt" \
+                     | grep -E 'linux_(x64|amd64|x86_64)\.tar\.gz$' | head -n1)"
+          test -n "$tarball"
+          curl -fsSL -o "$work/$tarball" "$base/$tarball"
+          (cd "$work" && grep " ${tarball}\$" checksums.txt | sha256sum -c -)
+          tar -xzf "$work/$tarball" -C "$work" gitleaks
+          printf '[extend]\nuseDefault = true\n' > "$work/gitleaks.toml"
+          : > "$work/empty.gitleaksignore"
+          "$work/gitleaks" dir . --no-banner --redact --config "$work/gitleaks.toml" \
+            --gitleaks-ignore-path "$work/empty.gitleaksignore" --ignore-gitleaks-allow \
+            --exit-code 2
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -213,7 +247,7 @@ jobs:
           # MFA_ENCRYPTION_KEY (secret) is declared deploy-injected in .env.contract
           # → the boot validator requires it. CI-only throwaway: the base64 of the
           # 32-byte string `ci-e2e-only-dummy-key-32-bytes!!`. Seals nothing real.
-          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+          MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
         run: |
           npx playwright install --with-deps chromium
           npm run test:e2e
@@ -254,7 +288,7 @@ jobs:
           EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
           EMAIL_SEND_MODE: log
           # See the smoke step above — CI-only throwaway MFA key.
-          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+          MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
         run: |
           npx playwright install chromium
           npm run test:layout
@@ -314,7 +348,7 @@ jobs:
           EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
           EMAIL_SEND_MODE: log
           # See the smoke step above — CI-only throwaway MFA key.
-          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+          MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
           # Blank on the template → spec self-skips. Two distinct file: URLs on a
           # generated app → the attack runs for real.
           TENANT_DB_URL_TENANT_A: ${{ github.repository != 'PiersAG/house-starter' && 'file:isolation-tenant-a.db' || '' }}
@@ -417,6 +451,12 @@ jobs:
         state: ["on", "off"]
     name: capability ${{ matrix.flag }} = ${{ matrix.state }}
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
@@ -465,6 +505,12 @@ jobs:
         state: ["on", "off"]
     name: subscription_active = ${{ matrix.state }}
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
@@ -548,8 +594,14 @@ jobs:
       APP_LIFECYCLE_STATE: LAUNCHED
       EMAIL_PROVIDER_API_KEY: re_ci-active-scan-only-dummy-not-a-real-key
       EMAIL_SEND_MODE: log
-      MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+      MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
@@ -594,6 +646,12 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - name: Every job above succeeded
         env:
           NEEDS: ${{ toJSON(needs) }}

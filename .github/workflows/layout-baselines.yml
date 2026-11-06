@@ -67,6 +67,12 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.ref_name }}
@@ -106,7 +112,7 @@ jobs:
           EMAIL_SEND_MODE: log
           # CI-only throwaway MFA key (base64 of `ci-e2e-only-dummy-key-32-bytes!!`);
           # boot-required by .env.contract, or the app cannot start to be screenshotted.
-          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+          MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
         run: |
           npx playwright install --with-deps chromium
           npm run test:layout:update

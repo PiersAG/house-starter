@@ -70,6 +70,58 @@ the account holder is the same legal entity.
    so they already belong to the app; tag `metadata.app_id` on the product/price
    (step 2) for cross-reference. (The subscription is tagged by code.)
 
+## The price: the brief's, or a marked placeholder (app-business-core #374)
+
+CEO ruling 2026-11-03: the build uses the price in the brief automatically. If the
+brief has no price (or one that cannot be read exactly), the build uses a **£20/month
+placeholder, clearly marked as one**, and is never blocked for want of a price.
+
+- Provisioning stamps `pricePlaceholder: true` into `config/billing.ts` and tags the
+  Stripe price `metadata.placeholder = true` (nickname "PLACEHOLDER price").
+- While it is set, the app refuses a **live** Stripe key (`lib/billing/placeholder.ts`):
+  test mode and previews work as usual; no real payment can be taken on a placeholder.
+- CI (`scripts/check-billing-configured.mjs`) warns; it does not fail.
+- The factory's launch checklist (`agents/launch_checklist.py`, #347) refuses launch.
+
+**Changing the price before launch** (test mode: setting the real price, or any change
+while the app is not yet launched):
+
+1. In app-business-core: `python3 scripts/set_app_price.py --build <build_id> --price "£29/month"`
+   (`--dry-run` first to see the change). It records the new price with
+   `placeholder: false`, raises `price_version` and clears the recorded price id; merge it
+   through a pull request.
+2. Run the app's billing provisioning (`provision-app-billing.yml` with the build id).
+   The raised version lets it create the new test price under the app's lookup key. The
+   old price is left active, because this app keeps sending its id until the pull request
+   stamping the new one merges, and Stripe refuses an archived price at checkout (Stripe
+   prices never change once made; existing subscribers keep the price they signed up on).
+   It opens a pull request here stamping the new price id with `pricePlaceholder: false`.
+3. Merge that pull request. Then, in app-business-core, record the new id from the run's
+   log: `python3 scripts/set_app_price.py --build <build_id> --record-price-id price_…`, and
+   merge that. The launch checklist fails until the id on this app's `main` equals it.
+
+**Changing the price of a launched app** (live mode). The steps above stamp a **test**
+price id, so never use them here: that id would replace the live one and break checkout.
+No wrong charge follows, because Stripe refuses a test price with a live key, but no
+customer could subscribe. An app counts as launched from `lifecycle_state` LAUNCHED
+onward (`build-status.json`, written by the launcher); it is the only live marker the
+factory has, because nothing records which Stripe mode an app runs in.
+`set_app_price.py` refuses `--price` on such an app without `--live-price-change`.
+
+1. In app-business-core: `python3 scripts/set_app_price.py --build <build_id> --price "£29/month" --live-price-change`;
+   merge it through a pull request. Do **not** run `provision-app-billing.yml`.
+2. In this app's Stripe account, in live mode, create the new price on the existing product
+   and move the lookup key to it. Leave the old price active: subscribers keep it, and this
+   app sends its id until step 3 merges.
+3. Open a pull request here changing `priceIds.default` to the new live price id.
+4. Once it has merged, record the id: `python3 scripts/set_app_price.py --build <build_id> --record-price-id price_…`.
+
+The first live price follows the same steps 2 to 4 at the live switch-over (#469), at the
+amount already recorded.
+
+Tiers and free plans can be added later. Individual accounts can be made free by the
+owner with the existing grants (owner, tester, comp — `scripts/grant-access.ts`).
+
 ## LIVE mode / activation (DEFERRED — needs the business bank account)
 - Complete **activation / KYC** and connect the **business bank account** (same
   legal entity, for consolidated payouts). Then create the live product/price,
