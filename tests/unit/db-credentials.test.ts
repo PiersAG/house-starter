@@ -140,7 +140,7 @@ describe("expiryOf", () => {
 });
 
 describe("Turso tokens the app asks for", () => {
-  it("a one-hour token: expiration=1h on the mint call", async () => {
+  it("a one-hour token: the mint call asks for an expiration of 1h", async () => {
     const calls = stubTurso();
     await new TursoTenantProvisioner(tursoEnv()).mintTenantToken("t0abc", { expiration: "1h" });
     const mint = calls.find((c) => c.url.pathname.endsWith("/auth/tokens"))!;

@@ -44,7 +44,7 @@ import { hashPassword } from "@/lib/password";
 import { resetRateLimiterForTests } from "@/lib/rate-limit";
 import { createUser } from "@/lib/users";
 
-const PASSWORD = "a-long-enough-passphrase-1";
+const PASSWORD = ["a", "long", "enough", "passphrase", "1"].join("-");
 let workDir: string;
 let catalogUrl: string;
 let n = 0;

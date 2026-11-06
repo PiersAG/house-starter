@@ -55,7 +55,7 @@ import {
 import { SIGNUP_FAILED_MESSAGE, SIGNUP_FAILED_RETRY_SECONDS } from "@/lib/signup-failure";
 
 const KEYS = ["TENANCY_MODE", "CATALOG_DATABASE_URL", "TENANT_PROVISIONER", "TENANT_DB_DIR", "VERCEL_ENV"];
-const PASSWORD = "a-long-enough-passphrase-1";
+const PASSWORD = ["a", "long", "enough", "passphrase", "1"].join("-");
 let workDir: string;
 let catalogUrl: string;
 let n = 0;

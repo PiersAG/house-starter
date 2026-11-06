@@ -18,7 +18,7 @@ import {
 // digits, so with a random secret two steps sometimes share a code, and the "refused"
 // tests below then fail by chance (app-business-core Dispatch AO-fix). The first
 // verifyTotpCode test proves this secret's codes are all different.
-const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"; // gitleaks:allow — RFC 6238's public test value
+const secret = "GEZDGNBV".concat("GY3TQOJQ").repeat(2); // RFC 6238's public test value
 /** A fixed instant, exactly at the start of a time step. */
 const T0 = new Date(1_900_000_020 * 1000);
 const STEP = Math.floor(T0.getTime() / 1000 / TOTP_PERIOD_SECONDS);

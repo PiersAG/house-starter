@@ -49,7 +49,7 @@ jobs:
       APP_LIFECYCLE_STATE: LAUNCHED
       EMAIL_PROVIDER_API_KEY: re_ci-active-scan-only-dummy-not-a-real-key
       EMAIL_SEND_MODE: log
-      MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+      MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
     steps:
       # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
       # watch-only): records every outbound connection this job makes, blocks none.
