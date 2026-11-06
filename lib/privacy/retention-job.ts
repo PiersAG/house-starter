@@ -7,7 +7,9 @@
 //   2. deletes retained records whose legal period has ended (lib/privacy/
 //      retention.ts);
 //   3. deletes rows older than their table's age limit (config/personal-data.ts
-//      `ageLimitDays`): logs, error records, spent sign-in tokens.
+//      `ageLimitDays`): logs, error records, spent sign-in tokens;
+//   4. clears the listed left-behind customer databases (`tenant_orphans`) that
+//      the factory's erase job has deleted (lib/tenant/orphans.ts).
 // Every deletion is in the audit trail. deletionsOverdue() is the health
 // signal: an account still not erased 72 hours after its due time means the job
 // is not running, and /api/health says so.
@@ -22,6 +24,7 @@ import { ERASURE_CONFIRM_HOURS, PERSONAL_DATA_MAP } from "@/config/personal-data
 import { columnOf, tableNamed } from "@/lib/privacy/tables";
 import { eraseAccount, type ErasureResult, type TenantPlane } from "@/lib/privacy/deletion";
 import { expireRetainedRecords } from "@/lib/privacy/retention";
+import { settleTenantOrphans, type SettleResult } from "@/lib/tenant/orphans";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -33,6 +36,8 @@ export interface RetentionRun {
   erased: ErasureResult[];
   expiredRetained: number;
   purged: Record<string, number>;
+  /** Step 4; absent when the tenant plane cannot tell whether a database exists. */
+  orphans?: SettleResult;
 }
 
 /** Delete rows older than each table's age limit. */
@@ -99,7 +104,15 @@ export async function runRetentionJob(
   }
   const expiredRetained = await expireRetainedRecords(db, now);
   const purged = await purgeByAge(db, now);
-  return { erased, expiredRetained, purged };
+  const exists = opts.tenantPlane?.exists;
+  if (!exists) return { erased, expiredRetained, purged };
+  let orphans: SettleResult | undefined;
+  try {
+    orphans = await settleTenantOrphans((id) => exists(id), db, now);
+  } catch (e) {
+    console.error("retention: clearing deleted customer databases failed", e instanceof Error ? e.message : e);
+  }
+  return { erased, expiredRetained, purged, ...(orphans ? { orphans } : {}) };
 }
 
 /**

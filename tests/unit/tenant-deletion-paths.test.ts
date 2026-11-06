@@ -23,7 +23,14 @@
 //                     switched off, linked to no tenant), in one conditional
 //                     delete; it touches no tenant, database or record, so the
 //                     earlier attempt's record is left for the rollback or sweep.
-//   factory sweep     app-business-core agents/tenant_db_sweep.py (its own tests).
+//   orphan settle     lib/tenant/orphans.ts settleTenantOrphans (Dispatch AO) —
+//                     deletes the tenant row of a `signup` record only after the
+//                     platform answers that its database is gone (404, never on
+//                     an error), only past the record's first hour, and only in a
+//                     delete that re-checks no account links the tenant
+//                     (tests/unit/tenant-orphans.test.ts);
+//   factory sweep     app-business-core agents/tenant_db_sweep.py (its own tests);
+//                     its `erase` job only reads the catalog.
 //
 // A new call to one of these primitives anywhere else fails this test: guard
 // it, test the guard, and add it to the list in house-starter #154.
@@ -72,7 +79,7 @@ const PRIMITIVES: { what: string; pattern: RegExp; allowed: string[] }[] = [
   {
     what: "deleting a tenant row",
     pattern: /\.delete\(\s*tenants\s*\)|DELETE\s+FROM\s+["`']?tenants\b/i,
-    allowed: ["lib/tenant/signup-provisioning.ts"],
+    allowed: ["lib/tenant/orphans.ts", "lib/tenant/signup-provisioning.ts"],
   },
   {
     what: "erasing an account (its tenant row and database with it)",
