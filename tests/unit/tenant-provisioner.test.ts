@@ -49,6 +49,7 @@ function env(overrides: Record<string, string>): NodeJS.ProcessEnv {
 }
 
 const CLEARED_KEYS = [
+  "TENANT_DB_CREDENTIALS",
   "TENANCY_MODE",
   "DATABASE_URL",
   "CATALOG_DATABASE_URL",
@@ -239,6 +240,16 @@ describe("FileTenantProvisioner", () => {
     expect(await provisioner.create("TENANT_FILE")).toEqual(first);
   });
 
+  it("says whether a tenant's file is still there (Dispatch AO)", async () => {
+    const dir = join(workDir, "exists");
+    const provisioner = new FileTenantProvisioner(env({ TENANT_DB_DIR: dir }));
+    expect(await provisioner.exists("TENANT_GONE")).toBe(false);
+    await provisioner.create("TENANT_HERE");
+    expect(await provisioner.exists("TENANT_HERE")).toBe(true);
+    await provisioner.destroy("TENANT_HERE");
+    expect(await provisioner.exists("TENANT_HERE")).toBe(false);
+  });
+
   it("rejects a tampered tenant id before touching the filesystem", async () => {
     const provisioner = new FileTenantProvisioner(env({ TENANT_DB_DIR: workDir }));
     await expect(provisioner.create("../escape")).rejects.toThrowError(
@@ -288,6 +299,7 @@ describe("provisionTenant", () => {
   });
 
   it("stores a present token SEALED, bound to the tenant, on insert and on conflict", async () => {
+    process.env.TENANT_DB_CREDENTIALS = "stored"; // the opt-in mode that keeps a sealed token
     // The file adapter never yields a token, so stand in for a remote adapter:
     // same file database, plus the credential a Turso database would carry.
     const keyB64 = randomBytes(32).toString("base64");
@@ -315,6 +327,7 @@ describe("provisionTenant", () => {
   });
 
   it("does not register the tenant when a token cannot be sealed (no key)", async () => {
+    process.env.TENANT_DB_CREDENTIALS = "stored"; // the opt-in mode that keeps a sealed token
     const realCreate = FileTenantProvisioner.prototype.create;
     vi.spyOn(FileTenantProvisioner.prototype, "create").mockImplementation(
       async function (this: FileTenantProvisioner, id: string) {
@@ -427,6 +440,21 @@ describe("Turso calls retry Turso's passing errors, and only those", () => {
     });
     const made = await new TursoTenantProvisioner(tursoEnv()).create(newTenantId());
     expect(made.url).toBe("libsql://db2.example.turso.io");
+  });
+
+  it("exists(): 200 is there, 404 is gone, anything else is an error (never 'gone') — Dispatch AO", async () => {
+    const answers = [json(200, { database: {} }), json(404, {}), json(403, { error: "no" })];
+    const seen: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      seen.push(`${init?.method ?? "GET"} ${String(input)}`);
+      return answers.shift()!;
+    });
+    const p = new TursoTenantProvisioner(tursoEnv());
+    const id = newTenantId();
+    expect(await p.exists(id)).toBe(true);
+    expect(await p.exists(id)).toBe(false);
+    await expect(p.exists(id)).rejects.toThrow(/checking database app-t[0-9a-f]+ failed \(403/);
+    expect(seen.every((c) => c.startsWith("GET ") && c.endsWith(`/organizations/org/databases/app-${id}`))).toBe(true);
   });
 
   it("does not retry a refusal, and names it", async () => {
