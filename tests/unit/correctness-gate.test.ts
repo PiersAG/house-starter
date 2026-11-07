@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { isDroppedPrefetch } from "../support/browser";
 
 const ROOT = join(__dirname, "..", "..");
 const CI = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
@@ -83,5 +84,13 @@ describe("its legs", () => {
     for (const leg of ["Accessibility", "Awkward input", "Oldest browser", "Layout overflow", "Visual regression", "Automated tests"]) {
       expect(doc, leg).toContain(leg);
     }
+  });
+});
+
+describe("the browser failure watch", () => {
+  it("lets through only a dropped prefetch, never another script error", () => {
+    expect(isDroppedPrefetch("/localhost:3001/dashboard?_rsc=Uj5fJzh3oSqZfPD_ due to access control checks.")).toBe(true);
+    expect(isDroppedPrefetch("/localhost:3001/api/account due to access control checks.")).toBe(false);
+    expect(isDroppedPrefetch("TypeError: undefined is not an object")).toBe(false);
   });
 });

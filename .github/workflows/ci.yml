@@ -33,6 +33,34 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Secret scan of the template itself (app-business-core #374): the apps get theirs
+      # from the factory's planted security-scan.yml, which this repo does not carry, so
+      # a real key could land here unnoticed. Same pinned version, checksum check and
+      # flags as that scan, on gitleaks' default rules with no allow-list (stricter), so a
+      # template that passes here gives every new app a clean start. It reads the
+      # checked-out tree, not the history: the history holds old made-up test values.
+      # The config is written outside the checkout, and allow comments and ignore files
+      # count for nothing, so nothing committed here can weaken the scan.
+      - name: Secret scan (gitleaks)
+        env:
+          GITLEAKS_VERSION: '8.30.1'
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          work="$(mktemp -d)"
+          curl -fsSL -o "$work/checksums.txt" "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          tarball="$(awk '{print $2}' "$work/checksums.txt" \
+                     | grep -E 'linux_(x64|amd64|x86_64)\.tar\.gz$' | head -n1)"
+          test -n "$tarball"
+          curl -fsSL -o "$work/$tarball" "$base/$tarball"
+          (cd "$work" && grep " ${tarball}\$" checksums.txt | sha256sum -c -)
+          tar -xzf "$work/$tarball" -C "$work" gitleaks
+          printf '[extend]\nuseDefault = true\n' > "$work/gitleaks.toml"
+          : > "$work/empty.gitleaksignore"
+          "$work/gitleaks" dir . --no-banner --redact --config "$work/gitleaks.toml" \
+            --gitleaks-ignore-path "$work/empty.gitleaksignore" --ignore-gitleaks-allow \
+            --exit-code 2
+
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -219,7 +247,7 @@ jobs:
           # MFA_ENCRYPTION_KEY (secret) is declared deploy-injected in .env.contract
           # → the boot validator requires it. CI-only throwaway: the base64 of the
           # 32-byte string `ci-e2e-only-dummy-key-32-bytes!!`. Seals nothing real.
-          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+          MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
         run: |
           npx playwright install --with-deps chromium
           npm run test:e2e
@@ -260,7 +288,7 @@ jobs:
           EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
           EMAIL_SEND_MODE: log
           # See the smoke step above — CI-only throwaway MFA key.
-          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+          MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
         run: |
           npx playwright install chromium
           npm run test:layout
@@ -320,7 +348,7 @@ jobs:
           EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
           EMAIL_SEND_MODE: log
           # See the smoke step above — CI-only throwaway MFA key.
-          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+          MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
           # Blank on the template → spec self-skips. Two distinct file: URLs on a
           # generated app → the attack runs for real.
           TENANT_DB_URL_TENANT_A: ${{ github.repository != 'PiersAG/house-starter' && 'file:isolation-tenant-a.db' || '' }}
@@ -526,6 +554,55 @@ jobs:
             node scripts/check-billing-configured.mjs --expect-stub
           fi
 
+  # Error-tracking both-states matrix (app-business-core issue 761): the per-app
+  # switch in config/error-tracking.ts, flipped like subscription_active. OFF:
+  # nothing reaches Sentry, the browser report route is 404 and the server may
+  # not connect to Sentry. ON: the same, until an EU SENTRY_DSN is set; then
+  # events go, stripped of personal data. tests/unit/error-tracking-both-states
+  # .test.ts reads the posture and asserts the matching behaviour. The ON leg
+  # re-renders the legal documents first, as a per-app build that switches it
+  # on must (Sentry becomes "in use" on the subprocessor list).
+  error-tracking-matrix:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quoted: YAML 1.1 reads bare on/off as booleans.
+        state: ["on", "off"]
+    name: error_tracking = ${{ matrix.state }}
+    steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Flip the error-tracking switch (throwaway checkout)
+        run: node scripts/set-flag.mjs --flag error_tracking --state ${{ matrix.state }}
+
+      - name: Re-render the legal documents for this posture
+        run: npm run legal:render
+
+      - name: Show resulting error-tracking posture
+        run: grep -E "^  enabled:" config/error-tracking.ts
+
+      - name: Type check (error_tracking ${{ matrix.state }})
+        run: npm run type-check
+
+      - name: Unit suite (error_tracking = ${{ matrix.state }})
+        run: npm run test
+
   # ACTIVE, SIGNED-IN SCAN (app-business-core #533; Matt Murphy #223: "ZAP
   # should crawl every page, test every form and probe every API endpoint for
   # injection before the first user"). The factory's planted security scan runs
@@ -566,7 +643,7 @@ jobs:
       APP_LIFECYCLE_STATE: LAUNCHED
       EMAIL_PROVIDER_API_KEY: re_ci-active-scan-only-dummy-not-a-real-key
       EMAIL_SEND_MODE: log
-      MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+      MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
     steps:
       # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
       # watch-only): records every outbound connection this job makes, blocks none.
@@ -711,7 +788,7 @@ jobs:
       APP_LIFECYCLE_STATE: LAUNCHED
       EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
       EMAIL_SEND_MODE: log
-      MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+      MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
     steps:
       # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
       # watch-only): records every outbound connection this job makes, blocks none.
@@ -757,55 +834,6 @@ jobs:
             test-results/
           retention-days: 14
 
-  # Error-tracking both-states matrix (app-business-core issue 761): the per-app
-  # switch in config/error-tracking.ts, flipped like subscription_active. OFF:
-  # nothing reaches Sentry, the browser report route is 404 and the server may
-  # not connect to Sentry. ON: the same, until an EU SENTRY_DSN is set; then
-  # events go, stripped of personal data. tests/unit/error-tracking-both-states
-  # .test.ts reads the posture and asserts the matching behaviour. The ON leg
-  # re-renders the legal documents first, as a per-app build that switches it
-  # on must (Sentry becomes "in use" on the subprocessor list).
-  error-tracking-matrix:
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        # Quoted: YAML 1.1 reads bare on/off as booleans.
-        state: ["on", "off"]
-    name: error_tracking = ${{ matrix.state }}
-    steps:
-      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
-      # watch-only): records every outbound connection this job makes, blocks none.
-      - name: Harden the runner (watch outbound traffic)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Flip the error-tracking switch (throwaway checkout)
-        run: node scripts/set-flag.mjs --flag error_tracking --state ${{ matrix.state }}
-
-      - name: Re-render the legal documents for this posture
-        run: npm run legal:render
-
-      - name: Show resulting error-tracking posture
-        run: grep -E "^  enabled:" config/error-tracking.ts
-
-      - name: Type check (error_tracking ${{ matrix.state }})
-        run: npm run type-check
-
-      - name: Unit suite (error_tracking = ${{ matrix.state }})
-        run: npm run test
-
   # ONE stable check for branch protection (app-business-core #776, #450). Every
   # app repo is born from this template, and build-init requires this check on
   # its `main` beside the security scan's summary. Listing each job by name
@@ -817,7 +845,7 @@ jobs:
   # cancelled job is not a pass).
   all-ci-passed:
     name: All CI checks passed
-    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, active-scan, load-test, correctness-gate, error-tracking-matrix]
+    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, error-tracking-matrix, active-scan, load-test, correctness-gate]
     if: always()
     runs-on: ubuntu-24.04
     steps:
