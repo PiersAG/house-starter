@@ -182,9 +182,7 @@ export const revokedSessions = sqliteTable("revoked_sessions", {
  */
 export const userSessions = sqliteTable("user_sessions", {
   id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
+  userId: text("user_id").notNull().references(() => users.id),
   deviceId: text("device_id"),
   deviceLabel: text("device_label"),
   country: text("country"),
@@ -211,17 +209,11 @@ export type UserSession = typeof userSessions.$inferSelect;
  */
 export const billableEvents = sqliteTable("billable_events", {
   id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
+  userId: text("user_id").notNull().references(() => users.id),
   action: text("action").notNull(),
   quantity: integer("quantity").notNull().default(1),
-  occurredAt: integer("occurred_at", { mode: "timestamp" })
-    .notNull()
-    .default(sql`(unixepoch())`),
+  occurredAt: integer("occurred_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
 });
-
-export type BillableEvent = typeof billableEvents.$inferSelect;
 
 /**
  * Billing subscription state, one row per user (userId is unique). Written by

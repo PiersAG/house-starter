@@ -373,8 +373,7 @@ export const PERSONAL_DATA_MAP: Record<string, DataMapEntry> = {
     linkedBy: "userId",
     category: "Usage records",
     holds: "which of the app's counted actions you performed, how many and when — never what the action contained",
-    purpose:
-      "To measure how the app is used, and to charge for usage if your plan is priced that way.",
+    purpose: "To measure how the app is used, and to charge for usage if your plan is priced that way.",
     lawfulBasis: "legitimate_interests",
     processors: HOST,
     retention: "2 years.",
