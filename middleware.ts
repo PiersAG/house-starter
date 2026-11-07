@@ -29,6 +29,7 @@ import { isPathDisabledByBilling } from "@/lib/billing/routes";
 import { applyCsp, generateNonce } from "@/lib/csp";
 import { allowedOrigins, applyCors, corsPreflight, isPreflight } from "@/lib/cors";
 import { REQUEST_ID_HEADER, newRequestId } from "@/lib/observability/request-id";
+import { TOO_LARGE_MESSAGE, requestTooLarge } from "@/lib/request-size";
 
 const { auth } = NextAuth(authConfig);
 
@@ -58,6 +59,12 @@ export default auth((req) => {
     applyCsp(res.headers, nonce);
     res.headers.set(REQUEST_ID_HEADER, requestId);
     return res;
+  }
+
+  // Too large (Dispatch AR, lib/request-size.ts): a body declared over its limit is
+  // answered 413 here, before anything reads it — not Next.js's own 500.
+  if (requestTooLarge(req.method, pathname, req.headers)) {
+    return finish(NextResponse.json({ error: TOO_LARGE_MESSAGE }, { status: 413 }));
   }
 
   // Capability R2 enforcement (steps 7–9): a request under an OFF capability's
