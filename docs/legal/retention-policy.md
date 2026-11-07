@@ -35,6 +35,7 @@ Produced from config/personal-data.ts. The retention job (lib/privacy/retention-
 - erasures (Records kept after deletion): As long as backups that predate the deletion exist; the ids name nobody once the account is gone. On account deletion: nothing to erase.
 - tenantOrphans (Databases waiting to be deleted): Until the sign-up finishes or the database is deleted; the id names no person. On account deletion: nothing to erase.
 - emailEvents (Email delivery reports): 90 days. Rows older than 90 days are deleted. On account deletion: nothing to erase.
+- billableEvents (Usage records): 2 years. Rows older than 730 days are deleted. On account deletion: deleted.
 - tenantMeta (Your own data): While your account is open. On account deletion: the account's own database is wiped and removed.
 - settingValues (Your own data): While your account is open. On account deletion: the account's own database is wiped and removed.
 - recordEvents (Your own data): While your account is open. On account deletion: the account's own database is wiped and removed.

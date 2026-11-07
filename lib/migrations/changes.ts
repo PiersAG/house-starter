@@ -353,4 +353,23 @@ export const SCHEMA_CHANGES: SchemaChange[] = [
     reverse:
       "DROP INDEX IF EXISTS user_sessions_user_idx;\nDROP TABLE IF EXISTS user_sessions;",
   },
+  {
+    id: "0005-billable-events",
+    date: "2026-11-07",
+    plane: "catalog",
+    kind: "expand",
+    summary:
+      "Billable actions (Dispatch BB; app-business-core #808): one row per action a customer performed that the app counts for billing and analytics (lib/usage/billable-events.ts).",
+    adds: [
+      "billable_events",
+      "billable_events.action",
+      "billable_events.id",
+      "billable_events.occurred_at",
+      "billable_events.quantity",
+      "billable_events.user_id",
+      "index:billable_events_user_action_idx",
+    ],
+    reverse:
+      "DROP INDEX IF EXISTS billable_events_user_action_idx;\nDROP TABLE IF EXISTS billable_events;",
+  },
 ];

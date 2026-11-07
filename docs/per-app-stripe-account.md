@@ -95,10 +95,15 @@ while the app is not yet launched):
    old price is left active, because this app keeps sending its id until the pull request
    stamping the new one merges, and Stripe refuses an archived price at checkout (Stripe
    prices never change once made; existing subscribers keep the price they signed up on).
-   It opens a pull request here stamping the new price id with `pricePlaceholder: false`.
-3. Merge that pull request. Then, in app-business-core, record the new id from the run's
-   log: `python3 scripts/set_app_price.py --build <build_id> --record-price-id price_…`, and
-   merge that. The launch checklist fails until the id on this app's `main` equals it.
+   It pushes a branch here stamping the new price id with `pricePlaceholder: false`, and
+   opens its pull request; when this app's own Actions token may not open one, the
+   factory opens it within the hour (`agents/build/price_id_watch.py`, app-business-core
+   #386).
+3. Merge that pull request. Within the hour the factory records the new id in its own
+   record by itself (same watcher); nothing is copied by hand. The launch checklist fails
+   until the id on this app's `main` equals it. Only if the watcher's run log says it
+   could not record it: `python3 scripts/set_app_price.py --build <build_id>
+   --record-price-id price_…` in app-business-core, merged through a pull request.
 
 **Changing the price of a launched app** (live mode). The steps above stamp a **test**
 price id, so never use them here: that id would replace the live one and break checkout.
@@ -121,6 +126,31 @@ amount already recorded.
 
 Tiers and free plans can be added later. Individual accounts can be made free by the
 owner with the existing grants (owner, tester, comp — `scripts/grant-access.ts`).
+
+## VAT and sales tax (app-business-core #523)
+
+CEO ruling 2026-11-03: VAT is **off** until the business reaches the VAT registration
+threshold. The factory warns at 80% of it (about £72,000 of sales in the last 12 months,
+from each app's Stripe imports; revisit trigger `523-vat-threshold`), and #523 comes back
+to the CEO.
+
+The checkout has one switch for it, `automaticTax` in `config/billing.ts`, **false** in
+the template. Switched on, the checkout asks Stripe Tax to work out and add the tax
+(`automatic_tax`), requires the customer's billing address (where they are decides the
+tax) and lets a business customer give its tax id (`tax_id_collection`); the
+subscription keeps charging tax at each renewal. Both states are tested
+(`tests/unit/checkout-tax.test.ts`).
+
+Before switching it on, in this app's Stripe account (Stripe charges for Stripe Tax per
+transaction, so this is a CEO decision at that time; menu names are from Claude's knowledge of
+Stripe, not checked live):
+
+1. Register for VAT (HMRC) and add the registration in Stripe: Settings → Tax →
+   Registrations.
+2. Set the business address and the default tax behaviour (prices exclusive or inclusive
+   of tax) in Settings → Tax.
+3. Set `automaticTax: true` in `config/billing.ts` by pull request, and take one test
+   checkout with a UK address to see the tax line.
 
 ## LIVE mode / activation (DEFERRED — needs the business bank account)
 - Complete **activation / KYC** and connect the **business bank account** (same

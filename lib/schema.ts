@@ -204,6 +204,26 @@ export const userSessions = sqliteTable("user_sessions", {
 export type UserSession = typeof userSessions.$inferSelect;
 
 /**
+ * The billable-action event table (app-business-core issue 808): one row per action
+ * a customer performed that the app counts for billing and analytics — who, which
+ * action (config/billable-actions.ts), how many units, when. Written only by
+ * lib/usage/billable-events.ts recordBillableEvent. DDL: lib/usage/sql.ts.
+ */
+export const billableEvents = sqliteTable("billable_events", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  action: text("action").notNull(),
+  quantity: integer("quantity").notNull().default(1),
+  occurredAt: integer("occurred_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export type BillableEvent = typeof billableEvents.$inferSelect;
+
+/**
  * Billing subscription state, one row per user (userId is unique). Written by
  * the Stripe webhook (app/api/billing/webhook) and read by the paid-gate
  * (lib/billing/gate.ts). `status` mirrors the Stripe subscription status
