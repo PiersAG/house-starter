@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS billable_events (
   id TEXT PRIMARY KEY NOT NULL,
   user_id TEXT NOT NULL REFERENCES users(id),
   action TEXT NOT NULL,
-  quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
+  quantity INTEGER NOT NULL DEFAULT 1,
   occurred_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 

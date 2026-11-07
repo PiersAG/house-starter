@@ -20,6 +20,8 @@
 // DI pattern (like lib/billing/subscriptions.ts): every function takes the Drizzle db
 // explicitly, so it unit-tests against an in-memory database.
 
+import "server-only";
+
 import { randomUUID } from "node:crypto";
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { billableEvents } from "@/lib/schema";
