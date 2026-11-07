@@ -50,7 +50,15 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-beforeEach(() => {
+// Every test starts from an empty report table (issue 740: no test reads another's
+// rows), so the file passes in any order.
+beforeEach(async () => {
+  const c = createClient({ url });
+  try {
+    await c.execute("DELETE FROM email_events");
+  } finally {
+    c.close();
+  }
   __resetLogForTests();
   kernel.on = true;
   for (const k of KEYS) delete process.env[k];
@@ -158,8 +166,9 @@ describe("/api/health's email check", () => {
       detail: "delivery reports are not set up (EMAIL_EVENTS_SECRET)",
     });
   });
-  it("is green with the reports above, and red after a spam complaint", async () => {
+  it("is green with a delivered report, and red after a spam complaint", async () => {
     live();
+    expect((await report("on-3", delivered)).status).toBe(200);
     expect((await emailHealth(getCatalogDb()))?.ok).toBe(true);
     await report("on-4", { type: "email.complained", data: { email_id: "m1" } });
     expect(await emailHealth(getCatalogDb())).toEqual({

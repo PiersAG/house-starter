@@ -20,6 +20,7 @@
 // API-level (no browser), like the other request-level specs.
 
 import { expect, test } from "@playwright/test";
+import { addressFor } from "../support/browser";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { appDir, discoverAllRoutes, isWritable } from "../isolation/route-map";
@@ -75,7 +76,7 @@ test.describe("malformed and over-posted requests (#448, #442)", () => {
   test("malformed bodies are refused, never a server error", async () => {
     test.setTimeout(180_000);
     const stamp = Date.now();
-    const a = await client("203.0.113.81");
+    const a = await client(addressFor(test.info(), "81"));
     const email = `malformed-${stamp}@example.com`;
     await ensureAccount(a, email);
     await signIn(a, email);
@@ -101,7 +102,7 @@ test.describe("malformed and over-posted requests (#448, #442)", () => {
   test("over-posted fields never change who the caller is", async () => {
     test.setTimeout(180_000);
     const stamp = Date.now();
-    const a = await client("203.0.113.82");
+    const a = await client(addressFor(test.info(), "82"));
     const email = `overpost-${stamp}@example.com`;
 
     // Sign-up itself, over-posted: the account is created as an ordinary owner.
@@ -129,7 +130,7 @@ test.describe("malformed and over-posted requests (#448, #442)", () => {
     }
 
     // A fresh session reads the role and tenant from the database again.
-    const fresh = await client("203.0.113.83");
+    const fresh = await client(addressFor(test.info(), "83"));
     await signIn(fresh, email);
     const after = await readToken((await sessionCookie(fresh))!);
     expect(after.role).toBe(before.role);
