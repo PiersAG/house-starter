@@ -9,6 +9,11 @@
 //
 // Held here: a job added later without it, a second copy pinned differently, or a switch
 // to blocking mode (which would need its own ruling and an allow-list) all fail.
+//
+// The ruling covers house-starter's own jobs. A generated app also holds two workflows the
+// factory's scaffold writes (scaffold/scaffold-app-repo.sh), which are not in this template
+// and sit in a private repository, outside the free tier. They are not held here: this
+// suite also runs in every generated app, where they failed it (#740, Dispatch AQ-fix2).
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,12 +21,14 @@ import { describe, expect, it } from "vitest";
 
 const DIR = join(__dirname, "..", "..", ".github", "workflows");
 const PIN = "step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43";
+const FACTORY_WRITTEN = ["deploy.yml", "security-scan.yml"];
 
 type Job = { file: string; id: string; body: string };
 
 function jobs(): Job[] {
   const out: Job[] = [];
-  for (const file of readdirSync(DIR).filter((f) => f.endsWith(".yml"))) {
+  const own = readdirSync(DIR).filter((f) => f.endsWith(".yml") && !FACTORY_WRITTEN.includes(f));
+  for (const file of own) {
     const text = readFileSync(join(DIR, file), "utf8");
     const at = text.indexOf("\njobs:\n");
     if (at === -1) continue;
