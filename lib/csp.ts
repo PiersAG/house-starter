@@ -18,6 +18,7 @@
 // listed for scripts is honoured only by browsers too old for 'strict-dynamic';
 // a third-party script still needs the nonce).
 
+import "server-only";
 import { CSP_SOURCES, type CspDirective, type CspSourceEntry } from "@/config/csp";
 
 export const CSP_REPORT_PATH = "/api/csp-report";
@@ -57,8 +58,31 @@ function basePolicy(nonce: string): [string, string[]][] {
   ];
 }
 
+/**
+ * Whether the policy tells browsers to switch every request to https. Always, except
+ * on the one plain-http test server the correctness gate runs Safari's engine against
+ * (app-business-core issue 721): WebKit, unlike Chromium and Firefox, applies
+ * `upgrade-insecure-requests` to localhost, so over plain http it fetches the page's own
+ * scripts and form posts over https and the page never works. Dropped only when BOTH
+ * the safe test environment holds (RATE_LIMIT_ALLOW_IN_MEMORY=true and no VERCEL_ENV,
+ * the two-part signal lib/auth-rate-limit.ts uses) AND that server asks for it with
+ * CSP_PLAIN_HTTP_TEST_SERVER=1. A deployed app always has VERCEL_ENV, so it always
+ * sends the directive; and it is served over https, where the directive changes nothing.
+ */
+export function upgradesInsecureRequests(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const deployed = (env.VERCEL_ENV ?? "").trim().length > 0;
+  const safeTest = !deployed && env.RATE_LIMIT_ALLOW_IN_MEMORY === "true";
+  return !(safeTest && env.CSP_PLAIN_HTTP_TEST_SERVER === "1");
+}
+
 /** The policy text for a nonce plus the given outside sources. */
-export function buildCsp(nonce: string, extra: readonly CspSourceEntry[] = []): string {
+export function buildCsp(
+  nonce: string,
+  extra: readonly CspSourceEntry[] = [],
+  env: Record<string, string | undefined> = process.env,
+): string {
   const policy = basePolicy(nonce);
   for (const entry of extra) {
     const name = DIRECTIVE_NAME[entry.directive];
@@ -73,7 +97,7 @@ export function buildCsp(nonce: string, extra: readonly CspSourceEntry[] = []): 
   }
   return [
     ...policy.map(([n, values]) => `${n} ${values.join(" ")}`),
-    "upgrade-insecure-requests",
+    ...(upgradesInsecureRequests(env) ? ["upgrade-insecure-requests"] : []),
     `report-uri ${CSP_REPORT_PATH}`,
     `report-to ${CSP_REPORT_GROUP}`,
   ].join("; ");

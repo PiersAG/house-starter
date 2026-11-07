@@ -7,15 +7,17 @@
 // to 10 minutes; under "strict" it is refused on its very next request.
 
 import { expect, test } from "@playwright/test";
+import { addressFor, uniqueEmail } from "../support/browser";
 import { client, ensureAccount, mintToken, readToken, signIn } from "./session-helpers";
 
-const ADDRESS = "203.0.113.90";
-const browserAddress = (i: number) => `203.0.113.${91 + i}`;
+const address = () => addressFor(test.info());
+const browserAddress = (i: number) => addressFor(test.info(), `browser-${i}`);
 
-test.describe.configure({ mode: "serial" });
+// Each test makes its own account and uses its own client addresses (issue 740,
+// docs/test-independence.md), so the tests run in any order and a retry starts clean.
 
 async function accountPageWith(cookie: string): Promise<string> {
-  const ctx = await client(ADDRESS, cookie);
+  const ctx = await client(address(), cookie);
   const res = await ctx.get("/account");
   const path = new URL(res.url()).pathname;
   await ctx.dispose();
@@ -23,8 +25,8 @@ async function accountPageWith(cookie: string): Promise<string> {
 }
 
 test("a device signed out from another is refused at once, with its own unchanged cookie", async () => {
-  const email = "strict-revoke-559@house-starter.test";
-  const setup = await client(ADDRESS);
+  const email = uniqueEmail(test.info(), "strict-revoke-559");
+  const setup = await client(address());
   await ensureAccount(setup, email);
   await setup.dispose();
 
@@ -59,8 +61,8 @@ test("a device signed out from another is refused at once, with its own unchange
 });
 
 test("a session lasts 8 hours from sign-in, or 7 days with remember me, however active", async () => {
-  const email = "strict-life-559@house-starter.test";
-  const setup = await client(ADDRESS);
+  const email = uniqueEmail(test.info(), "strict-life-559");
+  const setup = await client(address());
   await ensureAccount(setup, email);
   await setup.dispose();
 

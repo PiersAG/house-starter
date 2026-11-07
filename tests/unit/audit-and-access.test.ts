@@ -109,6 +109,12 @@ describe("#796 audit trail", () => {
   });
 
   it("is append-only: the database refuses UPDATE and DELETE", async () => {
+    // Its own row first: on an empty table UPDATE and DELETE touch nothing, so the
+    // refusal would never be reached (issue 740: no test leans on another's rows).
+    await recordAuditEvent(
+      { action: "plan_changed", actor: "system", subjectUserId: "u-append-only", target: "subscription" },
+      catalog,
+    );
     await expect(raw.execute("UPDATE audit_events SET actor = 'someone-else'")).rejects.toThrow(
       /append-only/,
     );
@@ -205,7 +211,8 @@ describe("#806 tenant access log and cross-tenant detection", () => {
   });
 
   it("a caller from tenant B opening tenant A's data is detected and alerted at once", async () => {
-    expect(await crossTenantCountSince(Date.now() - 60_000, catalog)).toBe(0);
+    // Counted from what is there already, so it holds whatever ran before (issue 740).
+    const before = await crossTenantCountSince(Date.now() - 60_000, catalog);
     await runWithRequest({ requestId: "req-cross-001", route: "/api/leaky", method: "GET" }, async () => {
       noteRequestUser("u-b", "tenant-b");
       await noteTenantAccess("tenant-a", { db: catalog });
@@ -218,7 +225,7 @@ describe("#806 tenant access log and cross-tenant detection", () => {
     expect(line && JSON.parse(line)).toMatchObject({ level: "error", event: "cross_tenant_access", tenant_id: "tenant-b" });
     const err = await sinkClient()!.execute("SELECT message, request_id FROM error_events WHERE request_id = 'req-cross-001'");
     expect(String(err.rows[0].message)).toContain("cross-tenant access");
-    expect(await crossTenantCountSince(Date.now() - 60_000, catalog)).toBe(1);
+    expect(await crossTenantCountSince(Date.now() - 60_000, catalog)).toBe(before + 1);
     // and /api/health fails its tenant_isolation check, so the prober raises it
     const report = await assembleHealth({
       pingDb: async () => ({ ok: true }),
@@ -237,7 +244,17 @@ describe("#806 tenant access log and cross-tenant detection", () => {
   });
 
   it("answers how long it was happening and who else could have seen the data", async () => {
-    const report = await tenantAccessReport("tenant-a", { db: catalog, since: new Date(0), until: new Date(Date.now() + 60_000) });
+    // Its own tenant and callers: one by its owner, one from another tenant.
+    await runWithRequest({ requestId: "req-report-own", route: "/api/tenant" }, async () => {
+      noteRequestUser("u-a", "tenant-r");
+      await noteTenantAccess("tenant-r", { db: catalog });
+    });
+    await runWithRequest({ requestId: "req-report-cross", route: "/api/leaky" }, async () => {
+      noteRequestUser("u-b", "tenant-b");
+      await noteTenantAccess("tenant-r", { db: catalog });
+    });
+    await flushLogs();
+    const report = await tenantAccessReport("tenant-r", { db: catalog, since: new Date(0), until: new Date(Date.now() + 60_000) });
     expect(report.exposure?.requests).toBe(1);
     expect(report.exposure!.first.getTime()).toBeLessThanOrEqual(report.exposure!.last.getTime());
     const outsiders = report.accessors.filter((a) => a.crossTenant);
@@ -245,7 +262,12 @@ describe("#806 tenant access log and cross-tenant detection", () => {
       expect.objectContaining({ userId: "u-b", sessionTenantId: "tenant-b", requests: 1 }),
     ]);
     expect(report.accessors.find((a) => a.userId === "u-a")).toMatchObject({ crossTenant: false, requests: 1 });
-    const clean = await tenantAccessReport("tenant-s", { db: catalog });
+    // A tenant opened only by its own user has no exposure.
+    await runWithRequest({ requestId: "req-report-clean" }, async () => {
+      noteRequestUser("u-c", "tenant-c");
+      await noteTenantAccess("tenant-c", { db: catalog });
+    });
+    const clean = await tenantAccessReport("tenant-c", { db: catalog });
     expect(clean.exposure).toBeNull();
   });
 

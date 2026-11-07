@@ -16,7 +16,69 @@ const RESPONSIVE_VIEWPORTS = [
   { name: "responsive-1920-desktop", viewport: { width: 1920, height: 1080 } },
 ] as const;
 
+// Issue 721 (Matt Murphy #296: "the slowest connection the smallest screen the oldest
+// browser"; #306 "opens it on safari"; #323 "a phone from 2019"). `slow` turns on the
+// slow connection and slowed processor in tests/support/slow-device.ts.
+const AWKWARD_PROJECTS = [
+  { name: "awkward-chromium", use: devices["Desktop Chrome"], slow: false },
+  { name: "awkward-firefox", use: devices["Desktop Firefox"], slow: false },
+  { name: "awkward-webkit", use: devices["Desktop Safari"], slow: false, webkit: true },
+  { name: "awkward-iphone-2019", use: devices["iPhone 11"], slow: false, webkit: true },
+  { name: "awkward-android-2019-slow", use: devices["Pixel 4"], slow: true },
+  {
+    name: "awkward-320-slow",
+    use: { ...devices["Desktop Chrome"], viewport: { width: 320, height: 640 } },
+    slow: true,
+  },
+] as const;
+
+// Safari's engine applies the page policy's `upgrade-insecure-requests` to localhost
+// (Chromium and Firefox do not), so over plain http it fetches the page's own scripts
+// over https and nothing works. Its projects use a second server of the same build,
+// started with CSP_PLAIN_HTTP_TEST_SERVER=1, the one place lib/csp.ts leaves the
+// directive out (safe test environment only; app-business-core issue 721). Started
+// only when a WebKit project runs, or when no project is named.
+const WEBKIT_BASE_URL = "http://localhost:3001";
+const projectArgs = process.argv.filter((a, i, all) => a.startsWith("--project=") || all[i - 1] === "--project");
+const WANT_WEBKIT_SERVER =
+  projectArgs.length === 0 ||
+  projectArgs.some((a) => AWKWARD_PROJECTS.some((p) => "webkit" in p && a.endsWith(p.name)));
+
+const SERVER_ENV = {
+  AUTH_SECRET:
+    process.env.AUTH_SECRET ||
+    "ci-e2e-only-dummy-secret-not-used-anywhere-real",
+  TENANCY_MODE: process.env.TENANCY_MODE || "per_tenant",
+  DATABASE_URL: process.env.DATABASE_URL || "file:e2e-playwright.db",
+  RATE_LIMIT_ALLOW_IN_MEMORY:
+    process.env.RATE_LIMIT_ALLOW_IN_MEMORY || "true",
+  STRIPE_SECRET_KEY:
+    process.env.STRIPE_SECRET_KEY ||
+    "sk_test_ci-e2e-only-dummy-not-a-real-key",
+  STRIPE_WEBHOOK_SECRET:
+    process.env.STRIPE_WEBHOOK_SECRET ||
+    "whsec_ci-e2e-only-dummy-not-a-real-secret",
+  APP_LIFECYCLE_STATE: process.env.APP_LIFECYCLE_STATE || "LAUNCHED",
+  // The crash-screen test route (app/crash-check, issue 502) exists only here.
+  E2E_CRASH_ROUTE: "1",
+  EMAIL_PROVIDER_API_KEY:
+    process.env.EMAIL_PROVIDER_API_KEY ||
+    "re_ci-e2e-only-dummy-not-a-real-key",
+  EMAIL_SEND_MODE: process.env.EMAIL_SEND_MODE || "log",
+  // CI-only throwaway, boot-required by .env.contract. Computed from a
+  // readable 32-byte string rather than written as base64, so no
+  // secret-shaped literal sits in the repo for a scanner to flag.
+  MFA_ENCRYPTION_KEY:
+    process.env.MFA_ENCRYPTION_KEY ||
+    Buffer.from("ci-e2e-only-dummy-key-32-bytes!!").toString("base64"),
+};
+
 export default defineConfig({
+  // A test that fails and then passes on its retry is a timing bug, not a pass
+  // (app-business-core issue 740; Matt Murphy #208: "the timeout you never thought
+  // about triggers the race condition that never reproduces locally"). CI reports
+  // it as a failure; docs/test-independence.md.
+  failOnFlakyTests: !!process.env.CI,
   testDir: "./tests",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -75,6 +137,36 @@ export default defineConfig({
         },
       },
     },
+    // THE CORRECTNESS GATE (app-business-core issue 413) — BLOCKING, CI job
+    // `correctness-gate`. docs/correctness-gate.md lists its legs.
+    //
+    // Accessibility on every page (issue 720): desktop, with the keyboard walk, and a
+    // phone, where the same axe and accessibility-tree checks run on the narrow layout.
+    {
+      name: "a11y",
+      testDir: "./tests/a11y",
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "a11y-phone",
+      testDir: "./tests/a11y",
+      testIgnore: /keyboard\.spec\.ts$/,
+      use: { ...devices["Pixel 5"] },
+    },
+    // Awkward input and devices (issue 721). The same suite in Chromium, Firefox and
+    // Safari's engine (WebKit), on a 2019 iPhone (WebKit) and a 2019 Android phone on a
+    // slow connection with a slowed processor, and at the smallest screen. The
+    // connection and processor are slowed through Chromium's DevTools protocol, so the
+    // slow-device projects are Chromium-based; tests/support/slow-device.ts applies it.
+    ...AWKWARD_PROJECTS.map((p) => ({
+      name: p.name,
+      testDir: "./tests/awkward",
+      // The full form matrix and the server tests run once, in Chromium; every
+      // browser and device runs the first-visit journeys.
+      testMatch: p.name === "awkward-chromium" ? /\.spec\.ts$/ : /journeys\.spec\.ts$/,
+      use: { ...p.use, ...("webkit" in p ? { baseURL: WEBKIT_BASE_URL } : {}) },
+      metadata: { slow: p.slow },
+    })),
     // Spec C4 — multi-viewport advisory gate.
     // Every project runs the same responsive.spec.ts, so the single suite
     // executes five times, once per gated width.
@@ -87,44 +179,38 @@ export default defineConfig({
           : { ...devices["Desktop Chrome"], viewport: v.viewport },
     })),
   ],
-  webServer: {
-    command: "npm run build && npm run start",
-    url: "http://localhost:3000",
-    reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
-    // CI-safe dummy values used when the environment has not already injected
-    // them (local dev, stop-hook, or any runner that does not supply these).
-    // These are the identical strings the CI workflow injects in its
-    // "Playwright smoke test" step — no real secrets, no real systems reached.
-    // process.env values already present always win (|| '' guard below ensures
-    // an explicit empty string in the environment still gets the fallback).
-    env: {
-      AUTH_SECRET:
-        process.env.AUTH_SECRET ||
-        "ci-e2e-only-dummy-secret-not-used-anywhere-real",
-      TENANCY_MODE: process.env.TENANCY_MODE || "per_tenant",
-      DATABASE_URL: process.env.DATABASE_URL || "file:e2e-playwright.db",
-      RATE_LIMIT_ALLOW_IN_MEMORY:
-        process.env.RATE_LIMIT_ALLOW_IN_MEMORY || "true",
-      STRIPE_SECRET_KEY:
-        process.env.STRIPE_SECRET_KEY ||
-        "sk_test_ci-e2e-only-dummy-not-a-real-key",
-      STRIPE_WEBHOOK_SECRET:
-        process.env.STRIPE_WEBHOOK_SECRET ||
-        "whsec_ci-e2e-only-dummy-not-a-real-secret",
-      APP_LIFECYCLE_STATE: process.env.APP_LIFECYCLE_STATE || "LAUNCHED",
-      // The crash-screen test route (app/crash-check, issue 502) exists only here.
-      E2E_CRASH_ROUTE: "1",
-      EMAIL_PROVIDER_API_KEY:
-        process.env.EMAIL_PROVIDER_API_KEY ||
-        "re_ci-e2e-only-dummy-not-a-real-key",
-      EMAIL_SEND_MODE: process.env.EMAIL_SEND_MODE || "log",
-      // CI-only throwaway, boot-required by .env.contract. Computed from a
-      // readable 32-byte string rather than written as base64, so no
-      // secret-shaped literal sits in the repo for a scanner to flag.
-      MFA_ENCRYPTION_KEY:
-        process.env.MFA_ENCRYPTION_KEY ||
-        Buffer.from("ci-e2e-only-dummy-key-32-bytes!!").toString("base64"),
+  webServer: [
+    {
+      // The correctness gate builds once, checks the built scripts against the oldest
+      // supported browser, then sets E2E_PREBUILT so this starts that same build.
+      command: process.env.E2E_PREBUILT ? "npm run start" : "npm run build && npm run start",
+      url: "http://localhost:3000",
+      reuseExistingServer: !process.env.CI,
+      timeout: 120 * 1000,
+      // CI-safe dummy values used when the environment has not already injected
+      // them (local dev, stop-hook, or any runner that does not supply these).
+      // These are the identical strings the CI workflow injects in its
+      // "Playwright smoke test" step — no real secrets, no real systems reached.
+      // process.env values already present always win (|| '' guard below ensures
+      // an explicit empty string in the environment still gets the fallback).
+      env: SERVER_ENV,
     },
-  },
+    ...(WANT_WEBKIT_SERVER
+      ? [
+          {
+            // The same build (started after the one above has built it), its own
+            // database, and the one test-only CSP switch (see WEBKIT_BASE_URL).
+            command: "npm run start -- -p 3001",
+            url: WEBKIT_BASE_URL,
+            reuseExistingServer: !process.env.CI,
+            timeout: 120 * 1000,
+            env: {
+              ...SERVER_ENV,
+              DATABASE_URL: process.env.WEBKIT_DATABASE_URL || "file:e2e-webkit.db",
+              CSP_PLAIN_HTTP_TEST_SERVER: "1",
+            },
+          },
+        ]
+      : []),
+  ],
 });

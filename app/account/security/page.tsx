@@ -10,6 +10,7 @@ import { catalogDb } from "@/lib/catalog";
 import { SESSION_POLICY } from "@/config/sessions";
 import { activeSessions } from "@/lib/session/records";
 import { isMfaActive } from "@/lib/mfa/enrollment";
+import { csrfTokenFor } from "@/lib/csrf";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import { TwoStepSetup } from "./TwoStepSetup";
 import { endDeviceAction, signOutEverywhereAction } from "./actions";
@@ -27,6 +28,7 @@ export default async function AccountSecurityPage() {
     isMfaActive(catalogDb, userId),
   ]);
   const twoStepRequired = session.user.mfa === "enroll_required";
+  const csrfToken = csrfTokenFor(session) ?? "";
   const otherDevicesEnd = SESSION_POLICY === "strict" ? "at once" : "within 10 minutes";
 
   return (
@@ -45,7 +47,7 @@ export default async function AccountSecurityPage() {
           Two-step sign-in
         </h2>
         <div className="mt-4">
-          <TwoStepSetup active={twoStepActive} required={twoStepRequired} />
+          <TwoStepSetup active={twoStepActive} required={twoStepRequired} csrfToken={csrfToken} />
         </div>
       </section>
 

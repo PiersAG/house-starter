@@ -12,6 +12,7 @@ import {
   cspHeaders,
   generateNonce,
   isEnforced,
+  upgradesInsecureRequests,
 } from "@/lib/csp";
 
 const directives = (policy: string) =>
@@ -56,6 +57,25 @@ describe("buildCsp", () => {
     expect(d["base-uri"]).toEqual(["'self'"]);
     expect(d["form-action"]).toEqual(["'self'"]);
     expect(d).toHaveProperty("upgrade-insecure-requests");
+  });
+
+  // Both states (app-business-core issue 721): the directive is dropped ONLY on the
+  // plain-http test server the correctness gate runs Safari's engine against.
+  it("keeps upgrade-insecure-requests everywhere but the plain-http WebKit test server", () => {
+    const safe = { RATE_LIMIT_ALLOW_IN_MEMORY: "true" };
+    const asks = { CSP_PLAIN_HTTP_TEST_SERVER: "1" };
+    expect(upgradesInsecureRequests({})).toBe(true);
+    expect(upgradesInsecureRequests(safe)).toBe(true);
+    expect(upgradesInsecureRequests(asks)).toBe(true);
+    expect(upgradesInsecureRequests({ ...safe, ...asks, VERCEL_ENV: "production" })).toBe(true);
+    expect(upgradesInsecureRequests({ ...safe, ...asks, VERCEL_ENV: "preview" })).toBe(true);
+    expect(upgradesInsecureRequests({ ...safe, CSP_PLAIN_HTTP_TEST_SERVER: "true" })).toBe(true);
+    expect(upgradesInsecureRequests({ ...safe, ...asks })).toBe(false);
+    expect(directives(buildCsp("abc", [], { ...safe, ...asks }))).not.toHaveProperty("upgrade-insecure-requests");
+    const kept = directives(buildCsp("abc", [], { ...safe, ...asks }));
+    expect(kept["script-src"]).toEqual(["'self'", "'nonce-abc'", "'strict-dynamic'"]);
+    expect(kept["form-action"]).toEqual(["'self'"]);
+    expect(directives(buildCsp("abc", [], { ...asks, VERCEL_ENV: "production" }))).toHaveProperty("upgrade-insecure-requests");
   });
 
   it("names the report endpoint both ways (#446, Matt Murphy #165)", () => {
