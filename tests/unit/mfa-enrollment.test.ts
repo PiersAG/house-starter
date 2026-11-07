@@ -38,6 +38,19 @@ import {
 } from "@/lib/mfa/enrollment";
 import { TOTP_PERIOD_SECONDS } from "@/lib/mfa/totp";
 
+// Enrollment gets fixed secrets, in turn, never random ones. Each code is only six
+// digits, so with a random secret two steps (or two secrets) sometimes share a code,
+// and a "refused" test here then fails by chance (app-business-core Dispatch AO-fix).
+// The test below proves these secrets' codes are all different.
+const TEST_SECRETS = ["GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", "MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U"];
+vi.mock("@/lib/mfa/totp", async (importOriginal) => {
+  let issued = 0;
+  return {
+    ...(await importOriginal<typeof import("@/lib/mfa/totp")>()),
+    generateTotpSecret: () => TEST_SECRETS[issued++ % TEST_SECRETS.length],
+  };
+});
+
 const key = randomBytes(32);
 const T0 = new Date(1_900_000_020 * 1000);
 const DAY_MS = 86_400_000;
@@ -60,6 +73,18 @@ function at(steps: number): Date {
 async function codeFor(secret: string, when: Date): Promise<string> {
   return generate({ secret, epoch: Math.floor(when.getTime() / 1000) });
 }
+
+describe("test secrets", () => {
+  it("give a different code at every step these tests use, for both secrets", async () => {
+    const steps = Array.from({ length: 16 }, (_, i) => i - 2);
+    for (const step of steps) {
+      const codes = await Promise.all(
+        TEST_SECRETS.flatMap((s) => [-1, 0, 1].map((d) => codeFor(s, at(step + d)))),
+      );
+      expect(new Set(codes).size).toBe(codes.length);
+    }
+  });
+});
 
 /** Enroll and confirm; returns the secret and the recovery codes. */
 async function enrolled(userId: string): Promise<{ secret: string; recoveryCodes: string[] }> {

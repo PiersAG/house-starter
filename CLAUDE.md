@@ -52,3 +52,13 @@ release, once no live version reads it (a `contract` change). Every change to
 lib/migrate.ts's DDL gets its entry in lib/migrations/changes.ts in the same
 commit, with the SQL that reverses it — `npx tsx scripts/schema-change-draft.ts`
 prints it. Recovery steps, targets and the rehearsal: docs/recovery.md.
+
+# Tests and the correctness gate (enforced by tests/unit/test-independence.test.ts and tests/unit/browser-suite-coverage.test.ts)
+
+Every new page goes in tests/support/routes.ts and every new form in
+tests/support/forms.ts: the correctness gate then checks it for accessibility
+(WCAG 2.2 AA, keyboard, contrast) and awkward input on every browser and device
+(docs/correctness-gate.md). Each test makes its own data: uniqueEmail() and
+addressFor() from tests/support/browser.ts, no fixed accounts, no serial mode;
+the unit suite runs in random order. Wait for a condition, never a time: no
+waitForTimeout, no sleeps (docs/test-independence.md).

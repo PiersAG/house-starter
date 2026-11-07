@@ -19,6 +19,7 @@
 // API-level (no browser), like the other request-level specs.
 
 import { expect, test } from "@playwright/test";
+import { addressFor } from "../support/browser";
 import { readFileSync } from "node:fs";
 import { appDir, discoverAllRoutes, type DiscoveredRoute } from "../isolation/route-map";
 import { client, ensureAccount, signIn, writeHeaders } from "./session-helpers";
@@ -76,8 +77,8 @@ test.describe("injection probe — every route that takes query or route input (
   test("crafted and boundary-length values are refused, never leak, never break the query", async () => {
     test.setTimeout(180_000);
     const stamp = Date.now();
-    const a = await client("203.0.113.71");
-    const b = await client("203.0.113.72");
+    const a = await client(addressFor(test.info(), "71"));
+    const b = await client(addressFor(test.info(), "72"));
     const emailA = `probe-a-${stamp}@example.com`;
     const emailB = `probe-b-${stamp}@example.com`;
     await ensureAccount(a, emailA);

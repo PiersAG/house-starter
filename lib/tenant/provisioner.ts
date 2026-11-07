@@ -68,6 +68,12 @@ export interface TenantProvisioner {
    * wiped its rows, so a refusal leaves an empty database, never data.
    */
   destroy(tenantId: string): Promise<boolean>;
+  /**
+   * Whether this tenant's database still exists at its platform. Read-only
+   * (Turso scope `read`). Throws when the platform gives no clear answer, so a
+   * caller never takes "could not tell" for "gone".
+   */
+  exists(tenantId: string): Promise<boolean>;
 }
 
 /** When a token minted now with Turso duration `d` (e.g. "1h", "2w1d30m") expires. */
@@ -139,6 +145,11 @@ export class FileTenantProvisioner implements TenantProvisioner {
     assertValidTenantId(tenantId);
     rmSync(join(tenantFileDir(this.env), `${tenantId}.db`), { force: true });
     return true;
+  }
+
+  async exists(tenantId: string): Promise<boolean> {
+    assertValidTenantId(tenantId);
+    return existsSync(join(tenantFileDir(this.env), `${tenantId}.db`));
   }
 }
 
@@ -395,6 +406,24 @@ export class TursoTenantProvisioner implements TenantProvisioner {
       { method: "DELETE" },
     );
     return r.ok || r.status === 404;
+  }
+
+  /**
+   * Whether the tenant's hosted database is still there: 200 yes, 404 no, and
+   * any other answer an error. The app's own key has `read`, so this works
+   * where destroy() is refused (#439), and the retention job uses it to see
+   * that the factory's erase job has deleted a listed database.
+   */
+  async exists(tenantId: string): Promise<boolean> {
+    assertValidTenantId(tenantId);
+    const dbName = tursoDatabaseName(this.appSlug, tenantId);
+    const r = await tursoFetch(
+      `/organizations/${encodeURIComponent(this.org)}/databases/${encodeURIComponent(dbName)}`,
+      this.token,
+    );
+    if (r.ok) return true;
+    if (r.status === 404) return false;
+    throw new Error(`Turso: checking database ${dbName} failed (${r.status} ${r.statusText})`);
   }
 }
 

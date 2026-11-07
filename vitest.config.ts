@@ -12,6 +12,19 @@ export default defineConfig({
     // store: the safe-environment in-memory stand-in, as in CI's e2e runs. Tests
     // of the "not configured" refusal pass their own env objects.
     env: { RATE_LIMIT_ALLOW_IN_MEMORY: "true" },
+    // Random order, every run (app-business-core issue 740; Matt Murphy #208:
+    // "tests that depend on other tests"): a test that passes only after another
+    // has left data behind fails here, not later in CI. The seed is printed on a
+    // failure; `npx vitest run --sequence.seed=<seed>` replays that order.
+    // docs/test-independence.md.
+    sequence: { shuffle: true },
+    // "The timeout you never thought about" (issue 740, Matt Murphy #208): the
+    // default 5 seconds. A dozen tests do real database work in 3-4 seconds on an
+    // idle machine and failed it under load (measured 2026-11-04, Dispatch AQ). One
+    // limit, chosen on purpose: a test that hangs still fails, a busy runner does
+    // not fail a working test. A test needing more sets its own.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     include: ["tests/unit/**/*.{test,spec}.{ts,tsx}", "app/**/*.{test,spec}.{ts,tsx}", "lib/**/*.{test,spec}.{ts,tsx}", "components/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["tests/e2e/**", "node_modules/**"],
     coverage: {

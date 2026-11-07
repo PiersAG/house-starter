@@ -45,7 +45,7 @@ Deactivated at once; erased 30 days later, checked and confirmed by email within
 
 ## Backups
 
-The account's own database is removed with its restore history where the database platform allows it (the platform key needs its delete permission); otherwise it is left empty. The shared account database's restore points age out within its restore window. After any restore, run `npm run privacy:replay-erasures -- <ledger.json>` with the erasure ledger exported before the restore (`npm run privacy:export-ledger`), before the app reopens.
+The account's own database is emptied when the account is erased. The app itself holds no right to delete a database, so the database is then deleted by the operator's daily erase job, which holds that right and nothing else. Whether the database platform keeps restore points of a deleted database has not been confirmed from its documentation; if it does, they are outside the operator's reach until they age out. A separate copy in the operator's off-site backup store is kept for 30 days, locked so that it cannot be changed or removed early, and is then removed automatically. The shared account database's restore points age out within its restore window. After any restore, run `npm run privacy:replay-erasures -- <ledger.json>` with the erasure ledger exported before the restore (`npm run privacy:export-ledger`), before the app reopens.
 
 ## The audit trail
 

@@ -55,8 +55,41 @@ export function SessionExpiryWarning({
     return () => window.clearInterval(tick);
   }, [expiresAt, signInAgain]);
 
+  // A modal dialog keeps the keyboard inside it (WCAG 2.1.2, 2.4.3; app-business-core
+  // issue 720, Matt Murphy step 117): Tab and Shift+Tab cycle through the dialog's own
+  // controls, and focus that lands outside it is brought back. Without this, Tab walked
+  // out of the dialog into the page behind it, which a sighted keyboard user cannot see
+  // and a screen-reader user is told is not there (aria-modal).
+  const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (open) stayRef.current?.focus();
+    if (!open) return;
+    stayRef.current?.focus();
+    const focusables = () =>
+      Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const items = focusables();
+      if (items.length === 0) return;
+      const at = items.indexOf(document.activeElement as HTMLElement);
+      const next = e.shiftKey
+        ? items[(at <= 0 ? items.length : at) - 1]
+        : items[(at + 1) % items.length];
+      e.preventDefault();
+      next.focus();
+    };
+    const onFocusIn = (e: FocusEvent) => {
+      if (!dialogRef.current?.contains(e.target as Node)) stayRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("focusin", onFocusIn, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("focusin", onFocusIn, true);
+    };
   }, [open]);
 
   const stay = async () => {
@@ -77,6 +110,7 @@ export function SessionExpiryWarning({
   if (!open) return null;
   return (
     <div
+      ref={dialogRef}
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="session-expiry-title"

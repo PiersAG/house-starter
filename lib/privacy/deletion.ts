@@ -142,6 +142,8 @@ export interface TenantPlane {
   open(tenantId: string): Promise<AppDatabase>;
   /** Remove the database at its platform, if the adapter can. False = only wiped. */
   destroy?(tenantId: string): Promise<boolean>;
+  /** Whether the database is still at its platform (read-only). Throws when unsure. */
+  exists?(tenantId: string): Promise<boolean>;
 }
 
 /** Delete every row of every table in a tenant database. Returns the tables wiped. */

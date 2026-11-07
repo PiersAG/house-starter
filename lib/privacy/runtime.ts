@@ -30,6 +30,7 @@ export const liveTenantPlane: TenantPlane = {
     if (!removed) await listForSweep(tenantId);
     return removed;
   },
+  exists: (tenantId) => getProvisioner().exists(tenantId),
 };
 
 async function listForSweep(tenantId: string): Promise<void> {

@@ -24,6 +24,7 @@
 // API-level (no browser), like the other request-level specs.
 
 import { expect, test } from "@playwright/test";
+import { addressFor } from "../support/browser";
 import { appDir, discoverAllRoutes } from "../isolation/route-map";
 import { bannedFieldNames } from "../unit/data-boundary-audit";
 import { PASSWORD, SESSION_SECRET, client, ensureAccount, sessionCookie, signIn } from "./session-helpers";
@@ -67,13 +68,13 @@ test.describe("the browser payload audit (#794, #763, #445)", () => {
 
   test("no page payload and no API answer carries internal or secret data, and signed-in data is never stored", async () => {
     test.setTimeout(240_000);
-    const a = await client("203.0.113.95");
+    const a = await client(addressFor(test.info(), "95"));
     const email = `payload-${Date.now()}@example.com`;
     await ensureAccount(a, email);
     await signIn(a, email);
     const cookie = (await sessionCookie(a))!;
     const secrets = [PASSWORD, SESSION_SECRET, cookie];
-    const anonymous: APIRequestContext = await client("203.0.113.96");
+    const anonymous: APIRequestContext = await client(addressFor(test.info(), "96"));
 
     const problems: string[] = [];
     let audited = 0;

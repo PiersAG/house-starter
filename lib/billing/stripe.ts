@@ -12,6 +12,8 @@
 import Stripe from "stripe";
 import { readSecret } from "@/lib/secrets";
 import { checkStripeKeyScope } from "@/lib/billing/permissions";
+import { checkPlaceholderPrice } from "@/lib/billing/placeholder";
+import { billingConfig } from "@/config/billing";
 
 let _stripe: Stripe | null = null;
 
@@ -27,6 +29,9 @@ export function getStripe(): Stripe {
   }
   const scope = checkStripeKeyScope(key, process.env.VERCEL_ENV);
   if (!scope.ok) throw new Error(scope.reason);
+  // A placeholder price never reaches a live price (issue 374).
+  const price = checkPlaceholderPrice(key, billingConfig.pricePlaceholder);
+  if (!price.ok) throw new Error(price.reason);
   // apiVersion omitted deliberately: the SDK pins its own tested version, and
   // the account's default is used for any call that doesn't override it.
   _stripe = new Stripe(key);

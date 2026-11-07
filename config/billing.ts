@@ -90,6 +90,16 @@ export interface BillingConfig {
    * (tests/unit/payment-methods.test.ts fails otherwise).
    */
   paymentMethods: Stripe.Checkout.SessionCreateParams.PaymentMethodType[];
+  /**
+   * True while this app's price is the build's £20/month PLACEHOLDER
+   * (PiersAG/app-business-core#374): the brief named no price, so the build used a
+   * marked stand-in rather than stopping. Stamped by provisioning
+   * (provision_stripe_price.py); the template carries false (it has no price at all).
+   * While true, a live Stripe key is refused (lib/billing/placeholder.ts) and the
+   * launch checklist refuses launch; set the real price first
+   * (app-business-core scripts/set_app_price.py).
+   */
+  pricePlaceholder: boolean;
 }
 
 export const billingConfig: BillingConfig = {
@@ -110,6 +120,9 @@ export const billingConfig: BillingConfig = {
   subscriptionActive: true,
   // Card only until another method's paths are written and run (#780).
   paymentMethods: ["card"],
+  // The template has no price, so no placeholder; provisioning stamps true when the
+  // brief named no price (issue 374).
+  pricePlaceholder: false,
 };
 
 /**
