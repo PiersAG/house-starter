@@ -20,17 +20,32 @@ const BUTTON =
 const INPUT =
   "w-full rounded border border-border bg-background px-3 py-2 text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary";
 
-async function post(path: string, body: unknown): Promise<{ ok: boolean; data: Record<string, unknown> }> {
+// The routes refuse a write without this session's CSRF token (lib/csrf.ts); the page
+// passes it in. Without it every set-up was refused with "This request could not be
+// verified" (found by the awkward-input suite, app-business-core issue 721).
+async function post(
+  path: string,
+  body: unknown,
+  csrfToken: string,
+): Promise<{ ok: boolean; data: Record<string, unknown> }> {
   const res = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-csrf-token": csrfToken },
     body: JSON.stringify(body),
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   return { ok: res.ok, data };
 }
 
-export function TwoStepSetup({ active, required }: { active: boolean; required: boolean }) {
+export function TwoStepSetup({
+  active,
+  required,
+  csrfToken,
+}: {
+  active: boolean;
+  required: boolean;
+  csrfToken: string;
+}) {
   const [step, setStep] = useState<Step>({ kind: "idle" });
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +85,7 @@ export function TwoStepSetup({ active, required }: { active: boolean; required: 
           e.preventDefault();
           setBusy(true);
           setError(null);
-          const r = await post("/api/auth/mfa/confirm", { code });
+          const r = await post("/api/auth/mfa/confirm", { code }, csrfToken);
           setBusy(false);
           if (r.ok && Array.isArray(r.data.recoveryCodes)) {
             setStep({ kind: "codes", codes: r.data.recoveryCodes as string[] });
@@ -135,7 +150,7 @@ export function TwoStepSetup({ active, required }: { active: boolean; required: 
         onClick={async () => {
           setBusy(true);
           setError(null);
-          const r = await post("/api/auth/mfa/enroll", {});
+          const r = await post("/api/auth/mfa/enroll", {}, csrfToken);
           setBusy(false);
           if (r.ok && typeof r.data.secret === "string" && typeof r.data.qrCodeDataUrl === "string") {
             setStep({ kind: "scan", secret: r.data.secret, qr: r.data.qrCodeDataUrl });

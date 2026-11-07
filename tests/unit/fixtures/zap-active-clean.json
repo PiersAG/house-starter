@@ -1,0 +1,222 @@
+{
+ "@programName": "ZAP",
+ "@version": "2.17.0",
+ "_source": "house-starter #157, Actions run 41753086703 (CI active-scan job, the clean template); alerts kept, instances trimmed to 3 (app-business-core #533)",
+ "site": [
+  {
+   "@name": "http://127.0.0.1:3000",
+   "alerts": [
+    {
+     "pluginid": "10202",
+     "alert": "Absence of Anti-CSRF Tokens",
+     "riskcode": "2",
+     "confidence": "1",
+     "instances": [
+      {
+       "uri": "http://127.0.0.1:3000/dashboard",
+       "method": "GET",
+       "param": ""
+      },
+      {
+       "uri": "http://127.0.0.1:3000/login",
+       "method": "GET",
+       "param": ""
+      },
+      {
+       "uri": "http://127.0.0.1:3000/signup",
+       "method": "GET",
+       "param": ""
+      }
+     ]
+    },
+    {
+     "pluginid": "10055",
+     "alert": "CSP: style-src unsafe-inline",
+     "riskcode": "2",
+     "confidence": "3",
+     "instances": [
+      {
+       "uri": "http://127.0.0.1:3000",
+       "method": "GET",
+       "param": "content-security-policy"
+      },
+      {
+       "uri": "http://127.0.0.1:3000",
+       "method": "GET",
+       "param": "content-security-policy"
+      },
+      {
+       "uri": "http://127.0.0.1:3000/.well-known",
+       "method": "GET",
+       "param": "content-security-policy"
+      }
+     ]
+    },
+    {
+     "pluginid": "10038",
+     "alert": "Content Security Policy (CSP) Header Not Set",
+     "riskcode": "2",
+     "confidence": "3",
+     "instances": [
+      {
+       "uri": "http://127.0.0.1:3000/_next/static",
+       "method": "GET",
+       "param": ""
+      }
+     ]
+    },
+    {
+     "pluginid": "10055",
+     "alert": "CSP: Notices",
+     "riskcode": "1",
+     "confidence": "3",
+     "instances": [
+      {
+       "uri": "http://127.0.0.1:3000",
+       "method": "GET",
+       "param": "content-security-policy"
+      },
+      {
+       "uri": "http://127.0.0.1:3000",
+       "method": "GET",
+       "param": "content-security-policy"
+      },
+      {
+       "uri": "http://127.0.0.1:3000/.well-known",
+       "method": "GET",
+       "param": "content-security-policy"
+      }
+     ]
+    },
+    {
+     "pluginid": "10037",
+     "alert": "Server Leaks Information via \"X-Powered-By\" HTTP Response Header Field(s)",
+     "riskcode": "1",
+     "confidence": "2",
+     "instances": [
+      {
+       "uri": "http://127.0.0.1:3000",
+       "method": "GET",
+       "param": ""
+      },
+      {
+       "uri": "http://127.0.0.1:3000/.well-known",
+       "method": "GET",
+       "param": ""
+      },
+      {
+       "uri": "http://127.0.0.1:3000/api/auth",
+       "method": "GET",
+       "param": ""
+      }
+     ]
+    },
+    {
+     "pluginid": "10111",
+     "alert": "Authentication Request Identified",
+     "riskcode": "0",
+     "confidence": "3",
+     "instances": [
+      {
+       "uri": "http://127.0.0.1:3000/login",
+       "method": "POST",
+       "param": "email"
+      }
+     ]
+    },
+    {
+     "pluginid": "10058",
+     "alert": "GET for POST",
+     "riskcode": "0",
+     "confidence": "3",
+     "instances": [
+      {
+       "uri": "http://127.0.0.1:3000/account/privacy",
+       "method": "GET",
+       "param": ""
+      },
+      {
+       "uri": "http://127.0.0.1:3000/account/security",
+       "method": "GET",
+       "param": ""
+      },
+      {
+       "uri": "http://127.0.0.1:3000/account/security",
+       "method": "GET",
+       "param": ""
+      }
+     ]
+    },
+    {
+     "pluginid": "10112",
+     "alert": "Session Management Response Identified",
+     "riskcode": "0",
+     "confidence": "2",
+     "instances": [
+      {
+       "uri": "http://127.0.0.1:3000/api/settings/zap",
+       "method": "DELETE",
+       "param": "authjs.csrf-token"
+      },
+      {
+       "uri": "http://127.0.0.1:3000",
+       "method": "GET",
+       "param": "authjs.csrf-token"
+      },
+      {
+       "uri": "http://127.0.0.1:3000/",
+       "method": "GET",
+       "param": "authjs.csrf-token"
+      }
+     ]
+    },
+    {
+     "pluginid": "10104",
+     "alert": "User Agent Fuzzer",
+     "riskcode": "0",
+     "confidence": "2",
+     "instances": [
+      {
+       "uri": "http://127.0.0.1:3000/",
+       "method": "GET",
+       "param": "Header User-Agent"
+      },
+      {
+       "uri": "http://127.0.0.1:3000/",
+       "method": "GET",
+       "param": "Header User-Agent"
+      },
+      {
+       "uri": "http://127.0.0.1:3000/api/auth/forgot-password",
+       "method": "POST",
+       "param": "Header User-Agent"
+      }
+     ]
+    },
+    {
+     "pluginid": "10031",
+     "alert": "User Controllable HTML Element Attribute (Potential XSS)",
+     "riskcode": "0",
+     "confidence": "1",
+     "instances": [
+      {
+       "uri": "http://127.0.0.1:3000/account/privacy",
+       "method": "POST",
+       "param": "$ACTION_1:0"
+      },
+      {
+       "uri": "http://127.0.0.1:3000/account/privacy",
+       "method": "POST",
+       "param": "$ACTION_1:1"
+      },
+      {
+       "uri": "http://127.0.0.1:3000/account/privacy",
+       "method": "POST",
+       "param": "$ACTION_KEY"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

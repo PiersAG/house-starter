@@ -35,6 +35,23 @@ async function localServer(): Promise<{ port: number; close: () => void }> {
   return { port: (srv.address() as net.AddressInfo).port, close: () => srv.close() };
 }
 
+// Its own state, whatever ran before (app-business-core issue 740: the suite runs in
+// random order). In written order an earlier test happened to reach this branch.
+describe("__uninstallEgressGuardForTests", () => {
+  it("does nothing when no guard was ever installed", () => {
+    const g = globalThis as unknown as { __egressOriginalConnect?: unknown };
+    const saved = g.__egressOriginalConnect;
+    const connect = net.Socket.prototype.connect;
+    delete g.__egressOriginalConnect;
+    try {
+      __uninstallEgressGuardForTests();
+      expect(net.Socket.prototype.connect).toBe(connect);
+    } finally {
+      if (saved !== undefined) g.__egressOriginalConnect = saved;
+    }
+  });
+});
+
 describe("egressPolicy", () => {
   it("enforces on a deployed instance and is off locally", () => {
     expect(egressPolicy(env({ VERCEL_ENV: "production" }))).toBe("enforce");

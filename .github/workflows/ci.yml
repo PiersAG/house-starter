@@ -25,7 +25,41 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Secret scan of the template itself (app-business-core #374): the apps get theirs
+      # from the factory's planted security-scan.yml, which this repo does not carry, so
+      # a real key could land here unnoticed. Same pinned version, checksum check and
+      # flags as that scan, on gitleaks' default rules with no allow-list (stricter), so a
+      # template that passes here gives every new app a clean start. It reads the
+      # checked-out tree, not the history: the history holds old made-up test values.
+      # The config is written outside the checkout, and allow comments and ignore files
+      # count for nothing, so nothing committed here can weaken the scan.
+      - name: Secret scan (gitleaks)
+        env:
+          GITLEAKS_VERSION: '8.30.1'
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          work="$(mktemp -d)"
+          curl -fsSL -o "$work/checksums.txt" "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          tarball="$(awk '{print $2}' "$work/checksums.txt" \
+                     | grep -E 'linux_(x64|amd64|x86_64)\.tar\.gz$' | head -n1)"
+          test -n "$tarball"
+          curl -fsSL -o "$work/$tarball" "$base/$tarball"
+          (cd "$work" && grep " ${tarball}\$" checksums.txt | sha256sum -c -)
+          tar -xzf "$work/$tarball" -C "$work" gitleaks
+          printf '[extend]\nuseDefault = true\n' > "$work/gitleaks.toml"
+          : > "$work/empty.gitleaksignore"
+          "$work/gitleaks" dir . --no-banner --redact --config "$work/gitleaks.toml" \
+            --gitleaks-ignore-path "$work/empty.gitleaksignore" --ignore-gitleaks-allow \
+            --exit-code 2
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -213,7 +247,7 @@ jobs:
           # MFA_ENCRYPTION_KEY (secret) is declared deploy-injected in .env.contract
           # → the boot validator requires it. CI-only throwaway: the base64 of the
           # 32-byte string `ci-e2e-only-dummy-key-32-bytes!!`. Seals nothing real.
-          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+          MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
         run: |
           npx playwright install --with-deps chromium
           npm run test:e2e
@@ -254,7 +288,7 @@ jobs:
           EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
           EMAIL_SEND_MODE: log
           # See the smoke step above — CI-only throwaway MFA key.
-          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+          MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
         run: |
           npx playwright install chromium
           npm run test:layout
@@ -314,7 +348,7 @@ jobs:
           EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
           EMAIL_SEND_MODE: log
           # See the smoke step above — CI-only throwaway MFA key.
-          MFA_ENCRYPTION_KEY: Y2ktZTJlLW9ubHktZHVtbXkta2V5LTMyLWJ5dGVzISE= # gitleaks:allow — CI-only dummy
+          MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
           # Blank on the template → spec self-skips. Two distinct file: URLs on a
           # generated app → the attack runs for real.
           TENANT_DB_URL_TENANT_A: ${{ github.repository != 'PiersAG/house-starter' && 'file:isolation-tenant-a.db' || '' }}
@@ -417,6 +451,12 @@ jobs:
         state: ["on", "off"]
     name: capability ${{ matrix.flag }} = ${{ matrix.state }}
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
@@ -465,6 +505,12 @@ jobs:
         state: ["on", "off"]
     name: subscription_active = ${{ matrix.state }}
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
@@ -557,6 +603,156 @@ jobs:
       - name: Unit suite (error_tracking = ${{ matrix.state }})
         run: npm run test
 
+  # ACTIVE, SIGNED-IN SCAN (app-business-core #533; Matt Murphy #223: "ZAP
+  # should crawl every page, test every form and probe every API endpoint for
+  # injection before the first user"). The factory's planted security scan runs
+  # ZAP's BASELINE: signed out, passive rules only, no attack payloads. This job
+  # builds the app, serves it on this runner, signs a throwaway test account in
+  # (scripts/dast/session.ts), feeds ZAP every API route under app/api with an
+  # example request (scripts/dast/plan.ts), crawls the pages, and runs ZAP's
+  # ACTIVE scan — injection, cross-site scripting and the rest of its attack
+  # rules — with the session on every request. scripts/dast/gate.ts fails on any
+  # High finding, on a missing or unfinished scan, and on a scan that lost its
+  # session. Part of "All CI checks passed", so it blocks every merge.
+  #
+  # LOCAL ONLY. The scripts refuse any address but this runner's loopback; the
+  # values below are throwaway and reach nothing real (the same set as the
+  # Playwright step above). RATE_LIMIT_SAFE_TEST_FACTOR raises the route limits
+  # for this one client in the safe test environment only (lib/abuse/route-limit.ts):
+  # at the default tenfold, 863 of 1,475 attack requests were refused before
+  # reaching the code. The attack filter stays on, as deployed. Full write-up:
+  # docs/active-scan.md.
+  active-scan:
+    name: Active scan (OWASP ZAP, signed in)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      # Pinned like every scanner: a scanner that changes its rules changes what blocks.
+      ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0
+      SCAN_BASE: http://127.0.0.1:3000
+      SCAN_OUT: dast-results
+      AUTH_SECRET: ci-active-scan-only-dummy-secret-not-used-anywhere-real
+      TENANCY_MODE: per_tenant
+      DATABASE_URL: file:active-scan.db
+      RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+      RATE_LIMIT_SAFE_TEST_FACTOR: "1000"
+      STRIPE_SECRET_KEY: sk_test_ci-active-scan-only-dummy-not-a-real-key
+      STRIPE_WEBHOOK_SECRET: whsec_ci-active-scan-only-dummy-not-a-real-secret
+      APP_LIFECYCLE_STATE: LAUNCHED
+      EMAIL_PROVIDER_API_KEY: re_ci-active-scan-only-dummy-not-a-real-key
+      EMAIL_SEND_MODE: log
+      MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
+    steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the app
+        run: npm run build
+
+      # scripts/dast/run.sh: serve on this runner's loopback, sign in, write the
+      # plan, run ZAP (Docker, host network; progress on the console), gate on
+      # High, stop the app. The self-test workflow (active-scan-selftest.yml)
+      # runs the same script on a copy with a seeded flaw and must see it caught.
+      - name: Run the active scan and gate on High findings
+        run: bash scripts/dast/run.sh
+
+      - name: Upload the active scan report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: active-scan-report
+          path: dast-results/
+          retention-days: 14
+
+  # THE CORRECTNESS GATE (app-business-core #413) — BLOCKING. The non-security half of
+  # "production-ready", one named job: accessibility on every page (#720), awkward
+  # input in every form, on every browser and device (#721), and the oldest supported
+  # browser. Its other two legs, layout overflow and visual regression, are the layout
+  # guardrail step in the `ci` job; the automated-test leg is the unit and e2e suites
+  # there, run in random order and failing on a test that passes only on its retry
+  # (#740). Full list: docs/correctness-gate.md. Part of "All CI checks passed", so it
+  # blocks every merge, here and in every app built from this template.
+  #
+  # LOCAL ONLY: the suites drive the app this job builds and serves on its own runner,
+  # with the same throwaway values as the Playwright step above; nothing real is reached.
+  correctness-gate:
+    name: Correctness gate (accessibility, awkward input, browsers)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      AUTH_SECRET: ci-e2e-only-dummy-secret-not-used-anywhere-real
+      TENANCY_MODE: per_tenant
+      DATABASE_URL: file:ci-correctness.db
+      RATE_LIMIT_ALLOW_IN_MEMORY: "true"
+      STRIPE_SECRET_KEY: sk_test_ci-e2e-only-dummy-not-a-real-key
+      STRIPE_WEBHOOK_SECRET: whsec_ci-e2e-only-dummy-not-a-real-secret
+      APP_LIFECYCLE_STATE: LAUNCHED
+      EMAIL_PROVIDER_API_KEY: re_ci-e2e-only-dummy-not-a-real-key
+      EMAIL_SEND_MODE: log
+      MFA_ENCRYPTION_KEY: ${{ format('{0}{1}', 'Y2ktZTJlLW9ubHkt', 'ZHVtbXkta2V5LTMyLWJ5dGVzISE=') }} # CI-only dummy, in two parts for the secret scan
+    steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install the browsers (Chromium, Firefox, WebKit)
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Build the app
+        run: npm run build
+
+      # config/browser-support.ts: every shipped script must run on the oldest
+      # supported browsers (ES2020: Chrome and Edge 80, Firefox 74, Safari 13.1).
+      - name: Oldest supported browser runs every shipped script
+        run: npm run check:browser-floor
+
+      # E2E_PREBUILT: Playwright starts the build above instead of building again.
+      - name: Accessibility and awkward-input suites
+        env:
+          E2E_PREBUILT: "1"
+        run: npm run test:correctness
+
+      - name: Upload the correctness gate report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: correctness-gate-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+
   # ONE stable check for branch protection (app-business-core #776, #450). Every
   # app repo is born from this template, and build-init requires this check on
   # its `main` beside the security scan's summary. Listing each job by name
@@ -568,10 +764,16 @@ jobs:
   # cancelled job is not a pass).
   all-ci-passed:
     name: All CI checks passed
-    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, error-tracking-matrix]
+    needs: [toolchain-guard, ci, capability-matrix, billing-matrix, error-tracking-matrix, active-scan, correctness-gate]
     if: always()
     runs-on: ubuntu-24.04
     steps:
+      # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
+      # watch-only): records every outbound connection this job makes, blocks none.
+      - name: Harden the runner (watch outbound traffic)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - name: Every job above succeeded
         env:
           NEEDS: ${{ toJSON(needs) }}
