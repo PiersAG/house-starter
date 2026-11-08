@@ -15,7 +15,23 @@ const MAX_MESSAGE = 1000;
 const MAX_TAG = 200;
 const MAX_FRAMES = 50;
 
-const CODE_NAME = /^(?:[a-z_$][\w$]*(?:[./:-][\w$]+)*|[A-Z][A-Z0-9_]+|[A-Z][A-Za-z]*(?:Error|Exception))$/;
+// Quoted text kept because it is plainly a code name, not a value. Only shapes a
+// person's name, username, email local part or business slug cannot take:
+// a camelCase identifier ('tenantId'), a dotted path with one ('user.tenantId'),
+// a module path ('lib/db', 'node:fs'), a CONSTANT_WITH_UNDERSCORE, or an error
+// type. A plain lower-case or capitals word ('jane', 'JANE'), a dotted or
+// hyphenated one ('jane.doe', 'smith-plumbing') and snake_case ('jane_doe') are
+// values, so 'users.email' and 'tenant_id' are dropped too: fault-finding loses a
+// little, no customer data goes.
+const CAMEL = /^[a-z$][a-z0-9$]*[A-Z][A-Za-z0-9$]*$/;
+const CONSTANT = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
+const ERROR_TYPE = /^[A-Z][A-Za-z]*(?:Error|Exception)$/;
+const MODULE_PATH = /^(?:node:[a-z_/]+|(?:@[a-z0-9-]+\/)?[a-z0-9_.-]+(?:\/[a-z0-9_.[\]-]+)+)$/;
+function isCodeName(s: string): boolean {
+  if (CAMEL.test(s) || CONSTANT.test(s) || ERROR_TYPE.test(s) || MODULE_PATH.test(s)) return true;
+  const parts = s.split(".");
+  return parts.length > 1 && parts.every((x) => /^[a-z_$][\w$]*$/.test(x)) && parts.some((x) => CAMEL.test(x));
+}
 
 const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
   // A database error's parameter list (Drizzle: "Failed query: …\nparams: a,b").
@@ -27,6 +43,8 @@ const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
     "$1$2[redacted]",
   ],
   [/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]"],
+  // The same written with %40 for the @ (a page address in a message).
+  [/[A-Z0-9._%+-]+%40[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]"],
   [/(https?:\/\/[^\s?#"'`]+)[?#][^\s"'`]*/gi, "$1?[query]"],
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[id]"],
   [/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[ip]"],
@@ -35,14 +53,21 @@ const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
   [/\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?\b/gi, "[ip]"],
   // Long tokens: 24+ letters/digits with at least one digit and one letter.
   [/[A-Za-z0-9_+-]{24,}={0,2}/g, (m) => (/\d/.test(m) && /[A-Za-z]/.test(m) ? "[redacted]" : m)],
-  // Phone and card numbers: nine or more digits, spaces and dashes allowed.
-  [/\+?\d[\d\s-]{7,}\d/g, (m) => (m.replace(/\D/g, "").length >= 9 ? "[number]" : m)],
-  // Quoted text, unless it is plainly a code name: a lower-case identifier or
-  // dotted/slashed path ('tenantId', "users.email", 'lib/db'), a CONSTANT, or
-  // an error type. A quoted name ('Jane'), words or anything else is a value.
-  [/"([^"\n]{1,200})"|'([^'\n]{1,200})'|`([^`\n]{1,200})`/g, (m, a, b, c) => {
+  // Phone and card numbers: nine or more digits, with spaces, dashes, dots and
+  // brackets between them ("(020) 7946 0958", "07700.900.123"). A leading
+  // bracket goes with the number only when the number closes it.
+  [/[+(]*\d[\d\s().-]{7,}\d/g, (m) => {
+    if (m.replace(/\D/g, "").length < 9) return m;
+    const keep = m.startsWith("(") && !m.includes(")") ? "(" : "";
+    return `${keep}[number]`;
+  }],
+  // Quoted text, unless it is plainly a code name (isCodeName, above) or a
+  // JSON-style key (an identifier followed by ":"). A quoted word, name,
+  // username, slug or anything else is a value.
+  [/"([^"\n]{1,200})"(\s*:)?|'([^'\n]{1,200})'(\s*:)?|`([^`\n]{1,200})`/g, (m, a, ak, b, bk, c) => {
     const inner = a ?? b ?? c ?? "";
-    return CODE_NAME.test(inner) ? m : `${m[0]}[value]${m[0]}`;
+    const key = (ak ?? bk) !== undefined && /^[A-Za-z_$][\w$-]*$/.test(inner);
+    return key || isCodeName(inner) ? m : `${m[0]}[value]${m[0]}${ak ?? bk ?? ""}`;
   }],
 ];
 

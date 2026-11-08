@@ -32,9 +32,11 @@
 //
 // SCRUBBING (scrubText). Every free text — message, stack, path, tag — has
 // email addresses, bearer and basic credentials, JWTs, `secret=value` pairs,
-// long tokens, UUIDs, IP addresses, runs of nine or more digits (phone and card
-// numbers), quoted text that looks like a person's words (has a space, an @ or
-// four digits), URL query strings and a database error's `params:` list
+// (also written with %40), long tokens, UUIDs, IP addresses, runs of nine or
+// more digits with spaces, dashes, dots or brackets between them (phone and
+// card numbers), every quoted text except a plain code name (a camelCase
+// identifier, a module path, a CONSTANT_NAME or an error type — a quoted word,
+// name, username or slug is replaced), URL query strings and a database error's `params:` list
 // replaced before it leaves. Log-line fields go only when the value is a
 // number, a boolean or a short code (letters, digits, - _ . :) and the field's
 // name is not one that holds personal data.

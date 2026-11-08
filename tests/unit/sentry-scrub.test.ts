@@ -63,9 +63,41 @@ describe("scrubText", () => {
     expect(scrubText('Invalid name "Jane Doe" for dog "Rex 2024"')).toBe('Invalid name "[value]" for dog "[value]"');
     expect(scrubText("value 'a@b' refused")).toBe("value '[value]' refused");
     expect(scrubText('{"received":"Jane"}')).toBe('{"received":"[value]"}');
-    expect(scrubText("no column 'users.email' in 'lib/db', code 'SQLITE_ERROR', a 'TypeError'")).toBe(
-      "no column 'users.email' in 'lib/db', code 'SQLITE_ERROR', a 'TypeError'",
+    expect(scrubText("no column 'user.tenantId' in 'lib/db', 'node:fs', code 'SQLITE_ERROR', a 'TypeError'")).toBe(
+      "no column 'user.tenantId' in 'lib/db', 'node:fs', code 'SQLITE_ERROR', a 'TypeError'",
     );
+  });
+
+  // Review 1 of Dispatch AT: these quoted values reached Sentry as "code names".
+  it("removes quoted usernames, email local parts, slugs and capitals words", () => {
+    for (const v of ["'jsmith'", '"jane"', '"jane.doe"', '"smith-plumbing"', '"JANE"', "'jane_doe'", '"JaneDoe"', "'users.email'"]) {
+      const q = v[0];
+      expect(scrubText(`user ${v} not found`)).toBe(`user ${q}[value]${q} not found`);
+    }
+    expect(scrubText('{"username":"jsmith","slug":"smith-plumbing"}')).toBe('{"username":"[value]","slug":"[value]"}');
+    // A key is kept only when it is an identifier; a key holding an email or words is a value.
+    expect(scrubText('{"Jane Doe": 1, "a@b": 2}')).toBe('{"[value]": 1, "[value]": 2}');
+  });
+
+  it("removes an email written with %40 for the @", () => {
+    expect(scrubText("404 for https://api.example/contacts/jane%40example.com")).toBe(
+      "404 for https://api.example/contacts/[email]",
+    );
+    expect(scrubText("no user JANE.DOE%40Example.CO.UK")).toBe("no user [email]");
+  });
+
+  it("removes phone numbers written with brackets and dots", () => {
+    expect(scrubText("call (020) 7946 0958 now")).toBe("call [number] now");
+    expect(scrubText("call 07700.900.123 now")).toBe("call [number] now");
+    expect(scrubText("call (555) 123-4567 now")).toBe("call [number] now");
+    expect(scrubText("call +44 (0)20 7946 0958")).toBe("call [number]");
+    // A bracket the number does not close stays, so the text still reads.
+    expect(scrubText("(ref 020 7946 0958)")).toBe("(ref [number])");
+    expect(scrubText("(020 7946 0958)")).toBe("([number])");
+  });
+
+  it("keeps short dotted and bracketed numbers that are not phone numbers", () => {
+    expect(scrubText("version 1.2.3 (build 42) took 12.5 ms")).toBe("version 1.2.3 (build 42) took 12.5 ms");
   });
 
   it("removes a URL's query string and fragment", () => {
