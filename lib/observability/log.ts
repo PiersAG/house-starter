@@ -16,9 +16,13 @@
 //     durable error log (lib/observability/error-log.ts), table `log_events`.
 //     Costs nothing and needs no outside account.
 //   * "console" — the platform log only.
-// An outside error-tracking or log service (decision #700, the CEO's) plugs in
-// as one more sink: `registerLogSink({ name, send })` in one file, then
-// LOG_SINK=<name>. Nothing else changes.
+// An outside log service plugs in as one more sink: `registerLogSink({ name,
+// send })` in one file, then LOG_SINK=<name>. Nothing else changes.
+//
+// ERROR-LEVEL LINES ALSO GO TO SENTRY (decision #700, #806, #761): with the
+// switch in config/error-tracking.ts on, every error-level line is sent to
+// Sentry as well as to the sink above, with personal data stripped
+// (lib/observability/sentry.ts). Off, nothing changes.
 //
 // NEVER THROWS, NEVER DELAYS THE ANSWER. A sink write runs after the response
 // (Next.js `after`), and a failed write is reported once on stderr and dropped.
@@ -28,6 +32,7 @@ import "server-only";
 import { after } from "next/server";
 import { currentRequest } from "@/lib/observability/request-context";
 import { sinkClient } from "@/lib/observability/error-log";
+import { reportLogRecord } from "@/lib/observability/sentry";
 
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -236,6 +241,9 @@ export function logEvent(input: LogInput, env: NodeJS.ProcessEnv = process.env):
     else console.log(line);
     const sink = selectSink(env);
     if (sink !== consoleSink) schedule(() => sink.send(record));
+    // The second destination for error-level lines (#806, #761): Sentry, when
+    // error tracking is on. The sink above is kept either way.
+    if (record.level === "error") reportLogRecord(record, env);
   } catch {
     // Logging must never turn a request into an error.
   }

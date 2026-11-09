@@ -62,7 +62,7 @@ The outside services that handle data for [app name], what each receives, where 
 
 - Status: Chosen, not connected yet
 - What it does: Records app errors so they can be fixed quickly (error tracking).
-- Personal data it receives: When connected: the account id and the page involved in an error, never a password, a form's contents or an email address.
+- Personal data it receives: When connected: the account id, the page and the type of browser involved in an error; never a password, a form's contents, an email address or your IP address.
 - Where: EU data region.
 - Transfers out of the UK: Not applicable while data stays in the EU region.
 - Data processing agreement: https://sentry.io/legal/dpa/
