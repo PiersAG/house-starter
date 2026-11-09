@@ -25,7 +25,7 @@
 // `repeatSampleRate` share of its repeats, and at most `maxEventsPerHour` per
 // instance so one burst cannot spend the day's budget. The cross-customer
 // access alert is never sampled or budgeted away (it has its own cap).
-// tests/unit/error-tracking-config.test.ts holds the arithmetic.
+// tests/unit/sentry-dsn.test.ts holds the arithmetic.
 
 export interface ErrorTrackingConfig {
   /** The switch. Off: nothing is sent. */

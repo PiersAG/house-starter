@@ -3,6 +3,9 @@
 // lib/observability/sentry.ts's header; tests/unit/sentry-scrub.test.ts holds
 // each one. Pure: no server import, no I/O.
 
+import { ENV_CONTRACT_NAMES } from "@/lib/observability/sentry-allow.generated";
+import { SUBSCRIPTION_STATUSES } from "@/lib/observability/sentry-allow";
+
 export interface SentryFrame {
   function?: string;
   filename?: string;
@@ -15,7 +18,71 @@ const MAX_MESSAGE = 1000;
 const MAX_TAG = 200;
 const MAX_FRAMES = 50;
 
-const CODE_NAME = /^(?:[a-z_$][\w$]*(?:[./:-][\w$]+)*|[A-Z][A-Z0-9_]+|[A-Z][A-Za-z]*(?:Error|Exception))$/;
+// Quoted text: every quoted value goes (default-deny, Dispatch AT review 2 —
+// the CEO's ruling of 2026-11-09). The one exception is a value that is,
+// exactly and whole, one of the app's own fixed words: a setting name declared
+// in .env.contract (sentry-allow.generated.ts) or a subscription status word.
+// Nothing is kept for looking like code.
+const KEEP_QUOTED: ReadonlySet<string> = new Set([...ENV_CONTRACT_NAMES, ...SUBSCRIPTION_STATUSES]);
+
+const REDACTED = "[redacted]";
+const SINGLE = new Set(["'", "\u2018", "\u2019"]);
+const DOUBLE = new Set(['"', "\u201C", "\u201D"]);
+const LETTER = /\p{L}/u;
+const WORD = /[\p{L}\p{N}]/u;
+
+// An apostrophe with a letter on both sides is part of the word (couldn't,
+// O'Brien), never a quote.
+function inWord(text: string, i: number): boolean {
+  return LETTER.test(text[i - 1] ?? "") && LETTER.test(text[i + 1] ?? "");
+}
+
+/**
+ * `text` with every quoted value — single, double or backtick, JSON keys and
+ * values alike — replaced by [redacted]. A single quote opens a value only
+ * when no letter or digit is right before it, and closes one only when no
+ * letter or digit is right after it. A quote not closed on its line takes the
+ * rest of the line with it.
+ */
+export function scrubQuoted(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const single = SINGLE.has(ch);
+    const opens =
+      (single && !inWord(text, i) && !WORD.test(text[i - 1] ?? "")) || DOUBLE.has(ch) || ch === "`";
+    if (!opens) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    let close = -1;
+    while (j < text.length && text[j] !== "\n") {
+      const c = text[j];
+      const closes = single
+        ? SINGLE.has(c) && !inWord(text, j) && !WORD.test(text[j + 1] ?? "")
+        : ch === "`"
+          ? c === "`"
+          : DOUBLE.has(c);
+      if (closes) {
+        close = j;
+        break;
+      }
+      j += 1;
+    }
+    if (close < 0) {
+      out += REDACTED;
+      i = j;
+      continue;
+    }
+    const inner = text.slice(i + 1, close);
+    out += KEEP_QUOTED.has(inner) ? text.slice(i, close + 1) : REDACTED;
+    i = close + 1;
+  }
+  return out;
+}
 
 const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
   // A database error's parameter list (Drizzle: "Failed query: …\nparams: a,b").
@@ -27,6 +94,9 @@ const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
     "$1$2[redacted]",
   ],
   [/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]"],
+  // The same written with %40 for the @ (a page address in a message), or
+  // %2540 (encoded twice).
+  [/[A-Z0-9._%+-]+%(?:25)*40[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]"],
   [/(https?:\/\/[^\s?#"'`]+)[?#][^\s"'`]*/gi, "$1?[query]"],
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[id]"],
   [/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[ip]"],
@@ -35,14 +105,13 @@ const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
   [/\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?\b/gi, "[ip]"],
   // Long tokens: 24+ letters/digits with at least one digit and one letter.
   [/[A-Za-z0-9_+-]{24,}={0,2}/g, (m) => (/\d/.test(m) && /[A-Za-z]/.test(m) ? "[redacted]" : m)],
-  // Phone and card numbers: nine or more digits, spaces and dashes allowed.
-  [/\+?\d[\d\s-]{7,}\d/g, (m) => (m.replace(/\D/g, "").length >= 9 ? "[number]" : m)],
-  // Quoted text, unless it is plainly a code name: a lower-case identifier or
-  // dotted/slashed path ('tenantId', "users.email", 'lib/db'), a CONSTANT, or
-  // an error type. A quoted name ('Jane'), words or anything else is a value.
-  [/"([^"\n]{1,200})"|'([^'\n]{1,200})'|`([^`\n]{1,200})`/g, (m, a, b, c) => {
-    const inner = a ?? b ?? c ?? "";
-    return CODE_NAME.test(inner) ? m : `${m[0]}[value]${m[0]}`;
+  // Phone and card numbers: nine or more digits, with spaces, dashes, dots and
+  // brackets between them ("(020) 7946 0958", "07700.900.123"). A leading
+  // bracket goes with the number only when the number closes it.
+  [/[+(]*\d[\d\s().-]{7,}\d/g, (m) => {
+    if (m.replace(/\D/g, "").length < 9) return m;
+    const keep = m.startsWith("(") && !m.includes(")") ? "(" : "";
+    return `${keep}[number]`;
   }],
 ];
 
@@ -52,11 +121,12 @@ export function scrubText(text: string | null | undefined, max: number = MAX_MES
   for (const [re, to] of RULES) {
     out = out.replace(re, to as never);
   }
+  out = scrubQuoted(out);
   return out.length > max ? `${out.slice(0, max)}…` : out;
 }
 
 // A path segment that is an id, not part of the route's shape.
-const ID_SEGMENT = /^(?:[0-9a-f]{8}-[0-9a-f-]{27}|[0-9]{3,}|[0-9a-f]{16,}|[A-Za-z0-9_-]{20,}|[^/]*@[^/]*|[^/]*%40[^/]*)$/i;
+const ID_SEGMENT = /^(?:[0-9a-f]{8}-[0-9a-f-]{27}|[0-9]{3,}|[0-9a-f]{16,}|[A-Za-z0-9_-]{20,}|[^/]*@[^/]*|[^/]*%(?:25)*40[^/]*)$/i;
 
 /** A page path with its query, fragment and id-like segments removed. */
 export function scrubPath(path: string | null | undefined): string | null {
