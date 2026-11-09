@@ -32,17 +32,22 @@
 //
 // SCRUBBING (scrubText). Every free text — message, stack, path, tag — has
 // email addresses, bearer and basic credentials, JWTs, `secret=value` pairs,
-// (also written with %40), long tokens, UUIDs, IP addresses, runs of nine or
-// more digits with spaces, dashes, dots or brackets between them (phone and
-// card numbers), every quoted text except a plain code name (a camelCase
-// identifier, a module path, a CONSTANT_NAME or an error type — a quoted word,
-// name, username or slug is replaced), URL query strings and a database error's `params:` list
-// replaced before it leaves. Log-line fields go only when the value is a
+// (also written with %40 or %2540), long tokens, UUIDs, IP addresses, runs of
+// nine or more digits with spaces, dashes, dots or brackets between them (phone
+// and card numbers), URL query strings and a database error's `params:` list
+// replaced before it leaves. Then every quoted value — single, double or
+// backtick quotes, JSON keys and values alike — becomes [redacted], whatever it
+// looks like (default-deny, CEO ruling 2026-11-09). The only quoted value kept
+// is an exact, whole match on the app's own fixed words: a setting name
+// declared in .env.contract or a subscription status word
+// (lib/observability/sentry-allow.ts). An apostrophe with a letter on both
+// sides (couldn't, O'Brien) is part of the word, not a quote. Error types and
+// stack frames travel in their own fields and are not affected. Log-line fields go only when the value is a
 // number, a boolean or a short code (letters, digits, - _ . :) and the field's
 // name is not one that holds personal data.
 //
 // LIMITS, RECORDED RATHER THAN HIDDEN. A pattern cannot recognise a person's
-// name written unquoted in free text ("no dog for Jane"), or a page address
+// name written unquoted in free text ("no dog for Jane", "O'Brien"), or a page address
 // whose segment is a customer's name rather than an id (/clients/jane-doe).
 // The template's own messages and routes carry neither (routes use ids); an
 // app that adds such a route or message keeps it out of errors.

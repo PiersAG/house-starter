@@ -3,6 +3,9 @@
 // lib/observability/sentry.ts's header; tests/unit/sentry-scrub.test.ts holds
 // each one. Pure: no server import, no I/O.
 
+import { ENV_CONTRACT_NAMES } from "@/lib/observability/sentry-allow.generated";
+import { SUBSCRIPTION_STATUSES } from "@/lib/observability/sentry-allow";
+
 export interface SentryFrame {
   function?: string;
   filename?: string;
@@ -15,22 +18,70 @@ const MAX_MESSAGE = 1000;
 const MAX_TAG = 200;
 const MAX_FRAMES = 50;
 
-// Quoted text kept because it is plainly a code name, not a value. Only shapes a
-// person's name, username, email local part or business slug cannot take:
-// a camelCase identifier ('tenantId'), a dotted path with one ('user.tenantId'),
-// a module path ('lib/db', 'node:fs'), a CONSTANT_WITH_UNDERSCORE, or an error
-// type. A plain lower-case or capitals word ('jane', 'JANE'), a dotted or
-// hyphenated one ('jane.doe', 'smith-plumbing') and snake_case ('jane_doe') are
-// values, so 'users.email' and 'tenant_id' are dropped too: fault-finding loses a
-// little, no customer data goes.
-const CAMEL = /^[a-z$][a-z0-9$]*[A-Z][A-Za-z0-9$]*$/;
-const CONSTANT = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
-const ERROR_TYPE = /^[A-Z][A-Za-z]*(?:Error|Exception)$/;
-const MODULE_PATH = /^(?:node:[a-z_/]+|(?:@[a-z0-9-]+\/)?[a-z0-9_.-]+(?:\/[a-z0-9_.[\]-]+)+)$/;
-function isCodeName(s: string): boolean {
-  if (CAMEL.test(s) || CONSTANT.test(s) || ERROR_TYPE.test(s) || MODULE_PATH.test(s)) return true;
-  const parts = s.split(".");
-  return parts.length > 1 && parts.every((x) => /^[a-z_$][\w$]*$/.test(x)) && parts.some((x) => CAMEL.test(x));
+// Quoted text: every quoted value goes (default-deny, Dispatch AT review 2 —
+// the CEO's ruling of 2026-11-09). The one exception is a value that is,
+// exactly and whole, one of the app's own fixed words: a setting name declared
+// in .env.contract (sentry-allow.generated.ts) or a subscription status word.
+// Nothing is kept for looking like code.
+const KEEP_QUOTED: ReadonlySet<string> = new Set([...ENV_CONTRACT_NAMES, ...SUBSCRIPTION_STATUSES]);
+
+const REDACTED = "[redacted]";
+const SINGLE = new Set(["'", "\u2018", "\u2019"]);
+const DOUBLE = new Set(['"', "\u201C", "\u201D"]);
+const LETTER = /\p{L}/u;
+const WORD = /[\p{L}\p{N}]/u;
+
+// An apostrophe with a letter on both sides is part of the word (couldn't,
+// O'Brien), never a quote.
+function inWord(text: string, i: number): boolean {
+  return LETTER.test(text[i - 1] ?? "") && LETTER.test(text[i + 1] ?? "");
+}
+
+/**
+ * `text` with every quoted value — single, double or backtick, JSON keys and
+ * values alike — replaced by [redacted]. A single quote opens a value only
+ * when no letter or digit is right before it, and closes one only when no
+ * letter or digit is right after it. A quote not closed on its line takes the
+ * rest of the line with it.
+ */
+export function scrubQuoted(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const single = SINGLE.has(ch);
+    const opens =
+      (single && !inWord(text, i) && !WORD.test(text[i - 1] ?? "")) || DOUBLE.has(ch) || ch === "`";
+    if (!opens) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    let close = -1;
+    while (j < text.length && text[j] !== "\n") {
+      const c = text[j];
+      const closes = single
+        ? SINGLE.has(c) && !inWord(text, j) && !WORD.test(text[j + 1] ?? "")
+        : ch === "`"
+          ? c === "`"
+          : DOUBLE.has(c);
+      if (closes) {
+        close = j;
+        break;
+      }
+      j += 1;
+    }
+    if (close < 0) {
+      out += REDACTED;
+      i = j;
+      continue;
+    }
+    const inner = text.slice(i + 1, close);
+    out += KEEP_QUOTED.has(inner) ? text.slice(i, close + 1) : REDACTED;
+    i = close + 1;
+  }
+  return out;
 }
 
 const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
@@ -43,8 +94,9 @@ const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
     "$1$2[redacted]",
   ],
   [/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]"],
-  // The same written with %40 for the @ (a page address in a message).
-  [/[A-Z0-9._%+-]+%40[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]"],
+  // The same written with %40 for the @ (a page address in a message), or
+  // %2540 (encoded twice).
+  [/[A-Z0-9._%+-]+%(?:25)*40[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]"],
   [/(https?:\/\/[^\s?#"'`]+)[?#][^\s"'`]*/gi, "$1?[query]"],
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[id]"],
   [/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[ip]"],
@@ -61,14 +113,6 @@ const RULES: [RegExp, string | ((m: string, ...g: string[]) => string)][] = [
     const keep = m.startsWith("(") && !m.includes(")") ? "(" : "";
     return `${keep}[number]`;
   }],
-  // Quoted text, unless it is plainly a code name (isCodeName, above) or a
-  // JSON-style key (an identifier followed by ":"). A quoted word, name,
-  // username, slug or anything else is a value.
-  [/"([^"\n]{1,200})"(\s*:)?|'([^'\n]{1,200})'(\s*:)?|`([^`\n]{1,200})`/g, (m, a, ak, b, bk, c) => {
-    const inner = a ?? b ?? c ?? "";
-    const key = (ak ?? bk) !== undefined && /^[A-Za-z_$][\w$-]*$/.test(inner);
-    return key || isCodeName(inner) ? m : `${m[0]}[value]${m[0]}${ak ?? bk ?? ""}`;
-  }],
 ];
 
 /** `text` with personal data and secrets replaced, and clipped. */
@@ -77,11 +121,12 @@ export function scrubText(text: string | null | undefined, max: number = MAX_MES
   for (const [re, to] of RULES) {
     out = out.replace(re, to as never);
   }
+  out = scrubQuoted(out);
   return out.length > max ? `${out.slice(0, max)}…` : out;
 }
 
 // A path segment that is an id, not part of the route's shape.
-const ID_SEGMENT = /^(?:[0-9a-f]{8}-[0-9a-f-]{27}|[0-9]{3,}|[0-9a-f]{16,}|[A-Za-z0-9_-]{20,}|[^/]*@[^/]*|[^/]*%40[^/]*)$/i;
+const ID_SEGMENT = /^(?:[0-9a-f]{8}-[0-9a-f-]{27}|[0-9]{3,}|[0-9a-f]{16,}|[A-Za-z0-9_-]{20,}|[^/]*@[^/]*|[^/]*%(?:25)*40[^/]*)$/i;
 
 /** A page path with its query, fragment and id-like segments removed. */
 export function scrubPath(path: string | null | undefined): string | null {

@@ -49,41 +49,81 @@ describe("scrubText", () => {
     expect(scrubText("card 4242 4242 4242 4242")).toBe("card [number]");
   });
 
-  it("keeps what is needed to fix the fault: times, dates, short numbers and code words", () => {
+  it("keeps what is needed to fix the fault: times, dates, short numbers and plain words", () => {
     expect(scrubText("timeout at 10:30:45 on 2026-11-05 after 3000 ms")).toBe(
       "timeout at 10:30:45 on 2026-11-05 after 3000 ms",
-    );
-    expect(scrubText("Cannot read properties of undefined (reading 'tenantId')")).toBe(
-      "Cannot read properties of undefined (reading 'tenantId')",
     );
     expect(scrubText("Unexpected token < in JSON at position 0")).toBe("Unexpected token < in JSON at position 0");
   });
 
-  it("removes quoted values, keeping quoted code names", () => {
-    expect(scrubText('Invalid name "Jane Doe" for dog "Rex 2024"')).toBe('Invalid name "[value]" for dog "[value]"');
-    expect(scrubText("value 'a@b' refused")).toBe("value '[value]' refused");
-    expect(scrubText('{"received":"Jane"}')).toBe('{"received":"[value]"}');
+  // Review 2 of Dispatch AT, CEO ruling 2026-11-09: default-deny. Every quoted
+  // value goes, code-like or not; only an exact match on the app's own fixed
+  // words is kept (tests/unit/sentry-allow.test.ts).
+  it("removes every quoted value, code names included", () => {
+    expect(scrubText('Invalid name "Jane Doe" for dog "Rex 2024"')).toBe("Invalid name [redacted] for dog [redacted]");
+    expect(scrubText("value 'a@b' refused")).toBe("value [redacted] refused");
+    expect(scrubText('{"received":"Jane"}')).toBe("{[redacted]:[redacted]}");
+    expect(scrubText("Cannot read properties of undefined (reading 'tenantId')")).toBe(
+      "Cannot read properties of undefined (reading [redacted])",
+    );
     expect(scrubText("no column 'user.tenantId' in 'lib/db', 'node:fs', code 'SQLITE_ERROR', a 'TypeError'")).toBe(
-      "no column 'user.tenantId' in 'lib/db', 'node:fs', code 'SQLITE_ERROR', a 'TypeError'",
+      "no column [redacted] in [redacted], [redacted], code [redacted], a [redacted]",
     );
   });
 
   // Review 1 of Dispatch AT: these quoted values reached Sentry as "code names".
   it("removes quoted usernames, email local parts, slugs and capitals words", () => {
-    for (const v of ["'jsmith'", '"jane"', '"jane.doe"', '"smith-plumbing"', '"JANE"', "'jane_doe'", '"JaneDoe"', "'users.email'"]) {
-      const q = v[0];
-      expect(scrubText(`user ${v} not found`)).toBe(`user ${q}[value]${q} not found`);
+    for (const v of ["'jsmith'", '"jane"', '"jane.doe"', '"smith-plumbing"', '"JANE"', "'jane_doe'", '"JaneDoe"', "'janeDoe'", "'users.email'"]) {
+      expect(scrubText(`user ${v} not found`)).toBe("user [redacted] not found");
     }
-    expect(scrubText('{"username":"jsmith","slug":"smith-plumbing"}')).toBe('{"username":"[value]","slug":"[value]"}');
-    // A key is kept only when it is an identifier; a key holding an email or words is a value.
-    expect(scrubText('{"Jane Doe": 1, "a@b": 2}')).toBe('{"[value]": 1, "[value]": 2}');
+    expect(scrubText('{"username":"jsmith","slug":"smith-plumbing"}')).toBe(
+      "{[redacted]:[redacted],[redacted]:[redacted]}",
+    );
+    expect(scrubText('{"Jane Doe": 1, "a@b": 2}')).toBe("{[redacted]: 1, [redacted]: 2}");
   });
 
-  it("removes an email written with %40 for the @", () => {
+  it("removes a quoted value followed by a colon, and a JSON key", () => {
+    expect(scrubText("user 'jsmith': not found")).toBe("user [redacted]: not found");
+    expect(scrubText('tenant "smith-plumbing": access denied')).toBe("tenant [redacted]: access denied");
+    expect(scrubText('{"jsmith": 1}')).toBe("{[redacted]: 1}");
+  });
+
+  it("does not take an apostrophe inside a word for a quote", () => {
+    expect(scrubText("Couldn't find user 'jsmith'")).toBe("Couldn't find user [redacted]");
+    expect(scrubText("Can't load 'jane'")).toBe("Can't load [redacted]");
+    expect(scrubText("O'Brien's account 'ob123' locked")).toBe("O'Brien's account [redacted] locked");
+    expect(scrubText("user 'jsmith's dog' gone")).toBe("user [redacted] gone");
+    expect(scrubText("Couldn’t find user ‘jsmith’")).toBe("Couldn’t find user [redacted]");
+    // A possessive's apostrophe does not open a value, so the quoted one after it goes.
+    expect(scrubText("the users' file 'jsmith' gone")).toBe("the users' file [redacted] gone");
+  });
+
+  it("removes backtick-quoted values and an unclosed quote's rest of line", () => {
+    expect(scrubText("no row for `jsmith` in `smith-plumbing`")).toBe("no row for [redacted] in [redacted]");
+    expect(scrubText("user 'jsmith not found\nnext line")).toBe("user [redacted]\nnext line");
+  });
+
+  it("keeps a quoted value only on an exact match with the app's own fixed words", () => {
+    expect(scrubText("'DATABASE_URL' is not set")).toBe("'DATABASE_URL' is not set");
+    expect(scrubText("'STRIPE_SECRET_KEY' is not set")).toBe("'STRIPE_SECRET_KEY' is not set");
+    expect(scrubText("status 'past_due' and \"trialing\"")).toBe("status 'past_due' and \"trialing\"");
+    for (const v of ["'STRIPE_SECRET_KEY_jsmith'", "'jsmith'", "'trialing-acme'", "'Trialing'", "' past_due'", "'STRIPE_KEY'"]) {
+      expect(scrubText(`got ${v} here`)).toBe("got [redacted] here");
+    }
+  });
+
+  it("leaves a message with no quotes unchanged, apart from emails, phone and card numbers", () => {
+    const plain = "Payment step failed for plan 3 after 2 tries (timeout)";
+    expect(scrubText(plain)).toBe(plain);
+    expect(scrubText("no account for jane@example.com, call 07700 900123")).toBe("no account for [email], call [number]");
+  });
+
+  it("removes an email written with %40 for the @, or %2540", () => {
     expect(scrubText("404 for https://api.example/contacts/jane%40example.com")).toBe(
       "404 for https://api.example/contacts/[email]",
     );
     expect(scrubText("no user JANE.DOE%40Example.CO.UK")).toBe("no user [email]");
+    expect(scrubText("404 for /contacts/jane%2540example.com")).toBe("404 for /contacts/[email]");
   });
 
   it("removes phone numbers written with brackets and dots", () => {
@@ -119,6 +159,7 @@ describe("scrubPath", () => {
     expect(scrubPath("https://app.example.com/invoices/123456?x=1")).toBe("/invoices/:id");
     expect(scrubPath("/reset-password/jane@example.com")).toBe("/reset-password/:id");
     expect(scrubPath("/u/jane%40example.com")).toBe("/u/:id");
+    expect(scrubPath("/u/jane%2540example.com")).toBe("/u/:id");
     expect(scrubPath(null)).toBeNull();
   });
 });
