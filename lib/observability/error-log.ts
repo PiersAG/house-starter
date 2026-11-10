@@ -17,6 +17,9 @@
 //   • differentiating vs plumbing — a liveness / error-rate signal is plumbing;
 //     Sentry's rich UI is not needed for it.
 // Conclusion (CEO 2026-07-23): build in-house. A richer tool can layer on later.
+// It has (decision #700, 2026-11-02): with the switch in config/error-tracking.ts
+// on, every error recorded here is also sent to Sentry's EU region, stripped of
+// personal data (lib/observability/sentry.ts). This table stays the record.
 //
 // NEVER THROWS. Observability must not turn one error into a second error that
 // crashes the request. Every failure here is swallowed after a console.error.
@@ -25,6 +28,7 @@ import "server-only";
 
 import { createClient, type Client } from "@libsql/client";
 import { readSecret } from "@/lib/secrets";
+import { reportException } from "@/lib/observability/sentry";
 
 export interface ErrorEventInput {
   message: string;
@@ -113,6 +117,14 @@ export async function recordError(
   input: ErrorEventInput,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
+  // The second destination (#761): Sentry, when error tracking is on. The
+  // cross-customer access alert sends its own distinct event (lib/tenant/access-log.ts).
+  if (input.context?.kind !== "cross_tenant_access") {
+    reportException(
+      { message: input.message, stack: input.stack, route: input.route, method: input.method, requestId: input.requestId },
+      env,
+    );
+  }
   try {
     const client = sinkClient(env);
     if (!client) {

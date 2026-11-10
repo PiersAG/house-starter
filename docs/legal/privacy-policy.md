@@ -78,7 +78,7 @@ These services handle it on our behalf, under a data processing agreement with e
 - Upstash (in use): Counts requests so the app can limit abuse (rate limits). Your IP address and account id, as counters that expire within a day.
 - Stripe (in use): Takes subscription payments. Your email address, name and payment details, which you give to Stripe directly on its payment page; the app never sees your card.
 - Amazon Web Services (in use): Holds the app's own keys in a locked store (the key vault), and the nightly copy of the app's databases kept outside the database provider, for recovery (backups). The backup copy holds everything the app's databases hold, encrypted at rest; the key vault holds no customer data.
-- Sentry (chosen, not connected yet): Records app errors so they can be fixed quickly (error tracking). When connected: the account id and the page involved in an error, never a password, a form's contents or an email address.
+- Sentry (chosen, not connected yet): Records app errors so they can be fixed quickly (error tracking). When connected: the account id, the page and the type of browser involved in an error; never a password, a form's contents, an email address or your IP address.
 - Resend (chosen, not connected yet): Sends the app's emails: password resets, receipts and account notices. Your email address and the message sent to you.
 
 ## Where it is held

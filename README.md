@@ -36,7 +36,6 @@ These are conditional — do not add until the app needs them:
 | Signup page | `app/signup/` | Schema and validation are app-specific |
 | Protected route patterns | `auth.config.ts` → `authorized()` callback | Routes are app-specific |
 | DB schema | `lib/schema.ts` + `TENANT_MIGRATION_SQL` in `lib/migrate.ts` | Domain tables are app-specific |
-| Error tracking (Sentry) | `sentry.config.ts`, `app/global-error.tsx` | Configured at MVP boundary |
 
 ### Tenancy: two databases, one seam (ADR-023)
 

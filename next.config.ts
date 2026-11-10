@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { errorTrackingConfig } from "./config/error-tracking";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -22,6 +23,14 @@ const nextConfig: NextConfig = {
   // file is not bundled the validator warns and skips rather than crashing.
   outputFileTracingIncludes: {
     "/**": ["./.env.contract"],
+  },
+  // Readable server stacks for error tracking (app-business-core issue 761:
+  // "the exact line of code"): with the switch in config/error-tracking.ts on,
+  // the server build keeps its source maps (they stay on the server; nothing
+  // is published) and instrumentation.ts turns Node's source-map support on,
+  // so an error's stack names the original file and line.
+  experimental: {
+    serverSourceMaps: errorTrackingConfig.enabled,
   },
   async headers() {
     return [
