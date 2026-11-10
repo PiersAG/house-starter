@@ -30,6 +30,7 @@ This list is produced from the app's own data map, so it names everything the ap
 - Request records: your account id, the page, the time and the result of each request.
 - Audit trail of account changes: who changed what on your account and when, with the old and new value (for an email change, both addresses).
 - Records kept after deletion: invoice and dispute amounts and dates, against your old account id; your old account id and database id, and the dates of the deletion.
+- Usage records: which of the app's counted actions you performed, how many and when — never what the action contained.
 - Your own data: your workspace's name; the settings you chose; the history of changes you made to your records.
 - Rate-limit counters: Your IP address and account id, as request counters.
 - Hosting request logs: Your IP address, the pages you open and when.
@@ -48,6 +49,7 @@ This list is produced from the app's own data map, so it names everything the ap
 - Request records: To see how the app is used, spot faults and investigate abuse.
 - Audit trail of account changes: To prove what changed on your account, when and by whom (plan, email, deletion and permission changes).
 - Records kept after deletion: The records the law requires the business to keep after your account is deleted. The ids of deleted accounts, so a restored backup can be deleted again.
+- Usage records: To measure how the app is used, and to charge for usage if your plan is priced that way.
 - Your own data: Your workspace's name. The choices you make in the app's settings. The history of changes to your records, so a mistake can be undone.
 
 ## Why we use it, and our lawful basis
@@ -62,6 +64,7 @@ This list is produced from the app's own data map, so it names everything the ap
 - Request records: to keep the service secure and working (legitimate interests).
 - Audit trail of account changes: because the law requires it (legal obligation).
 - Records kept after deletion: because the law requires it (legal obligation).
+- Usage records: to keep the service secure and working (legitimate interests).
 - Your own data: to provide the service you signed up for (contract).
 
 ## Who we share it with
@@ -98,6 +101,7 @@ These services handle it on our behalf, under a data processing agreement with e
 - Request records: 90 days.
 - Audit trail of account changes: 6 years; it cannot be changed or deleted before then.
 - Records kept after deletion: Until the expiry date each record carries (6 years for tax records). As long as backups that predate the deletion exist; the ids name nobody once the account is gone.
+- Usage records: 2 years.
 - Your own data: While your account is open.
 
 ## How to see your data or ask for it to be deleted

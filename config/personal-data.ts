@@ -367,6 +367,23 @@ export const PERSONAL_DATA_MAP: Record<string, DataMapEntry> = {
       messageId: "The email provider's id for a message; no address or content is kept with it.",
     },
   },
+  billableEvents: {
+    plane: "catalog",
+    personal: ["userId", "action", "quantity", "occurredAt"],
+    linkedBy: "userId",
+    category: "Usage records",
+    holds: "which of the app's counted actions you performed, how many and when — never what the action contained",
+    purpose: "To measure how the app is used, and to charge for usage if your plan is priced that way.",
+    lawfulBasis: "legitimate_interests",
+    processors: HOST,
+    retention: "2 years.",
+    ageLimitDays: 730,
+    ageColumn: "occurredAt",
+    onErasure: { rule: "delete" },
+    notPersonal: {
+      id: "A random event id.",
+    },
+  },
   tenantMeta: {
     plane: "tenant",
     personal: ["tenantId", "label", "createdAt"],

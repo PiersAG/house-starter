@@ -265,4 +265,5 @@ export const DATA_CLASSIFICATION: Record<string, Record<string, ColumnClass>> = 
   tenantOrphans: { tenantId: internal, reason: internal, recordedAt: internal, clearedAt: internal },
   // Issue 757: the email provider's delivery reports. No address or content.
   emailEvents: { id: internal, receivedAt: internal, type: internal, messageId: internal, bounceKind: internal },
+  billableEvents: { id: internal, userId: internal, action: own, quantity: own, occurredAt: own },
 };
