@@ -100,6 +100,15 @@ export interface BillingConfig {
    * (app-business-core scripts/set_app_price.py).
    */
   pricePlaceholder: boolean;
+  /**
+   * Whether the checkout collects sales tax / VAT through Stripe Tax
+   * (PiersAG/app-business-core#523). CEO ruling 2026-11-03: VAT is OFF until the
+   * business reaches the VAT threshold (the factory warns at 80% of it). Switched on,
+   * the checkout requires the billing address, lets a business give its tax id and has
+   * Stripe add the tax (lib/billing/tax.ts). Set it true only after the steps in
+   * docs/per-app-stripe-account.md § VAT and sales tax.
+   */
+  automaticTax: boolean;
 }
 
 export const billingConfig: BillingConfig = {
@@ -123,6 +132,8 @@ export const billingConfig: BillingConfig = {
   // The template has no price, so no placeholder; provisioning stamps true when the
   // brief named no price (issue 374).
   pricePlaceholder: false,
+  // VAT off until the business reaches the VAT threshold (CEO ruling 2026-11-03, #523).
+  automaticTax: false,
 };
 
 /**

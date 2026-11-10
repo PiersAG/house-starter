@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getStripe } from "@/lib/billing/stripe";
 import { billingConfig } from "@/config/billing";
+import { checkoutTaxParams } from "@/lib/billing/tax";
 import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
 import { serviceFailure } from "@/lib/observability/service-failure";
 import { catalogDb } from "@/lib/catalog";
@@ -65,6 +66,8 @@ async function handlePOST(request: Request): Promise<Response> {
       mode: "subscription",
       // only the methods with a tested path (issue 780; config/billing.ts paymentMethods)
       payment_method_types: billingConfig.paymentMethods,
+      // VAT / sales tax, off until the VAT threshold (issue 523; lib/billing/tax.ts)
+      ...checkoutTaxParams(billingConfig.automaticTax),
       line_items: [{ price: priceId, quantity: 1 }],
       client_reference_id: userId,
       customer_email: session.user?.email ?? undefined,
