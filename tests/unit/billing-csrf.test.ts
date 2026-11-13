@@ -11,6 +11,10 @@
 //   • answered with the Stripe address: this session's token from the app's own
 //     origin (and from a client that sends no Origin, as a non-browser does).
 // Signed out is still 401, before the token is read.
+// Flag-aware like billing-both-states.test.ts: the CI billing-matrix job runs it
+// with subscriptionActive both ways. With billing off both routes stay inert —
+// 404 before the session, the token or any Stripe call, whatever is sent — and
+// the request-token assertions apply only when billing is on.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -48,6 +52,9 @@ vi.mock("@/lib/observability/with-request-log", () => ({
 import { POST as checkoutPOST } from "@/app/api/billing/checkout/route";
 import { POST as portalPOST } from "@/app/api/billing/portal/route";
 import { CSRF_HEADER, csrfTokenFor } from "@/lib/csrf";
+import { isSubscriptionBillingActive } from "@/lib/billing/routes";
+
+const active = isSubscriptionBillingActive();
 
 const ORIGIN = "https://app.example.com";
 const OWNER = { user: { id: "user-owner", email: "owner@example.com", sessionId: "session-1" } };
@@ -74,7 +81,7 @@ afterEach(() => {
   delete process.env.APP_CANONICAL_URL;
 });
 
-describe.each(ROUTES)("POST /api/billing/$name needs this session's request token (#353)", ({ name, handler, stripe }) => {
+describe.runIf(active).each(ROUTES)("POST /api/billing/$name needs this session's request token (#353)", ({ name, handler, stripe }) => {
   const token = () => csrfTokenFor(OWNER)!;
   const other = () => csrfTokenFor({ user: { id: "user-owner", sessionId: "session-2" } })!;
 
@@ -108,6 +115,27 @@ describe.each(ROUTES)("POST /api/billing/$name needs this session's request toke
     holder.session = null;
     const res = await handler(post(name, { origin: ORIGIN, [CSRF_HEADER]: token() }));
     expect(res.status).toBe(401);
+    expect(stripe).not.toHaveBeenCalled();
+  });
+});
+
+describe.runIf(!active).each(ROUTES)("POST /api/billing/$name stays inert with billing off", ({ name, handler, stripe }) => {
+  const token = () => csrfTokenFor(OWNER)!;
+
+  it.each([
+    ["this session's token from the app's own origin", () => ({ origin: ORIGIN, "sec-fetch-site": "same-origin", [CSRF_HEADER]: token() })],
+    ["no token", () => ({ origin: ORIGIN })],
+    ["this session's token from another website", () => ({ origin: "https://evil.example", [CSRF_HEADER]: token() })],
+  ])("answers 404 to %s, with no Stripe call", async (_label, headers) => {
+    const res = await handler(post(name, headers()));
+    expect(res.status).toBe(404);
+    expect(stripe).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 when signed out, with no Stripe call", async () => {
+    holder.session = null;
+    const res = await handler(post(name, { origin: ORIGIN, [CSRF_HEADER]: token() }));
+    expect(res.status).toBe(404);
     expect(stripe).not.toHaveBeenCalled();
   });
 });
