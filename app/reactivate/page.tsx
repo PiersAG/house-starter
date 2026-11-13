@@ -11,6 +11,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { isSubscriptionBillingActive } from "@/lib/billing/routes";
 import { ReactivateActions } from "@/app/reactivate/ReactivateActions";
+import { csrfTokenFor } from "@/lib/csrf";
 
 export const metadata = { title: "Reactivate your subscription" };
 
@@ -37,7 +38,7 @@ export default async function ReactivatePage() {
         </p>
       </header>
 
-      <ReactivateActions />
+      <ReactivateActions csrfToken={csrfTokenFor(session) ?? ""} />
 
       <p className="mt-8 text-sm text-text-secondary">
         Need to update account preferences instead?{" "}

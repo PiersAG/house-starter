@@ -10,7 +10,8 @@ import { getSubscriptionByUserId } from "@/lib/billing/subscriptions";
 import { describePlan } from "@/lib/plan-status";
 import { ReactivateActions } from "@/app/reactivate/ReactivateActions";
 
-export async function PlanCard({ userId }: { userId: string }) {
+/** `csrfToken`: this session's request token (lib/csrf.ts), for the pay buttons. */
+export async function PlanCard({ userId, csrfToken }: { userId: string; csrfToken: string }) {
   if (!isSubscriptionBillingActive()) return null;
   const plan = describePlan(await getSubscriptionByUserId(catalogDb, userId));
   return (
@@ -23,7 +24,7 @@ export async function PlanCard({ userId }: { userId: string }) {
       </h2>
       <p className="mt-1 text-sm text-text-secondary">{plan.detail}</p>
       {plan.actions.length > 0 ? (
-        <ReactivateActions actions={plan.actions} />
+        <ReactivateActions actions={plan.actions} csrfToken={csrfToken} />
       ) : null}
       <p className="mt-4 text-sm">
         <a

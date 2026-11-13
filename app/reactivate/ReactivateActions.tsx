@@ -7,6 +7,8 @@
 // Both routes are OPEN (auth-only, never paywalled), so an unpaid owner can
 // always reach them. A user with no Stripe customer yet subscribes; one with an
 // existing customer (e.g. lapsed payment) manages/pays via the portal.
+// Both are write endpoints, so each request carries this session's request
+// token (lib/csrf.ts, app-business-core issue 353), passed in by the page.
 
 import { useState } from "react";
 
@@ -14,7 +16,14 @@ type Busy = null | "checkout" | "portal";
 type Action = "checkout" | "portal";
 
 /** `actions` picks which buttons show (both by default); the plan card (issue 375) shows one. */
-export function ReactivateActions({ actions = ["checkout", "portal"] }: { actions?: Action[] } = {}) {
+export function ReactivateActions({
+  actions = ["checkout", "portal"],
+  csrfToken,
+}: {
+  actions?: Action[];
+  /** This session's request token (lib/csrf.ts), sent with each request. */
+  csrfToken: string;
+}) {
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +31,10 @@ export function ReactivateActions({ actions = ["checkout", "portal"] }: { action
     setBusy(which);
     setError(null);
     try {
-      const res = await fetch(`/api/billing/${which}`, { method: "POST" });
+      const res = await fetch(`/api/billing/${which}`, {
+        method: "POST",
+        headers: { "x-csrf-token": csrfToken },
+      });
       const data = (await res.json().catch(() => ({}))) as {
         url?: string;
         error?: string;

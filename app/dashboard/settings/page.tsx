@@ -55,7 +55,7 @@ export default async function SettingsPage() {
         </p>
       </header>
 
-      {session.user.id ? <PlanCard userId={session.user.id} /> : null}
+      {session.user.id ? <PlanCard userId={session.user.id} csrfToken={csrfToken} /> : null}
 
       {view.map((cap) => (
         <section key={cap.capability} className="mt-8" aria-label={cap.capability}>
