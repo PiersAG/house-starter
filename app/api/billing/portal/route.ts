@@ -4,6 +4,10 @@
 // user's Stripe customer and returns its URL. Reduces support load (a Gate B
 // concern) by letting customers manage their own subscription. Requires an
 // authenticated session and an existing Stripe customer for the user.
+//
+// A write endpoint, so it needs this session's request token from the app's own
+// origin (lib/csrf.ts, app-business-core issue 353): another website cannot open
+// a customer's billing page in their name.
 
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
@@ -11,6 +15,7 @@ import { catalogDb } from "@/lib/catalog";
 import { getStripe } from "@/lib/billing/stripe";
 import { getSubscriptionByUserId } from "@/lib/billing/subscriptions";
 import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
+import { verifyCsrf } from "@/lib/csrf";
 import { serviceFailure } from "@/lib/observability/service-failure";
 import { accessMessage, checkSensitiveAccess } from "@/lib/session/guard";
 import { withRequestLog } from "@/lib/observability/with-request-log";
@@ -33,6 +38,11 @@ async function handlePOST(request: Request): Promise<Response> {
       { status: 401 },
     );
   }
+
+  // Issue 353 (SEC.12 leg b): this session's request token, from the app's own
+  // origin, before any database read or Stripe call.
+  const forged = verifyCsrf(request, session);
+  if (forged) return forged;
 
   // Context-aware access (app-business-core issue 741): the billing portal shows
   // the account's financial records.
