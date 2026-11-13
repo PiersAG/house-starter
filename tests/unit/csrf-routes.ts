@@ -16,7 +16,6 @@ export const EXEMPT: Record<string, string> = {
  * listed route already has the check, so each line goes when its change lands.
  */
 export const PENDING: Record<string, string> = {
-  // Money path: frozen for Dispatch AB while Dispatch AA's payments change lands.
-  "app/api/billing/checkout/route.ts": "next payments dispatch",
-  "app/api/billing/portal/route.ts": "next payments dispatch",
+  // Empty: checkout and the billing portal gained the check in Dispatch BD
+  // (app-business-core #743).
 };

@@ -8,6 +8,10 @@
 // the pay button, so the customer sees it before paying (issue 354, Matt Murphy
 // item 138). A Stripe failure answers a plain message with a support reference and
 // is written to the app's error log, never shown raw (issue 373).
+//
+// A write endpoint, so it needs this session's request token from the app's own
+// origin (lib/csrf.ts, app-business-core issue 353): another website cannot start
+// a payment in a customer's name.
 
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
@@ -15,6 +19,7 @@ import { getStripe } from "@/lib/billing/stripe";
 import { billingConfig } from "@/config/billing";
 import { checkoutTaxParams } from "@/lib/billing/tax";
 import { requireSubscriptionBillingForPath } from "@/lib/billing/guard";
+import { verifyCsrf } from "@/lib/csrf";
 import { serviceFailure } from "@/lib/observability/service-failure";
 import { catalogDb } from "@/lib/catalog";
 import { accessMessage, checkSensitiveAccess } from "@/lib/session/guard";
@@ -40,6 +45,11 @@ async function handlePOST(request: Request): Promise<Response> {
       { status: 401 },
     );
   }
+
+  // Issue 353 (SEC.12 leg b): this session's request token, from the app's own
+  // origin, before any database read or Stripe call.
+  const forged = verifyCsrf(request, session);
+  if (forged) return forged;
 
   // Context-aware access (app-business-core issue 741): starting a payment.
   const access = await checkSensitiveAccess(catalogDb, session, "billing.checkout", "/dashboard");
