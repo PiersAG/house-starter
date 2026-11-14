@@ -1,9 +1,8 @@
 // app-business-core #743 (second-platform cross-check, Dispatch BG): subscription billing
 // is ACTIVE only when both switches are exactly `true` —
 //   isKernelEnabled("subscription_billing") === true && billingConfig.subscriptionActive === true
-// This file holds the cases that pass with today's check; the cases where a truthy
-// value that is not `true` must never switch billing on arrive with the strict check
-// itself (a gate-protected edit the CEO script applies). Driven both ways: every pairing of the two switches, with the path
+// A truthy value that is not `true` (1, "true", an object) must never switch billing on,
+// on either side. Driven both ways: every pairing of the two switches, with the path
 // guard (isPathDisabledByBilling) following the same answer.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -42,6 +41,19 @@ describe("subscription billing is active only on two exact trues", () => {
     ["app switch off", true, false],
     ["both off", false, false],
   ])("is inactive with %s", async (_name, kernel, sub) => {
+    const r = await load(kernel, sub);
+    expect(r.isSubscriptionBillingActive()).toBe(false);
+    expect(r.isPathDisabledByBilling("/api/billing/checkout")).toBe(true);
+  });
+
+  it.each([
+    ["kernel 1", 1, true],
+    ["kernel \"true\"", "true", true],
+    ["kernel object", {}, true],
+    ["kernel undefined", undefined, true],
+    ["app switch 1", true, 1],
+    ["app switch \"true\"", true, "true"],
+  ])("a truthy value that is not true never switches it on (%s)", async (_name, kernel, sub) => {
     const r = await load(kernel, sub);
     expect(r.isSubscriptionBillingActive()).toBe(false);
     expect(r.isPathDisabledByBilling("/api/billing/checkout")).toBe(true);
