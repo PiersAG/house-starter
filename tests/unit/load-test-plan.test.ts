@@ -12,6 +12,25 @@ const APP = join(__dirname, "..", "..", "app");
 // lib/abuse/route-limit.ts SAFE_TEST_FACTOR (that module is server-only).
 const SAFE_TEST_FACTOR = 10;
 
+/**
+ * The fewest flood requests the busiest window can get, over every moment the flood
+ * may start relative to the clock's windows: `rate` a second, evenly, for `seconds`.
+ */
+function mostInOneWindow(rate: number, seconds: number, windowSeconds: number): number {
+  const total = Math.round(rate * seconds);
+  let worst = Infinity;
+  for (let tenths = 0; tenths < windowSeconds * 10; tenths++) {
+    const offset = tenths / 10;
+    const perWindow = new Map<number, number>();
+    for (let i = 0; i < total; i++) {
+      const w = Math.floor((offset + i / rate) / windowSeconds);
+      perWindow.set(w, (perWindow.get(w) ?? 0) + 1);
+    }
+    worst = Math.min(worst, Math.max(...perWindow.values()));
+  }
+  return worst;
+}
+
 describe("load-test plan", () => {
   it("simulates at least 100 concurrent users (Matt Murphy #3)", () => {
     expect(LOAD_TEST.concurrentUsers).toBeGreaterThanOrEqual(100);
@@ -45,10 +64,25 @@ describe("load-test plan", () => {
     expect(LOAD_TEST.pass.maxServerErrors).toBe(0);
   });
 
-  it("floods past the health limit even at the test environment's tenfold limits", () => {
+  it("floods past the health limit inside one window, wherever the clock's window boundary falls", () => {
+    // The limit counts in fixed windows aligned to the clock and the flood starts at
+    // an arbitrary moment, so a boundary can split it. Every start offset within a
+    // window (in tenths of a second) must leave at least one window over the
+    // tenfold limit. A 20-second flood at 50 a second failed this near offset 50 s.
     const { perClient } = ROUTE_LIMITS["public.health"];
-    const tenfold = perClient.limit * SAFE_TEST_FACTOR * (LOAD_TEST.flood.seconds / perClient.windowSeconds);
-    expect(LOAD_TEST.flood.requestsPerSecondPerPath * LOAD_TEST.flood.seconds).toBeGreaterThan(tenfold);
+    expect(mostInOneWindow(LOAD_TEST.flood.requestsPerSecondPerPath, LOAD_TEST.flood.seconds,
+      perClient.windowSeconds)).toBeGreaterThan(perClient.limit * SAFE_TEST_FACTOR);
+  });
+
+  it("the window check refuses the old 20-second flood and accepts a whole-window one", () => {
+    const { perClient } = ROUTE_LIMITS["public.health"];
+    const limit = perClient.limit * SAFE_TEST_FACTOR;
+    expect(mostInOneWindow(50, 20, perClient.windowSeconds)).toBeLessThanOrEqual(limit);
+    expect(mostInOneWindow(50, perClient.windowSeconds + 1, perClient.windowSeconds)).toBeGreaterThan(limit);
+  });
+
+  it("ends the flood while the 100 users still hold", () => {
+    expect(LOAD_TEST.flood.startAfterRampSeconds + LOAD_TEST.flood.seconds).toBeLessThanOrEqual(LOAD_TEST.holdSeconds);
   });
 
   it("tests CORS under the same load (Matt Murphy #243's 'cores')", () => {
