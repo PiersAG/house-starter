@@ -73,13 +73,19 @@ export const LOAD_TEST = {
    * the health check; the limits must answer 429 with Retry-After, never a 5xx,
    * while the 100 users above carry on. The rate is per path, and high enough to
    * pass the health limit even at the test environment's tenfold limits (600 a
-   * minute; config/rate-limits.ts, SAFE_TEST_FACTOR).
+   * minute; config/rate-limits.ts, SAFE_TEST_FACTOR). The limit counts in fixed
+   * windows on the clock, and the flood starts wherever the clock happens to be,
+   * so it must pass the limit inside ONE window wherever a window boundary falls:
+   * at worst the boundary splits it in half, so half the flood (50 a second for
+   * 20 of its 40 seconds = 1000) is still over 600. A 20-second flood (1000 in
+   * all) split near its middle gave two windows of 500 each and no refusal, about
+   * one run in fifteen (Dispatch BI).
    */
   flood: {
     address: "203.0.113.254",
     startAfterRampSeconds: 60,
     requestsPerSecondPerPath: 50,
-    seconds: 20,
+    seconds: 40,
     paths: ["/api/auth/signup", "/api/health"],
     expect: {
       refusedWith: 429,

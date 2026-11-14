@@ -22,7 +22,8 @@ function passing(): NonNullable<K6Summary["metrics"]> {
     journey_errors: { values: { rate: 0.001 } },
     journey_duration: { values: { "p(95)": 900 } },
     journey_server_errors: { values: { count: 0 } },
-    flood_requests: { values: { count: 2000 } },
+    // every flood request the plan sends (its length changed in Dispatch BI)
+    flood_requests: { values: { count: LOAD_TEST.flood.requestsPerSecondPerPath * LOAD_TEST.flood.paths.length * LOAD_TEST.flood.seconds } },
     flood_refused_api_auth_signup: { values: { count: 990 } },
     flood_refused_api_health: { values: { count: 400 } },
     cors_requests: { values: { count: 80 } },
