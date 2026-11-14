@@ -42,7 +42,9 @@ export const BILLING_ROUTE_PREFIXES = ["/api/billing", "/reactivate", "/refund-p
 
 /**
  * Whether THIS app's subscription billing is ACTIVE. Two independent conditions,
- * both required:
+ * both required, each exactly `true` — a truthy value that is not `true` never
+ * switches billing on (app-business-core #743 cross-check, tests/unit/
+ * billing-active-strict.test.ts):
  *
  *   • the kernel part is enabled (config/kernel.ts — on in every real build;
  *     false only inside a throwaway both-states CI checkout), and
@@ -54,7 +56,7 @@ export const BILLING_ROUTE_PREFIXES = ["/api/billing", "/reactivate", "/refund-p
  */
 export function isSubscriptionBillingActive(): boolean {
   return (
-    isKernelEnabled("subscription_billing") &&
+    isKernelEnabled("subscription_billing") === true &&
     billingConfig.subscriptionActive === true
   );
 }
