@@ -6,6 +6,9 @@ on:
 jobs:
   toolchain-guard:
     runs-on: ubuntu-24.04
+    # app-business-core #916: a time limit, so this job cannot hold the runner for
+    # GitHub's default six hours. Its slowest finished run took under a minute.
+    timeout-minutes: 10
     steps:
       # Outbound-network watch (app-business-core #895; CEO ruling 2026-11-04, option A,
       # watch-only): records every outbound connection this job makes, blocks none.
