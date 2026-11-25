@@ -66,6 +66,42 @@ async function advanceClock(stripe: Stripe, clockId: string, toEpoch: number): P
   await stripe.testHelpers.testClocks.advance(clockId, { frozen_time: toEpoch });
 }
 
+// Every run's clock carries this name, so a clock that a cancelled or killed run
+// left behind (its afterAll never ran: CI cancels a superseded run mid-test) is
+// found and removed by the next run. Deleting a clock removes its customer and the
+// £15.00 subscription on the always-declining card (app-business-core Dispatch BZ:
+// 15 failed £15.00 test charges, 18–24 Nov 2026, one per CI run of this suite).
+const CLOCK_NAME = "house-starter-billing-grace";
+// Older than any live run of this suite (its hooks and its test are capped at
+// 3 minutes each), so a clock of a run still going in another pull request is
+// never touched.
+const STALE_AFTER_SECONDS = 2 * 60 * 60;
+
+/** Delete one clock. A clock already gone (404) counts as deleted; any other
+ *  failure throws, naming the clock: a clean-up failure is never swallowed. */
+async function deleteClock(stripe: Stripe, clockId: string): Promise<void> {
+  try {
+    await stripe.testHelpers.testClocks.del(clockId);
+  } catch (err) {
+    if ((err as { statusCode?: number }).statusCode === 404) return;
+    throw new Error(
+      `Stripe test clean-up failed: test clock ${clockId} (with its customer and its ` +
+        `£15.00 subscription) was not deleted — ${(err as Error).message}`,
+    );
+  }
+}
+
+/** Delete every clock of this suite older than STALE_AFTER_SECONDS; returns their ids. */
+async function sweepStaleClocks(stripe: Stripe, nowSeconds: number): Promise<string[]> {
+  const swept: string[] = [];
+  for await (const clock of stripe.testHelpers.testClocks.list({ limit: 100 })) {
+    if (clock.name !== CLOCK_NAME || nowSeconds - clock.created < STALE_AFTER_SECONDS) continue;
+    await deleteClock(stripe, clock.id);
+    swept.push(clock.id);
+  }
+  return swept;
+}
+
 describe.skipIf(!HAS_REAL_KEY)("billing grace window — real Stripe test clock", () => {
   let stripe: Stripe;
   let client: Client;
@@ -77,6 +113,10 @@ describe.skipIf(!HAS_REAL_KEY)("billing grace window — real Stripe test clock"
 
   beforeAll(async () => {
     stripe = new Stripe(RAW_KEY);
+    const swept = await sweepStaleClocks(stripe, Math.floor(Date.now() / 1000));
+    if (swept.length) {
+      console.log(`removed ${swept.length} test clock(s) earlier runs left behind: ${swept.join(", ")}`);
+    }
 
     client = createMigrationDatabase(":memory:");
     await runMigrations(client);
@@ -85,7 +125,7 @@ describe.skipIf(!HAS_REAL_KEY)("billing grace window — real Stripe test clock"
 
     // A fixed, deterministic start time (no Date.now dependence in assertions).
     t0 = 1_900_000_000; // 2030-03-13T ~ UTC
-    const clock = await stripe.testHelpers.testClocks.create({ frozen_time: t0 });
+    const clock = await stripe.testHelpers.testClocks.create({ frozen_time: t0, name: CLOCK_NAME });
     clockId = clock.id;
 
     const customer = await stripe.customers.create({ test_clock: clockId });
@@ -131,9 +171,10 @@ describe.skipIf(!HAS_REAL_KEY)("billing grace window — real Stripe test clock"
   }, 180_000);
 
   afterAll(async () => {
-    // Deleting the clock tears down its customers/subscriptions.
-    if (clockId) await stripe.testHelpers.testClocks.del(clockId).catch(() => {});
+    // Deleting the clock tears down its customer and subscription. A failure here
+    // fails the run (Dispatch BZ: it used to be swallowed with `.catch(() => {})`).
     if (client) client.close();
+    if (clockId) await deleteClock(stripe, clockId);
   });
 
   it("crosses the grace boundary by advancing the clock, not the wall clock", async () => {
