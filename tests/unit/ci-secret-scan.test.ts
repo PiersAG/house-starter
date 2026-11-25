@@ -22,6 +22,23 @@ describe("the template's secret scan", () => {
     expect(ci).toContain("--exit-code 2");
   });
 
+  // app-business-core Dispatch BZ-fix2: gitleaks' defaults know only sk-ant-api03- and
+  // sk-ant-admin01- keys, so the scan carries one more rule for every Anthropic key shape,
+  // including the Claude Console's current sk-ant-usr- keys. Made-up values, built here.
+  it("catches Claude keys of every shape, including sk-ant-usr-", () => {
+    const toml = ci.slice(ci.indexOf("<<'TOML'"), ci.indexOf("          TOML\n"));
+    expect(toml).toContain("useDefault = true");
+    expect(toml).toContain('id = "anthropic-key-any-format"');
+    const m = toml.match(/regex = '''(.+)'''/);
+    expect(m).not.toBeNull();
+    const rule = new RegExp(m![1]);
+    const body = "Ab3_-".repeat(19) + "AA";
+    for (const kind of ["usr", "api03", "admin01", "oat01"]) {
+      expect(rule.test(`KEY = "${"sk-" + "ant-" + kind + "-" + body}"`)).toBe(true);
+    }
+    expect(rule.test("sk-ant-api03-@@RAND40@@")).toBe(false);
+  });
+
   it("the placeholder test holds no key-shaped value", () => {
     const text = readFileSync("tests/unit/billing-placeholder.test.ts", "utf8");
     expect(text).not.toMatch(/\b[rs]k_(live|test)_/);

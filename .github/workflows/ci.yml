@@ -55,7 +55,19 @@ jobs:
           curl -fsSL -o "$work/$tarball" "$base/$tarball"
           (cd "$work" && grep " ${tarball}\$" checksums.txt | sha256sum -c -)
           tar -xzf "$work/$tarball" -C "$work" gitleaks
-          printf '[extend]\nuseDefault = true\n' > "$work/gitleaks.toml"
+          # gitleaks' defaults plus one rule (app-business-core Dispatch BZ-fix2): the defaults
+          # miss Claude keys that start sk-ant-usr- (the Claude Console's current format) and
+          # sign-in tokens. The same rule as every factory gitleaks config.
+          cat > "$work/gitleaks.toml" <<'TOML'
+          [extend]
+          useDefault = true
+
+          [[rules]]
+          id = "anthropic-key-any-format"
+          description = "An Anthropic key of any format (sk-ant-api03-, sk-ant-usr-, sk-ant-admin01-, sk-ant-oat01-): gitleaks' defaults know only api03 and admin01"
+          regex = '''\bsk-ant-[a-z]{2,8}[0-9]{0,2}-[A-Za-z0-9_-]{20,}'''
+          keywords = ["sk-ant-"]
+          TOML
           : > "$work/empty.gitleaksignore"
           "$work/gitleaks" dir . --no-banner --redact --config "$work/gitleaks.toml" \
             --gitleaks-ignore-path "$work/empty.gitleaksignore" --ignore-gitleaks-allow \
