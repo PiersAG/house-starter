@@ -9,6 +9,14 @@
       "reason": "`node install.js` selects the platform binary from esbuild's own @esbuild/* optional packages (same publisher, evanw). Used by tsx, vite and drizzle-kit."
     },
     {
+      "package": "glob-parent",
+      "rule": "maintainer change",
+      "detail": "yocontra",
+      "reviewed_on": "2026-11-24",
+      "by": "Claude Code (Dispatch BZ)",
+      "reason": "npm record read 2026-11-17 (Dispatch BQ) and again 2026-11-24 (Dispatch BZ): 7.0.0, published 2026-11-17T22:13Z by phated (who published 5.1.2 and 6.0.2), lists maintainers phated and yocontra. yocontra is Eric Schoffstall <yo@contra.io>, gulp's creator: the same name and address are in the copyright line of 6.0.2's own LICENSE, and yocontra also maintains gulp itself (npm, 2026-11-24). The 6.0.2 to 7.0.0 diff (npm pack, Dispatch BZ) adds no install script (scripts are lint, test, types and format only) and one dependency, minimatch 10.2.6 (isaacs). Neither lockfile takes 7.0.0: house-starter and the dashboard lock 5.1.2 and 6.0.2 only (dev, published 2021 by phated)."
+    },
+    {
       "package": "@swc/core",
       "rule": "install script",
       "reviewed_on": "2026-11-01",
