@@ -67,8 +67,8 @@ describe("edge rate limits and bot management (#754)", () => {
 });
 
 describe("the provider switch, every state (#702 → #511, #755)", () => {
-  it("ships as 'none' until the CEO decides #702", () => {
-    expect(EDGE_FIREWALL_PROVIDER).toBe("none");
+  it("ships as 'vercel', the CEO's choice on #702 (2026-11-02)", () => {
+    expect(EDGE_FIREWALL_PROVIDER).toBe("vercel");
   });
 
   it.each<EdgeProvider>(["none", "vercel"])("%s: nothing in front of the host, so no origin lock", (p) => {

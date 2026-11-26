@@ -25,6 +25,7 @@
     "test:awkward": "playwright test --project=awkward-chromium --project=awkward-firefox --project=awkward-webkit --project=awkward-iphone-2019 --project=awkward-android-2019-slow --project=awkward-320-slow",
     "test:correctness": "playwright test --project=a11y --project=a11y-phone --project=awkward-chromium --project=awkward-firefox --project=awkward-webkit --project=awkward-iphone-2019 --project=awkward-android-2019-slow --project=awkward-320-slow",
     "check:browser-floor": "tsx scripts/check-browser-floor.ts",
+    "edge:firewall:config": "tsx scripts/edge-firewall-config.ts",
     "test:layout:update": "playwright test --project=layout-guardrail --update-snapshots",
     "operator:setting": "tsx scripts/set-operator-setting.ts",
     "db:generate": "drizzle-kit generate",

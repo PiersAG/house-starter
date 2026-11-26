@@ -1,0 +1,463 @@
+{
+  "_comment": "GENERATED from config/edge-firewall.ts by `npm run edge:firewall:config` (config/edge-firewall-vercel.ts) — do not edit. Applied to each app's Vercel project by app-business-core infra/edge-firewall/ and read back daily by agents/vercel_settings.py. `fits` false for a plan means the factory refuses to apply the set to a project on that plan.",
+  "provider": "vercel",
+  "plan_limits": {
+    "hobby": {
+      "customRules": 3,
+      "rateLimitRules": 1
+    },
+    "pro": {
+      "customRules": 40,
+      "rateLimitRules": 40
+    }
+  },
+  "needs": {
+    "custom_rules": 8,
+    "rate_limit_rules": 2
+  },
+  "fits": {
+    "hobby": false,
+    "pro": true
+  },
+  "enabled": true,
+  "managed_rulesets": {
+    "bot_protection": {
+      "active": false,
+      "action": "challenge"
+    },
+    "ai_bots": {
+      "active": false,
+      "action": "deny"
+    }
+  },
+  "rules": [
+    {
+      "name": "edge-sqli",
+      "description": "SQL injection payloads in the query string",
+      "active": true,
+      "condition_group": [
+        {
+          "conditions": [
+            {
+              "type": "query",
+              "op": "re",
+              "value": "(?i)\\bunion\\b[\\s\\S]{0,40}\\bselect\\b"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "query",
+              "op": "re",
+              "value": "(?i)'\\s*(or|and)\\s*'?\\d+'?\\s*=\\s*'?\\d+"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "query",
+              "op": "re",
+              "value": "(?i)\\b(sleep|benchmark|pg_sleep)\\s*\\("
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "query",
+              "op": "re",
+              "value": "(?i)\\binformation_schema\\b"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "query",
+              "op": "re",
+              "value": "(?i);\\s*(drop|delete|insert|update|alter)\\s+\\w"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "query",
+              "op": "re",
+              "value": "'\\s*;?\\s*--"
+            }
+          ]
+        }
+      ],
+      "action": {
+        "action": "deny"
+      }
+    },
+    {
+      "name": "edge-xss",
+      "description": "Script injection payloads in the query string",
+      "active": true,
+      "condition_group": [
+        {
+          "conditions": [
+            {
+              "type": "query",
+              "op": "re",
+              "value": "(?i)<\\s*script\\b"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "query",
+              "op": "re",
+              "value": "(?i)javascript\\s*:"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "query",
+              "op": "re",
+              "value": "(?i)\\bon(error|load|mouseover)\\s*="
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "query",
+              "op": "re",
+              "value": "(?i)<\\s*iframe\\b"
+            }
+          ]
+        }
+      ],
+      "action": {
+        "action": "deny"
+      }
+    },
+    {
+      "name": "edge-path-traversal",
+      "description": "Path traversal and requests for server files",
+      "active": true,
+      "condition_group": [
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "re",
+              "value": "\\.\\.[/\\\\]"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "re",
+              "value": "(?i)\\/etc\\/(passwd|shadow)\\b"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "re",
+              "value": "(?i)\\/\\.(env|git|aws|ssh)(\\/|$)"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "re",
+              "value": "(?i)\\/proc\\/self\\/"
+            }
+          ]
+        }
+      ],
+      "action": {
+        "action": "deny"
+      }
+    },
+    {
+      "name": "edge-scanner-paths",
+      "description": "Reconnaissance for software the app does not run (WordPress, phpMyAdmin, …)",
+      "active": true,
+      "condition_group": [
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "re",
+              "value": "(?i)\\/wp-(admin|login|content|includes)\\b"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "re",
+              "value": "(?i)\\/xmlrpc\\.php$"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "re",
+              "value": "(?i)\\/phpmyadmin\\b"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "re",
+              "value": "(?i)\\.(php|asp|aspx|jsp|cgi)$"
+            }
+          ]
+        }
+      ],
+      "action": {
+        "action": "deny"
+      }
+    },
+    {
+      "name": "edge-bad-bots",
+      "description": "Known attack and scanning tools, by user agent",
+      "active": true,
+      "condition_group": [
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)sqlmap"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)nikto"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)\\bnmap\\b"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)masscan"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)zgrab"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)nuclei"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)acunetix"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)wpscan"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)gobuster"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)dirbuster"
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "user_agent",
+              "op": "re",
+              "value": "(?i)\\bhydra\\b"
+            }
+          ]
+        }
+      ],
+      "action": {
+        "action": "deny"
+      }
+    },
+    {
+      "name": "edge-sign-in-rate-challenge",
+      "description": "Sign-in routes: more than 20 requests a minute from one address → challenge",
+      "active": true,
+      "condition_group": [
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "inc",
+              "values": [
+                "/login",
+                "/signup",
+                "/forgot-password",
+                "/reset-password"
+              ]
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "pre",
+              "value": "/api/auth/"
+            }
+          ]
+        }
+      ],
+      "action": {
+        "action": "rate_limit",
+        "rate_limit": {
+          "algo": "fixed_window",
+          "window": 60,
+          "limit": 20,
+          "keys": [
+            "ip"
+          ],
+          "action": "challenge"
+        }
+      }
+    },
+    {
+      "name": "edge-sign-in-rate-deny",
+      "description": "Sign-in routes: more than 60 requests a minute from one address → deny",
+      "active": true,
+      "condition_group": [
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "inc",
+              "values": [
+                "/login",
+                "/signup",
+                "/forgot-password",
+                "/reset-password"
+              ]
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "pre",
+              "value": "/api/auth/"
+            }
+          ]
+        }
+      ],
+      "action": {
+        "action": "rate_limit",
+        "rate_limit": {
+          "algo": "fixed_window",
+          "window": 60,
+          "limit": 60,
+          "keys": [
+            "ip"
+          ],
+          "action": "deny"
+        }
+      }
+    },
+    {
+      "name": "edge-bot-check",
+      "description": "High-value routes: automated traffic is challenged (Vercel's challenge lets browsers through)",
+      "active": true,
+      "condition_group": [
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "inc",
+              "values": [
+                "/signup",
+                "/login",
+                "/pricing",
+                "/api/billing/checkout"
+              ]
+            }
+          ]
+        },
+        {
+          "conditions": [
+            {
+              "type": "path",
+              "op": "pre",
+              "value": "/api/auth/"
+            }
+          ]
+        }
+      ],
+      "action": {
+        "action": "challenge"
+      }
+    }
+  ]
+}
