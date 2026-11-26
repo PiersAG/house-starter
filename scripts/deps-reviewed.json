@@ -1,6 +1,14 @@
 {
   "_comment": "Reviewed flags for the whole-lockfile audit (#749, agents/build/check_deps_existence.py rules 6-8). A flag passes only when an entry here names its package and rule (and, for a maintainer change or a new package, the exact people added) with a reason and a review date. Existence and lockfile-source failures can never be reviewed. This copy is the factory's: the build loop and the dashboard job read it, never a file in an app's workspace, so the build assistant cannot review its own packages. house-starter carries the same entries in scripts/deps-reviewed.json for the template's and every app's CI. Add an entry only after reading the package's registry record, in a reviewed pull request.",
   "reviewed": [
+  {
+   "package": "vite",
+   "rule": "maintainer change",
+   "detail": "sapphi-red",
+   "reviewed_on": "2026-11-26",
+   "by": "Claude Code (Dispatch CD)",
+   "reason": "npm record read 2026-11-26 (Dispatch CD): 8.4.0, published 2026-11-26T10:59Z by GitHub Actions (npm trusted publishing, as 8.3.4 was), lists maintainers sapphi-red, yyx990803 and vitebot; 8.3.4 listed yyx990803 and vitebot. sapphi-red <green@sapphi.red> is already a maintainer of create-vite, Vite's own scaffolder, alongside yyx990803, vitebot, antfu and patak (npm, 2026-11-26). 8.4.0 has no install script (scripts are dev, lint, build, format, typecheck and the build steps only). The lockfile does not take 8.4.0: house-starter locks vite 8.3.4."
+  },
     {
       "package": "esbuild",
       "rule": "install script",
