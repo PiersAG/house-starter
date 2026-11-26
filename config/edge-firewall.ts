@@ -15,9 +15,10 @@
 //                host must refuse traffic that did not come through Cloudflare
 //                (#755): see `originLock` below and docs/edge-firewall.md.
 //
-// Applying the CEO's choice: set the provider here, then create the rules below
-// at that provider (docs/edge-firewall.md lists each rule's setting, provider
-// by provider), then run `node scripts/edge-check.mjs <production URL>`, which
+// Applying the CEO's choice: the provider is set here; with "vercel" the rules
+// are translated by config/edge-firewall-vercel.ts into
+// config/edge-firewall.vercel.json, which the factory applies to the app's
+// Vercel project (docs/edge-firewall.md); then run `node scripts/edge-check.mjs <production URL>`, which
 // sends the attack payloads and normal requests and fails unless the attacks
 // are blocked and normal traffic passes.
 //
@@ -26,8 +27,9 @@
 
 export type EdgeProvider = "none" | "vercel" | "cloudflare";
 
-/** The CEO's choice on #702. "none" until it is made. */
-export const EDGE_FIREWALL_PROVIDER: EdgeProvider = "none";
+/** The CEO's choice on #702: Vercel's own firewall (CEO ruling 2026-11-02). The
+ * rules below reach Vercel through config/edge-firewall-vercel.ts. */
+export const EDGE_FIREWALL_PROVIDER: EdgeProvider = "vercel";
 
 /** What a rule does at the edge. */
 export type EdgeAction = "deny" | "challenge";
